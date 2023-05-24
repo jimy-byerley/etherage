@@ -1,8 +1,9 @@
+use std::time::Instant;
+use std::collections::HashMap;
 use tokio::sync::Notify;
-use packed_struct::prelude::PackedStruct;
-use alloc::collections::{Vec, HashMap};
+use packed_struct::prelude::*;
 use crate::socket::*;
-use crate::data::PackingResult;
+use crate::data::{PduData, ByteArray};
 
 /**
     low level ethercat functions, with no compile-time checking of the communication states
@@ -11,10 +12,8 @@ use crate::data::PackingResult;
     genericity allows to use a UDP socket or raw ethernet socket
 */
 pub struct RawMaster<S: EthercatSocket> {
-    /// (byte) if non-null, this is the amount of PDU data to be accumulated in the send buffer before sending
-	merge_pdu_size: usize,
 	/// (µs) acceptable delay time before sending buffered PDUs
-	merge_pdu_time: usize,
+	pdu_merge_time: u128,
 	
 	// socket implementation
 	socket: S,
@@ -24,104 +23,186 @@ pub struct RawMaster<S: EthercatSocket> {
 	// communication state
 	pdu_token: u8,
 	pdu_send_last: usize,
-	pdu_send: Vec<u16>,
-	pdu_receive: HashMap<u8, PduStorage<'static>>,
+	pdu_time: Instant,
+	pdu_send: Vec<u8>,
+	pdu_receive: HashMap<u8, PduStorage>,
+	
+	ethercat_send: Vec<u8>,
+	ethercat_receive: Vec<u8>,
 }
 impl<S: EthercatSocket> RawMaster<S> {
-	pub fn new() -> Self
+	pub fn new(socket: S) -> Self {
+        let max_frame = 4092;
+        
+        Self {
+            pdu_merge_time: 2000, // microseconds
+            
+            socket,
+            received: Notify::new(),
+            
+            pdu_token: 0,
+            pdu_send_last: 0,
+            pdu_time: Instant::now(),
+            pdu_send: Vec::new(),
+            pdu_receive: HashMap::new(),
+            ethercat_send: Vec::with_capacity(max_frame),
+            ethercat_receive: vec![0; max_frame],
+        }
+	}
 	
-	pub fn nop(&self)
-	pub fn bwr(&self)
-	pub fn brd(&self)
-	pub fn aprd<T: PduData>(&self, address: u16) -> T {
-        self.pdu(APRD, 0, address, data).await.data.unpack()
+	pub async fn bwr(&self) {todo!()}
+	pub async fn brd(&self) {todo!()}
+	pub async fn aprd<T: PduData>(&mut self, address: u16) -> T {
+        self.pdu(PduCommand::APRD, 0, address, None).await
 	}
-	pub fn apwr(&self) {
-        self.pdu(APRD, 0, address, data).await;
+	pub async fn apwr<T: PduData>(&mut self, address: u16, data: T) {
+        self.pdu(PduCommand::APWR, 0, address, Some(data)).await;
 	}
-	pub fn aprw(&self)
-	pub fn armw(&self)
-	pub fn fprd<T: PduData>(&self, slave: u16, address: u16) -> T {
-        self.pdu(FPRD, slave, address, data).await.data.unpack()
+	pub async fn aprw(&self) {todo!()}
+	pub async fn armw(&self) {todo!()}
+	pub async fn fprd<T: PduData>(&mut self, slave: u16, address: u16) -> T {
+        self.pdu(PduCommand::FPRD, slave, address, None).await
 	}
-	pub fn fpwr(&self)
-	pub fn fprw(&self)
-	pub fn frmw(&self)
-	pub fn lrd(&self)
-	pub fn lwr(&self)
-	pub fn lrw(&self)
+	pub async fn fpwr(&self) {todo!()}
+	pub async fn fprw(&self) {todo!()}
+	pub async fn frmw(&self) {todo!()}
+	pub async fn lrd(&self) {todo!()}
+	pub async fn lwr(&self) {todo!()}
+	pub async fn lrw(&self) {todo!()}
 	
 	/// maps to a *wr command
-	pub fn write(&self, address: Address, data: PduData)
+	pub async fn write<T: PduData>(&self, address: Address, data: T) {todo!()}
 	/// maps to a *rd command
-	pub fn read(&self, address: Address, length: usize)
+	pub async fn read<T: PduData>(&self, address: Address) -> T {todo!()}
 	/// maps to a *rw command
-	pub fn exchange(&self, address: Address, send: Pdu, receive: usize)
+	pub async fn exchange<T: PduData>(&self, address: Address, data: T) -> T {todo!()}
 	
 	/// send a PDU on the ethercat bus
 	/// the PDU is buffered if possible
-	async fn pdu<T>(&mut self, command: u16, destination: u16, address: u16, data: T) -> u8 {
+	async fn pdu<T: PduData>(&mut self, command: PduCommand, destination: u16, address: u16, data: Option<T>) -> T {
         let padding = [0u8; 30];
         
-        let storage = data.pack();
-        let data = data.as_bytes_slice();
+        let storage = match data {
+            Some(data) => data.pack(),
+            None => T::ByteArray::new(0),
+            };
+        let data = storage.as_bytes_slice();
+        
+        // sending the buffer if necessary
+        self.pdu_autoflush(data.len() + <PduHeader as PackedStruct>::ByteArray::len());
         
         // reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
         let token = self.pdu_token;
-        self.pdu_token = self.pdu_token.overflowing_add(1);
+        (self.pdu_token, _) = self.pdu_token.overflowing_add(1);
         self.pdu_receive.insert(token, PduStorage {
-            data: data,
+            // memory safety: this slice is read only in this function or outside but before this function's return
+            data: unsafe {std::slice::from_raw_parts( 
+                    data.as_ptr() as *const u8,
+                    data.len(),
+                    )},
             ready: false,
             });
         
         // change last value's PduHeader.next
         if self.pdu_send_last > self.pdu_send.len() {
+            let header = PduHeader::default();
             let offset = ((&header) as *const _ as usize) - ((&header.next) as *const _ as usize);
-            self.pdu_send[self.pdu_send_last+offset] &= ~0b1_u8;
+            self.pdu_send[self.pdu_send_last+offset] &= !0b1_u8;
+        }
+        else {
+            self.pdu_time = Instant::now();
         }
         
         // stacking the PDU in self.pdu_receive
         self.pdu_send_last = self.pdu_send.len();
-        self.pdu_send.append(PduHeader{
+        self.pdu_send.extend_from_slice(PduHeader{
             command,
             token: self.pdu_token,
             destination,
             address,
-            len: data.len(),
+            len: data.len() as u16,
             circulating: false,
             next: true,
             irq: 0,
-            }.pack().as_bytes_slice())
-        self.pdu_send.append(data);
+            }.pack().unwrap().as_bytes_slice());
+        self.pdu_send.extend_from_slice(data);
         if data.len() < padding.len() {
-            self.pdu_send.append(padding[data.len()..]);
+            self.pdu_send.extend_from_slice(&padding[data.len()..]);
         }
-        self.pdu_send.append(PduFooter {
-            wck: 0,
-            }.pack().as_bytes_slice());
+        self.pdu_send.extend_from_slice(PduFooter {
+            working_count: 0,
+            }.pack().unwrap().as_bytes_slice());
         
-        // sending the buffer if necessary
-        self.autoflush();
         // waiting for the answer
-        while storage.ready { self.received.notified().await; }
-        self.pdu_receive.pop(token);
-        storage.data.unpack()
+        let ready = &self.pdu_receive[&token].ready;
+        while ! *ready { self.received.notified().await; }
+        self.pdu_receive.remove(&token);
+        T::unpack(data).unwrap()
+        
+        // TODO: clean up self in case the async runtime never finish calling this function
 	}
 	
-	fn autoflush(&mut self) {
-        if Instant::now().elapsed_since(self.tsend).as_microseconds() >= self.merge_packets_time
-        || self.bsend.len() >= self.merge_packets_size {
-            self.flush();
+	/// flush the sending buffer of PDUs if necessary
+	fn pdu_autoflush(&mut self, coming: usize) {
+        if self.pdu_time.elapsed().as_micros() >= self.pdu_merge_time
+        || self.pdu_send.len() + coming >= self.ethercat_send.capacity() {
+            self.pdu_flush();
         }
 	}
 	
-	fn flush(&mut self) {
+	/// flush the sending buffer of PDUs
+	fn pdu_flush(&mut self) {
         // send
-        self.send(EthercatType::PDU, self.bsend);
-        todo!()
+        self.ethercat_send.extend_from_slice(EthercatHeader {
+            len: self.pdu_send.len() as u16,
+            ty: EthercatType::PDU,
+            }.pack().unwrap().as_bytes_slice());
+        self.ethercat_send.extend_from_slice(&self.pdu_send);
+        self.socket.send(&self.ethercat_send).unwrap();
         // reset
-        self.bsend.clear();
+        self.ethercat_send.clear();
+        self.pdu_send.clear();
         self.pdu_send_last = 0;
+	}
+	
+	/// extract a received PDU and buffer it for reception by an eventual `self.pdu()` future waiting for it.
+	fn pdu_receive(&self, frame: &[u8]) {
+        let mut frame = frame;
+        loop {
+            let header = PduHeader::unpack_from_slice(frame).unwrap();
+            if let Some(storage) = self.pdu_receive.get(&header.token) {
+                // copy the PDU content in the reception buffer
+                // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
+                unsafe {std::slice::from_raw_parts_mut(
+                    storage.data.as_ptr() as *mut u8,
+                    storage.data.len(),
+                    )}
+                    .copy_from_slice(frame);
+                unsafe {&mut *(storage as *const PduStorage as *mut PduStorage)}
+                    .ready = true;
+            }
+            frame = &frame[<PduHeader as PackedStruct>::ByteArray::len() + header.len as usize ..];
+            if ! header.next {break}
+            if frame.len() == 0 {todo!("raise frame error")}
+        }
+        // the working count in the footer is useless for the master, mostly used by slaves
+        self.received.notify_waiters();
+    }
+	
+	/// this is the socket reception handler
+	/// it receives and process one datagram, it may be called in loop with no particular timer since the sockets are assumed blocking
+	pub fn receive(&mut self) {
+        let size = self.socket.receive(&mut self.ethercat_receive).unwrap();
+        let frame = &self.ethercat_receive[..size];
+        
+        let header = EthercatHeader::unpack_from_slice(frame).unwrap();
+        let content = &frame[<EthercatHeader as PackedStruct>::ByteArray::len() ..];
+        assert_eq!(header.len as usize + <EthercatHeader as PackedStruct>::ByteArray::len(), frame.len());
+        match header.ty {
+            EthercatType::PDU => self.pdu_receive(content),
+            EthercatType::NetworkVariable => todo!(),
+            EthercatType::Mailbox => todo!(),
+        }
 	}
 }
 
@@ -138,9 +219,14 @@ pub enum Address {
 	Logical,
 }
 
-/// type of ethercat frame
 #[derive(PackedStruct, Clone, Debug)]
-#[repr(u8)]
+#[packed_struct(size_bytes="2", bit_numbering = "lsb0", endian = "lsb")]
+struct EthercatHeader {
+    #[packed_field(bits="15:5")]    len: u16,
+    #[packed_field(bits="4:0", ty="enum")]   ty: EthercatType,
+}
+/// type of ethercat frame
+#[derive(PrimitiveEnum_u8, Copy, Clone, Debug, Eq, PartialEq)]
 enum EthercatType {
     PDU = 0x1,
     NetworkVariable = 0x4,
@@ -148,27 +234,26 @@ enum EthercatType {
 }
 
 /// header for PDU exchange
-#[derive(PackedStruct, Clone, Debug)]
-#[packed_struct(bit_numbering = "lsb0", endian = "lsb")]
+#[derive(PackedStruct, Clone, Debug, Default)]
+#[packed_struct(size_bytes="9", bit_numbering = "lsb0", endian = "lsb")]
 struct PduHeader {
-    command: PduCommand,
-    token: u16,
-    destination: u16,
-    address: u16,
-    len: u16,
-    circulating: bool,
-    next: bool,
-    irq: u8,
+    #[packed_field(bytes="0", ty="enum")]  command: PduCommand,
+    #[packed_field(bytes="1")]  token: u8,
+    #[packed_field(bytes="2:3")]    destination: u16,
+    #[packed_field(bytes="4:5")]    address: u16,
+    #[packed_field(bits="48:58")]   len: u16,
+    #[packed_field(bits="62")]  circulating: bool,
+    #[packed_field(bits="63")]  next: bool,
+    #[packed_field(bytes="8")]  irq: u8,
 }
 /// footer for PDU exchange
 #[derive(PackedStruct, Clone, Debug)]
-#[packed_struct(bit_numbering = "lsb0", endian = "lsb")]
+#[packed_struct(size_bytes="2", bit_numbering = "lsb0", endian = "lsb")]
 struct PduFooter {
-    wkc: u16,
+    #[packed_field(bytes="0:1")]  working_count: u16,
 }
 /// the possible PDU commands
-#[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u8)]
+#[derive(PrimitiveEnum_u8, Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum PduCommand {
     /// no operation
     #[default]
@@ -199,13 +284,9 @@ pub enum PduCommand {
     ARMW = 0x0D,
     FRMW = 0x0E,
 }
-impl packed_struct::PackedStruct for PduCommand {
-    type ByteArray = [u8;1];
-    fn pack(&self) -> PackingResult<Self::ByteArray>  {Ok((*self as u8).to_le_bytes())}
-    fn unpack(src: &Self::ByteArray) -> PackingResult<Self>  {Ok(u8::from_le_bytes(*src) as Self)}
-}
+
 /// struct for internal use in RawMaster
-struct PduStorage<'a> {
-    data: &'a [u8],
+struct PduStorage {
+    data: &'static [u8],
     ready: bool,
 }

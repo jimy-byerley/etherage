@@ -1,5 +1,5 @@
 [package]
-name = "etherrage"
+name = "etherage"
 categories = ["science::robotics", "no-std", "network-programming"]
 version = "0.1.0"
 edition = "2021"

@@ -23,11 +23,12 @@ impl UdpSocket {
         let socket = std::net::UdpSocket::bind(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port,
-                ));
+                ))?;
+        socket.set_nonblocking(false)?;
         Ok(Self {
             address,
             socket,
-            filter_address: false,
+            filter_address: true,
         })
     }
     pub fn set_filter_address(&mut self, enable: bool) {
@@ -36,13 +37,14 @@ impl UdpSocket {
 }
 
 impl EthercatSocket for UdpSocket {
-    fn receive<'a>(&self, data: &'a mut [u8]) -> &'a mut [u8] {
+    fn receive(&self, data: &mut [u8]) -> io::Result<usize> {
         let (size, src) = self.socket.recv_from(data)?;
-        // ignore wrong hosts
-        if self.filter_address && SocketAddr::V4(self.address) != src {}
-        data[..size]
+        // ignore wrong hosts if needed
+        if self.filter_address && self.address != src {}
+        Ok(size)
     }
-    fn send(&self, data: &[u8]) {
-        self.socket.send_to(data, self.address)
+    fn send(&self, data: &[u8]) -> io::Result<()> {
+        self.socket.send_to(data, self.address)?;
+        Ok(())
     }
 }

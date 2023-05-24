@@ -13,8 +13,8 @@ use std::io;
 */
 pub trait EthercatSocket {
     // receive an ethercat frame into the given buffer
-    fn receive<'a>(&self, data: &'a mut [u8]) -> &'a mut [u8];
+    fn receive(&self, data: &mut [u8]) -> io::Result<usize>;
     // send an ethercat frame
     // the buffer passed must contain the data without the ethercat header, the header containing the frame length and type are added by this function
-    fn send(&self, data: &[u8]);
+    fn send(&self, data: &[u8]) -> io::Result<()>;
 }

@@ -1,5 +1,5 @@
-use std::os::unix::io::{AsRawFd, RawFd};
 use std::io;
+use std::os::unix::io::{AsRawFd, RawFd};
 use super::EthercatSocket;
 
 
@@ -17,7 +17,7 @@ pub struct EthernetSocket {
 }
 
 impl EthernetSocket {
-    pub fn new(interface: &str, protocol: u16) -> io::Result<Self> {
+    pub fn new(interface: &str) -> io::Result<Self> {
         let protocol: u16 = 0x88a4;  // ethernet type: ethercat
 
         // create
@@ -82,7 +82,7 @@ impl AsRawFd for EthernetSocket {
 }
 
 impl EthercatSocket for EthernetSocket {
-    fn receive<'a>(&self, data: &'a mut [u8]) -> &'a mut [u8] {
+    fn receive(&self, data: &mut [u8]) -> io::Result<usize> {
         let len = unsafe {
             libc::read(
                 self.as_raw_fd(),
@@ -90,14 +90,14 @@ impl EthercatSocket for EthernetSocket {
                 data.len(),
             )
         };
-        if len == -1 {
+        if len < 0 {
             Err(io::Error::last_os_error())
-        } else {
+        }
+        else {
             Ok(len as usize)
         }
-        data[..len]
     }
-    fn send(&self, data: &[u8]) {
+    fn send(&self, data: &[u8]) -> io::Result<()> {
         let len = unsafe {
             libc::write(
                 self.as_raw_fd(),
@@ -105,10 +105,10 @@ impl EthercatSocket for EthernetSocket {
                 data.len(),
             )
         };
-        if len == -1 {
+        if len < 0 || (len as usize) != data.len() {
             Err(io::Error::last_os_error())
         } else {
-            Ok(len as usize)
+            Ok(())
         }
     }
 }
