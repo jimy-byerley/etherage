@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, Cursor, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use packed_struct::prelude::*;
 use packed_struct::types::bits::ByteArray;
@@ -16,7 +16,13 @@ pub struct EthernetSocket {
     protocol: libc::c_ushort,
     lower: libc::c_int,
     ifreq: ifreq,
+    header: EthernetHeader,
+    filter_address: bool,
 }
+
+/// biggest possible ethercat frame allowed by the protocol
+/// ethernet header + ethercat header + 2^11
+const MAX_ETHERNET_FRAME: usize = 2064;
 
 impl EthernetSocket {
     pub fn new(interface: &str) -> io::Result<Self> {
@@ -40,6 +46,14 @@ impl EthernetSocket {
             protocol,
             lower,
             ifreq: ifreq_for(interface),
+            header: EthernetHeader {
+                dst: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10],
+                src: [0x12, 0x10, 0x10, 0x10, 0x10, 0x10],
+                // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
+                // vlan: [0x81, 0x0, 0, 0],
+                protocol,
+                },
+            filter_address: true,
         };
 
         // bind
@@ -67,6 +81,10 @@ impl EthernetSocket {
 
         Ok(new)
     }
+    /// if enabled, the incoming packets with wrong src&dst header will be ignored
+    pub fn set_filter_address(&mut self, enable: bool) {
+        self.filter_address = enable;
+    }
 }
 
 impl Drop for EthernetSocket {
@@ -85,44 +103,36 @@ impl AsRawFd for EthernetSocket {
 
 impl EthercatSocket for EthernetSocket {
     fn receive(&self, data: &mut [u8]) -> io::Result<usize> {
-        let mut packed = [0u8; 4096];
-        let len = unsafe {
-            libc::read(
-                self.as_raw_fd(),
-                packed.as_mut_ptr() as *mut libc::c_void,
-                packed.len(),
-            )
-        };
-        println!("received {:?}", &packed[..(len as usize)]);
-        let header = EthernetHeader::unpack_from_slice(&packed[..<EthernetHeader as PackedStruct>::ByteArray::len()]).unwrap();
-        if header.dst != [0x10, 0x10, 0x10, 0x10, 0x10, 0x10]
-        || header.src != [0x12, 0x10, 0x10, 0x10, 0x10, 0x10]
-        || header.ty != 0x88a4
-            {}
-        data.copy_from_slice(&packed[<EthernetHeader as PackedStruct>::ByteArray::len()..]);
-        if len < 0 {
-            Err(io::Error::last_os_error())
-        }
-        else {
-            Ok(len as usize)
+        // the maximum ethernet frame used in ethercat is reasonably small so we can allocate the maximum on the stack
+        let mut packed = [0u8; MAX_ETHERNET_FRAME];
+        loop {
+            let len = unsafe {
+                libc::read(
+                    self.as_raw_fd(),
+                    packed.as_mut_ptr() as *mut libc::c_void,
+                    packed.len(),
+                )
+            };
+            if len < 0
+                 {break Err(io::Error::last_os_error())}
+            if len == 0
+                {continue}
+                 
+            let frame = EthernetFrame::unpack(&packed[.. (len as usize)]);
+            if frame.header != self.header
+                {continue}
+            data[.. frame.data.len()].copy_from_slice(frame.data);
+            
+            // extract content
+            break {Ok(frame.data.len() as usize)}
         }
     }
     fn send(&self, data: &[u8]) -> io::Result<()> {
-        let mut packed = heapless::Vec::<u8, 4096>::new();
-        let padding = [0; 60];
-        packed.extend_from_slice(EthernetHeader {
-            dst: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10],
-            src: [0x12, 0x10, 0x10, 0x10, 0x10, 0x10],
-            // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
-            // vlan: [0x81, 0x0, 0, 0],
-            ty: 0x88a4,
-            }.pack().unwrap().as_bytes_slice());
-        packed.extend_from_slice(data);
-        // TODO: checksum ?
-        if packed.len() < padding.len() {
-            packed.extend_from_slice(&padding[packed.len()..]);
-        }
-        let data = packed.as_slice();
+        // the maximum ethernet frame used in ethercat is reasonably small so we can allocate the maximum on the stack
+        let mut packed = [0u8; MAX_ETHERNET_FRAME];
+        let packet = EthernetFrame {header: self.header.clone(), data};
+        packet.pack(&mut packed);
+        let data = &packed[.. packet.size()];
         
         let len = unsafe {
             libc::write(
@@ -131,11 +141,10 @@ impl EthercatSocket for EthernetSocket {
                 data.len(),
             )
         };
-        if len < 0 || (len as usize) != data.len() {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        if len < 0 
+            {Err(io::Error::last_os_error())} 
+        else 
+            {Ok(())}
     }
 }
 
@@ -179,17 +188,57 @@ fn ifreq_for(name: &str) -> ifreq {
 
 
 
-#[derive(PackedStruct, Clone, Debug)]
+/// an ethercat frame in its unpacked form
+#[derive(Debug)]
+struct EthernetFrame<'a> {
+    header: EthernetHeader,
+    data: &'a [u8],
+}
+impl<'a> EthernetFrame<'a> {
+    fn size(&self) -> usize {
+        (<EthernetHeader as PackedStruct>::ByteArray::len() + self.data.len())
+            .max(60)
+    }
+    fn pack(&self, dst: &mut [u8]) {
+        let mut dst = Cursor::new(dst);
+        let padding = [0; 60];
+        dst.write(self.header.pack().unwrap().as_bytes_slice()).unwrap();
+        dst.write(self.data).unwrap();
+        let pos = dst.position() as usize;
+        if pos < padding.len() {
+            dst.write(&padding[pos ..]).unwrap();
+        }
+    }
+    fn unpack(src: &'a [u8]) -> Self {
+        // parse header
+        let header = EthernetHeader::unpack_from_slice(
+            &src[.. <EthernetHeader as PackedStruct>::ByteArray::len()]
+            ).unwrap();
+        // extract content
+        let data = &src[<EthernetHeader as PackedStruct>::ByteArray::len() ..];
+        let data = &data[.. data.len().min(data.len())];
+    
+        Self{header, data}
+    }
+}
+
+/// ethernet frame header as specified in ISO/IEC 8802-3
+#[derive(PackedStruct, Clone, Debug, Eq, PartialEq)]
 #[packed_struct(size_bytes="14", bit_numbering = "lsb0", endian = "msb")]
 struct EthernetHeader {
+    /// destination MAC address
     #[packed_field(bytes="8:13")]  dst: [u8;6],
+    /// source MAC address
     #[packed_field(bytes="2:7")]  src: [u8;6],
     // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
-//     #[packed_field(bytes="2:5")]  vlan: [u8;4],  
-    #[packed_field(bytes="0:1")]  ty: u16,
+    //#[packed_field(bytes="2:5")]  vlan: [u8;4],  
+    /// ethernet protocol
+    #[packed_field(bytes="0:1")]  protocol: u16,
 }
-#[derive(PackedStruct, Clone, Debug)]
-#[packed_struct(size_bytes="4", bit_numbering = "lsb0", endian = "msb")]
-struct EthernetFooter {
-    #[packed_field(bytes="0:3")]  checksum: u32,
-}
+// /// ethernet frame footer as specified in ISO/IEC 8802-3
+// #[derive(PackedStruct, Clone, Debug, Eq, PartialEq)]
+// #[packed_struct(size_bytes="4", bit_numbering = "lsb0", endian = "msb")]
+// struct EthernetFooter {
+//     /// checksum of the frame
+//     #[packed_field(bytes="0:3")]  checksum: u32,
+// }

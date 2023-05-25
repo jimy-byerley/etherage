@@ -7,6 +7,7 @@ use core::ops::{Deref, DerefMut};
 use core::time::Duration;
 use tokio::sync::Notify;
 use packed_struct::prelude::*;
+use bilge::prelude::*;
 use num_enum::TryFromPrimitive;
 use crate::socket::*;
 use crate::data::{PduData, ByteArray, PackingResult};
@@ -114,16 +115,12 @@ impl<S: EthercatSocket> RawMaster<S> {
             // buffering the pdu sending
             let mut state = self.pdu_state.lock().unwrap();
             
-            println!("prepare to send {:?}", command);
-            
             // sending the buffer if necessary
             while self.ethercat_capacity < state.send.len() + data.len() + <PduHeader as PackedStruct>::ByteArray::len() {
                 println!("no more space, waiting");
                 self.send.notify_one();
                 state = self.sent.wait(state).unwrap();
             }
-            
-            println!("buffering");
             
             // reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
             token = state.token;
@@ -162,9 +159,8 @@ impl<S: EthercatSocket> RawMaster<S> {
                 0,
                 ).pack().unwrap().as_bytes_slice());
             state.send.extend_from_slice(data);
-            state.send.extend_from_slice(PduFooter {
-                working_count: 0,
-                }.pack().unwrap().as_bytes_slice());
+            state.send.extend_from_slice(PduFooter::new(0)
+                .pack().unwrap().as_bytes_slice());
             println!("buffered pdu {} {:?}", state.last_start, state.send);
             
             self.sendable.notify_one();
@@ -189,15 +185,20 @@ impl<S: EthercatSocket> RawMaster<S> {
 	fn pdu_receive(&self, state: &mut PduState, frame: &[u8]) {
         let mut frame = frame;
         loop {
-            let header = PduHeader::unpack_from_slice(frame).unwrap();
+            let header = PduHeader::unpack_from_slice(
+                &frame[.. <PduHeader as PackedStruct>::ByteArray::len()]
+                ).unwrap();
             if let Some(storage) = state.receive.get(&header.token()) {
+                let content = &frame[<PduHeader as PackedStruct>::ByteArray::len() ..];
+                let content = &content[.. content.len() - <PduFooter as PackedStruct>::ByteArray::len()];
+                
                 // copy the PDU content in the reception buffer
                 // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
                 unsafe {std::slice::from_raw_parts_mut(
                     storage.data.as_ptr() as *mut u8,
                     storage.data.len(),
                     )}
-                    .copy_from_slice(frame);
+                    .copy_from_slice(content);
                 unsafe {&mut *(storage as *const PduStorage as *mut PduStorage)}
                     .ready = true;
             }
@@ -214,12 +215,16 @@ impl<S: EthercatSocket> RawMaster<S> {
 	pub fn receive(&self) {
         let mut receive = self.ethercat_receive.lock().unwrap();
         let size = self.socket.receive(receive.deref_mut()).unwrap();
-        let frame = &receive[..size];
+        let frame = &receive[.. size];
         
-        let header = EthercatHeader::unpack_from_slice(frame).unwrap();
+        let header = EthercatHeader::unpack_from_slice(
+            &frame[.. <EthercatHeader as PackedStruct>::ByteArray::len()]
+            ).unwrap();
         let content = &frame[<EthercatHeader as PackedStruct>::ByteArray::len() ..];
-        assert_eq!(header.len as usize + <EthercatHeader as PackedStruct>::ByteArray::len(), frame.len());
-        match header.ty {
+        let content = &content[.. header.len().value() as usize];
+        
+        assert!(header.len().value() as usize <= content.len());
+        match header.ty() {
             EthercatType::PDU => self.pdu_receive(
                                     self.pdu_state.lock().unwrap().deref_mut(), 
                                     content,
@@ -231,18 +236,15 @@ impl<S: EthercatSocket> RawMaster<S> {
 	/// this is the socket sending handler
 	pub fn send(&self) {
         let mut state = self.pdu_state.lock().unwrap();
-        println!("waiting for data to send");
         let mut state = self.sendable.wait(state).unwrap();
-        println!("waiting additional data");
         let mut state = self.send.wait_timeout(state, self.pdu_merge_time).unwrap().0;
-        println!("will send {:x} {:x}", state.send.len() as u16, EthercatType::PDU as u8);
         
         let mut send = self.ethercat_send.lock().unwrap();
         // send
-        send.extend_from_slice(EthercatHeader {
-            len: state.send.len() as u16,
-            ty: EthercatType::PDU,
-            }.pack().unwrap().as_bytes_slice());
+        send.extend_from_slice(EthercatHeader::new(
+            u11::new(state.send.len() as u16),
+            EthercatType::PDU,
+            ).pack().unwrap().as_bytes_slice());
         send.extend_from_slice(&state.send);
         // reset state
         state.send.clear();
@@ -258,83 +260,56 @@ impl<S: EthercatSocket> RawMaster<S> {
 
 
 
-/// dynamically specifies a destination address on the ethercat loop
-pub enum Address {
-	/// every slave will receive and execute
-	Broadcast,
-	/// address will be determined by the topology (index of the slave in the ethernet loop)
-	AutoIncremented,
-	/// address has been set by the master previously
-	Configured(u32),
-	/// the logical memory is the destination, all slaves are concerned
-	Logical,
-}
 
 /// ethercat frame header (common to ethernet or UDP mediums) as described in ETG 1000.4 table 11
 // we cannot use the packed_field macro here because the bit fiddling is weird in this header
 // so here it is by hand
-#[derive(Clone, Debug)]
+#[bitsize(16)]
+#[derive(TryFromBits, DebugBits, Clone)]
 struct EthercatHeader {
     /// length of the ethercat frame (minus 2 bytes, which is the header)
-    len: u16,   // 11 bits
-    // 1 bit reserved
+    len: u11,
+    reserved: u1,
     /// frame type
-    ty: EthercatType,  // 4 bits
+    ty: EthercatType,
 }
 impl PackedStruct for EthercatHeader {
     type ByteArray = [u8; 2];
     fn pack(&self) -> PackingResult<Self::ByteArray> {
-        if self.len & 0xf000 != 0
-            {return Err(PackingError::InvalidValue)}
-        Ok((   (self.len & 0x0fff) 
-            | ((self.ty as u8 as u16) << 12)
-          ).to_le_bytes())
+        Ok(unsafe {std::mem::transmute::<&Self, &Self::ByteArray>(self)}.clone())
     }
     fn unpack(src: &Self::ByteArray) -> PackingResult<Self> {
-        let n = u16::from_le_bytes(src.clone());
-        let len = n & 0x0fff;
-        let ty = match EthercatType::try_from((n >> 12) as u8) {
-            Ok(x) => x,
-            Err(_) => return Err(PackingError::InvalidValue),
-            };
-        Ok(Self {len, ty})
+        Ok(unsafe {std::mem::transmute::<&Self::ByteArray, &Self>(src)}.clone())
     }
 }
 
 /// type of ethercat frame
-#[derive(PrimitiveEnum_u8, TryFromPrimitive, Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u8)]
+#[bitsize(4)]
+#[derive(TryFromBits, Debug, Clone)]
 enum EthercatType {
+    /// process data unit, use to exchange with physical and logical memory
     PDU = 0x1,
     NetworkVariable = 0x4,
     Mailbox = 0x5,
 }
 
-/// header for PDU exchange
-// #[derive(PackedStruct, Clone, Debug, Default)]
-// #[packed_struct(size_bytes="10", bit_numbering = "msb0", endian = "lsb")]
-// struct PduHeader {
-//     #[packed_field(bytes="0", ty="enum")]  command: PduCommand,
-//     #[packed_field(bytes="1")]  token: u8,
-//     #[packed_field(bytes="2:3")]    destination: u16,
-//     #[packed_field(bytes="4:5")]    address: u16,
-//     #[packed_field(bits="48:58")]   len: u16,
-//     #[packed_field(bits="62")]  circulating: bool,
-//     #[packed_field(bits="63")]  next: bool,
-//     #[packed_field(bytes="8:9")]  irq: u16,
-// }
-use bilge::prelude::*;
-
+/// header of a PDU frame, this one of the possible ethercat frames
 #[bitsize(80)]
 #[derive(FromBits, DebugBits, Clone, Default)]
 struct PduHeader {
+    /// PDU command, specifying whether logical or physical memory is accesses, addressing type, and what read/write operation
     command: u8,
+    /// PDU task request identifier
     token: u8,
+    /// slave address
     destination: u16,
+    /// memory address
     address: u16,
+    /// data length
     len: u11,
     reserved: u3,
     circulating: bool,
+    /// true if there is an other PDU in the same PDU frame
     next: bool,
     interrupt: u16,
 }
@@ -349,15 +324,26 @@ impl PackedStruct for PduHeader {
 }
 
 /// footer for PDU exchange
-#[derive(PackedStruct, Clone, Debug)]
-#[packed_struct(size_bytes="2", bit_numbering = "lsb0", endian = "lsb")]
+#[bitsize(16)]
+#[derive(FromBits, DebugBits, Clone, Default)]
 struct PduFooter {
-    #[packed_field(bytes="0:1")]  working_count: u16,
+    working_count: u16,
+}
+impl PackedStruct for PduFooter {
+    type ByteArray = [u8; 2];
+    fn pack(&self) -> PackingResult<Self::ByteArray> {
+        Ok(unsafe {std::mem::transmute::<&Self, &Self::ByteArray>(self)}.clone())
+    }
+    fn unpack(src: &Self::ByteArray) -> PackingResult<Self> {
+        Ok(unsafe {std::mem::transmute::<&Self::ByteArray, &Self>(src)}.clone())
+    }
 }
 /// the possible PDU commands
-#[derive(PrimitiveEnum_u8, Default, Copy, Clone, Debug, Eq, PartialEq)]
+#[bitsize(8)]
+#[derive(FromBits, Debug, Clone, Default)]
 pub enum PduCommand {
     /// no operation
+    #[fallback]
     #[default]
     NOP = 0x0,
     
@@ -387,6 +373,18 @@ pub enum PduCommand {
     FRMW = 0x0E,
 }
 
+/// dynamically specifies a destination address on the ethercat loop
+pub enum Address {
+	/// every slave will receive and execute
+	Broadcast,
+	/// address will be determined by the topology (index of the slave in the ethernet loop)
+	AutoIncremented,
+	/// address has been set by the master previously
+	Configured(u32),
+	/// the logical memory is the destination, all slaves are concerned
+	Logical,
+}
+
 /// struct for internal use in RawMaster
 struct PduStorage {
     data: &'static [u8],
@@ -411,86 +409,14 @@ Drop for Finisher<F>  {
     }
 }
 
-// struct EthercatFrame<'a> {
-//     /// length of the ethercat frame (minus 2 bytes, which is the header)
-//     len: u16,
-//     ty: EthercatType,
-//     data: &'a [u8],
-//     
-//     fn unpack(buff: &'a [u8]) -> Result<Self>
-//     fn pack(&self, buff: &[u8]) -> Result
-// }
-// struct PduFrame<'a> {
-//     command: PduCommand,
-//     token: u8,
-//     destination: u16,
-//     address: u16,
-//     len: u16,
-//     circulating: bool,
-//     next: bool,
-//     irq: u16,
-//     data: &'a [u8],
-// }
 
 // struct EthercatFrame {
-//     field: Field<()>,
+//     area: Field<()>,
 //     
-//     fn new(&self, field) -> Self  {Self{field}}
-//     fn len(&self) -> BitField<u16>    {self.field.as_bitfield().pick(BitField::new(0, 11))}
-//     fn ty(&self) -> BitField<EthercatType>  {self.field.as_bitfield().pick(BitField::new(14, 16))}
-//     fn data(&self, data: &[u8]) -> Field<()>  {self.field.pick(Field::new(0, self.len().get(data)))}
-// }
-// 
-// let frame = EthercatFrame::from(data)
-// match frame.len().get() {
-//     match frame.ty().get() {
-//         
-//     }
-// }
-// 
-// let frame = EthercatFrame::append(data)
-// frame.len().set(12)
-// frame.ty().set(PDU)
-// let content = EthercatPDU::append(frame.data().get_mut())
-
-// struct EthercatFrame {
-//     fn size(content: usize) -> usize  {16 + content}
-//     fn len() -> BitField<u16>    {BitField::new(0, 11)}
-//     fn ty() -> BitField<EthercatType> {BitField::new(14, 16)}
-//     fn data<'a>(data: &'a [u8]) -> &'a [u8]  {data[16 .. self.len().get(data)]}
-// }
-// 
-// match EthercatFrame::ty().get(data) {
-//     PDU => {
-//         let pdu = EthercatFrame::data(frame)
-//         match PduFrame::command().get(pdu)
-//         },
-// }
-
-// use std::time::Duration;
-// struct Event<T: Clone> {
-//     mutex: std::sync::Mutex<T>,
-//     cond: std::sync::Condvar,
-// }
-// impl Event<T: Clone> {
-//     fn new(value: T) -> Self {Self{
-//         mutex: std::sync::Mutex::new(value),
-//         cond: std::sync::Condvar::new(),
-//     }}
-//     fn wait(&self) -> T {
-//         let guard = self.mutex.lock().unwrap();
-//         self.cond.wait(guard).unwrap().clone()
-//     }
-//     fn wait_timeout(&self, dur: Duration) -> T {
-//         let guard = self.mutex.lock().unwrap();
-//         self.cond.wait_timeout(guard, duration).unwrap().clone()
-//     }
-//     fn notify_one(&self, value: T) {
-//         let guard = self.mutex.lock().unwrap();
-//         self.cond.notify_one();
-//     }
-//     fn notify_all(&self, value: T) -> {
-//         let guard = self.mutex.lock().unwrap();
-//         self.cond.notify_all();
-//     }
+//     fn size(data: &[u8]) -> usize {data.len() + 14}
+//     fn new(&self, area) -> Self  {Self{area}}
+//     fn len(&self) -> BitField<u16>    {self.area.bit_field(0, 11)}
+//     fn ty(&self) -> BitField<EthercatType>  {self.area.bit_field(14, 16)}
+//     fn data(&self, data: &[u8]) -> Field<()>  {self.area.field(0, self.len().get(data))}
+//     fn quelqonque() -> MyStruct {}
 // }

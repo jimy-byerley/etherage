@@ -17,5 +17,6 @@ async fn main() -> std::io::Result<()> {
     })};
     std::thread::sleep(Duration::from_millis(500));
     let some: u16 = master.aprd(0x1234).await;
+    println!("received {:x}", some);
     Ok(())
 }

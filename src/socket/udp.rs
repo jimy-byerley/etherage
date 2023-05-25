@@ -31,6 +31,7 @@ impl UdpSocket {
             filter_address: true,
         })
     }
+    /// if enabled, the incoming packets coming from wrong host will be ignored
     pub fn set_filter_address(&mut self, enable: bool) {
         self.filter_address = enable;
     }
