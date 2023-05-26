@@ -47,6 +47,11 @@ struct PduState {
 	pub send: Vec<u8>,
 	pub receive: HashMap<u8, PduStorage>,
 }
+/// struct for internal use in RawMaster
+struct PduStorage {
+    data: &'static [u8],
+    ready: bool,
+}
 impl<S: EthercatSocket> RawMaster<S> {
 	pub fn new(socket: S) -> Self {        
         Self {
@@ -103,16 +108,46 @@ impl<S: EthercatSocket> RawMaster<S> {
 	}
 	pub async fn frmw(&self) {todo!()}
 	
-	pub async fn lrd(&self) {todo!()}
-	pub async fn lwr(&self) {todo!()}
-	pub async fn lrw(&self) {todo!()}
+	pub async fn lrd<T: PduData>(&self, slave: u16, address: u16) -> T {
+        self.pdu(PduCommand::LRD, 0, address, None).await
+	}
+	pub async fn lwr<T: PduData>(&self, slave: u16, address: u16, data: T) {
+        self.pdu(PduCommand::LWR, 0, address, Some(data)).await;
+	}
+	pub async fn lrw<T: PduData>(&self, slave: u16, address: u16, data: T) -> T {
+        self.pdu(PduCommand::LRW, 0, address, Some(data)).await
+	}
 	
-	/// maps to a *wr command
-	pub async fn write<T: PduData>(&self, address: Address, data: T) {todo!()}
 	/// maps to a *rd command
-	pub async fn read<T: PduData>(&self, address: Address) -> T {todo!()}
+	pub async fn read<T: PduData>(&self, slave: SlaveAddress, memory: u16) -> T {
+        let (command, slave) = match slave {
+            SlaveAddress::Broadcast => (PduCommand::BRD, 0),
+            SlaveAddress::AutoIncremented => (PduCommand::APRD, 0),
+            SlaveAddress::Configured(address) => (PduCommand::FPRD, address),
+            SlaveAddress::Logical => (PduCommand::LRD, 0),
+            };
+        self.pdu(command, slave, memory, None).await
+    }
+	/// maps to a *wr command
+	pub async fn write<T: PduData>(&self, slave: SlaveAddress, memory: u16, data: T) {
+        let (command, slave) = match slave {
+            SlaveAddress::Broadcast => (PduCommand::BWR, 0),
+            SlaveAddress::AutoIncremented => (PduCommand::APWR, 0),
+            SlaveAddress::Configured(address) => (PduCommand::FPWR, address),
+            SlaveAddress::Logical => (PduCommand::LWR, 0),
+            };
+        self.pdu(command, slave, memory, Some(data)).await;
+	}
 	/// maps to a *rw command
-	pub async fn exchange<T: PduData>(&self, address: Address, data: T) -> T {todo!()}
+	pub async fn exchange<T: PduData>(&self, slave: SlaveAddress, memory: u16, data: T) -> T {
+        let (command, slave) = match slave {
+            SlaveAddress::Broadcast => (PduCommand::BRW, 0),
+            SlaveAddress::AutoIncremented => (PduCommand::APRW, 0),
+            SlaveAddress::Configured(address) => (PduCommand::FPRW, address),
+            SlaveAddress::Logical => (PduCommand::LRW, 0),
+            };
+        self.pdu(command, slave, memory, Some(data)).await
+	}
 	
 	/// send a PDU on the ethercat bus
 	/// the PDU is buffered if possible
@@ -123,7 +158,7 @@ impl<S: EthercatSocket> RawMaster<S> {
             };
         let data = storage.as_bytes_slice();
         
-        let mut token;
+        let token;
         let (ready, finisher) = {
             // buffering the pdu sending
             let mut state = self.pdu_state.lock().unwrap();
@@ -194,7 +229,7 @@ impl<S: EthercatSocket> RawMaster<S> {
         T::unpack(data).unwrap()
 	}
 	
-	/// extract a received PDU and buffer it for reception by an eventual `self.pdu()` future waiting for it.
+	/// extract a received frame of PDUs and buffer each for reception by an eventual `self.pdu()` future waiting for it.
 	fn pdu_receive(&self, state: &mut PduState, frame: &[u8]) {
         let mut frame = frame;
         loop {
@@ -241,6 +276,7 @@ impl<S: EthercatSocket> RawMaster<S> {
         let content = &content[.. header.len().value() as usize];
         
         assert!(header.len().value() as usize <= content.len());
+        // TODO check working count to detect possible refused requests
         match header.ty() {
             EthercatType::PDU => self.pdu_receive(
                                     self.pdu_state.lock().unwrap().deref_mut(), 
@@ -276,6 +312,19 @@ impl<S: EthercatSocket> RawMaster<S> {
 }
 
 
+/// dynamically specifies a destination address on the ethercat loop
+pub enum SlaveAddress {
+	/// every slave will receive and execute
+	Broadcast,
+	/// address will be determined by the topology (index of the slave in the ethernet loop)
+	AutoIncremented,
+	/// address has been set by the master previously
+	Configured(u16),
+	/// the logical memory is the destination, all slaves are concerned
+	Logical,
+}
+
+
 
 
 /// ethercat frame header (common to ethernet or UDP mediums) as described in ETG 1000.4 table 11
@@ -304,9 +353,18 @@ impl PackedStruct for EthercatHeader {
 #[bitsize(4)]
 #[derive(TryFromBits, Debug, Clone)]
 enum EthercatType {
-    /// process data unit, use to exchange with physical and logical memory
+    /// process data unit, use to exchange with physical and logical memory in realtime or not
+    /// the mailbox content sent to slaves shall be written to the physical memory through these
+    ///
+    /// See ETG.1000.4
     PDU = 0x1,
+    
     NetworkVariable = 0x4,
+    
+    /// mailbox gateway communication, between the master and non-slave devices, allowing non-slave devices to mailbox with the slaves
+    /// this communication betwee, master and non-slave usually takes place in a TCP or UDP socket
+    ///
+    /// See ETG.8200
     Mailbox = 0x5,
 }
 
@@ -445,22 +503,57 @@ pub enum PduCommand {
     FRMW = 0x0E,
 }
 
-/// dynamically specifies a destination address on the ethercat loop
-pub enum Address {
-	/// every slave will receive and execute
-	Broadcast,
-	/// address will be determined by the topology (index of the slave in the ethernet loop)
-	AutoIncremented,
-	/// address has been set by the master previously
-	Configured(u32),
-	/// the logical memory is the destination, all slaves are concerned
-	Logical,
+/// ETG 1000.4 5.6
+struct MailboxFrame<'a> {
+    header: MailboxHeader,
+    data: &'a [u8],
 }
 
-/// struct for internal use in RawMaster
-struct PduStorage {
-    data: &'static [u8],
-    ready: bool,
+/// ETG 1000.4 table 29
+#[bitsize(48)]
+#[derive(TryFromBits, DebugBits)]
+struct MailboxHeader {
+    length: u16,
+    address: u16,
+    channel: u6,
+    priority: u2,
+    ty: MailboxType,
+    count: u3,
+    reserved: u1,
+}
+
+/// ETG 1000.4 table 29
+#[bitsize(4)]
+#[derive(TryFromBits, Debug)]
+enum MailboxType {
+    Error = 0x0,
+    Ads = 0x1,
+    Ethernet = 0x2,
+    Can = 0x3,
+    File = 0x4,
+    Servo = 0x5,
+    Specific = 0xf,
+}
+
+/// ETG 1000.4 table 30
+struct MailboxErrorFrame {
+    ty: u16,
+    detail: MailboxError,
+}
+
+// ETG 1000.4 table 30
+#[bitsize(16)]
+#[derive(TryFromBits, Debug)]
+enum MailboxError {
+    Syntax = 0x1,
+    UnsupportedProtocol = 0x2,
+    InvalidChannel = 0x3,
+    ServiceNotSupported = 0x4,
+    InvalidHeader = 0x5,
+    SizeTooShort = 0x6,
+    NoMoreMemory = 0x7,
+    InvalidSize = 0x8,
+    ServiceInWork = 0x9,
 }
 
 
