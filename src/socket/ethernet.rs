@@ -189,6 +189,7 @@ fn ifreq_for(name: &str) -> ifreq {
 
 
 /// an ethercat frame in its unpacked form
+/// an ethercat frame has a variable size du to its data content, this is why the data is not owned here but meant to reference some user buffer
 #[derive(Debug)]
 struct EthernetFrame<'a> {
     header: EthernetHeader,
