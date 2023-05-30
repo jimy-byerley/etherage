@@ -19,7 +19,7 @@ log = "0.4.17"
 num_enum = { version = "^0.6.0", default-features = false }
 packed_struct = { version = "0.10.0", default-features = false }
 tokio = { version = "1.21.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
-bilge = {version="^0.1.3", git="https://github.com/hecatia-elegua/bilge"}
+bilge = {version="^0.1.4", git="https://github.com/hecatia-elegua/bilge"}
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.134"

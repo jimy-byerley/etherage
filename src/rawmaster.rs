@@ -8,7 +8,6 @@ use core::time::Duration;
 use tokio::sync::Notify;
 use packed_struct::prelude::*;
 use bilge::prelude::*;
-use num_enum::TryFromPrimitive;
 use crate::socket::*;
 use crate::data::{PduData, ByteArray, PackingResult};
 
@@ -282,8 +281,10 @@ impl<S: EthercatSocket> RawMaster<S> {
                                     self.pdu_state.lock().unwrap().deref_mut(), 
                                     content,
                                     ),
+            // what is this ?
             EthercatType::NetworkVariable => todo!(),
-            EthercatType::Mailbox => todo!(),
+            // no mailbox frame shall transit to this master, ignore it or raise an error ?
+            EthercatType::Mailbox => {},
         }
 	}
 	/// this is the socket sending handler
@@ -331,7 +332,7 @@ pub enum SlaveAddress {
 // we cannot use the packed_field macro here because the bit fiddling is weird in this header
 // so here it is by hand
 #[bitsize(16)]
-#[derive(TryFromBits, DebugBits, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone)]
 struct EthercatHeader {
     /// length of the ethercat frame (minus 2 bytes, which is the header)
     len: u11,
@@ -342,10 +343,10 @@ struct EthercatHeader {
 impl PackedStruct for EthercatHeader {
     type ByteArray = [u8; 2];
     fn pack(&self) -> PackingResult<Self::ByteArray> {
-        Ok(unsafe {std::mem::transmute::<&Self, &Self::ByteArray>(self)}.clone())
+        Ok(u16::from(self.clone()).to_le_bytes())
     }
     fn unpack(src: &Self::ByteArray) -> PackingResult<Self> {
-        Ok(unsafe {std::mem::transmute::<&Self::ByteArray, &Self>(src)}.clone())
+        Ok(Self::from(u16::from_le_bytes(src.clone())))
     }
 }
 
@@ -526,7 +527,7 @@ struct MailboxHeader {
 #[bitsize(4)]
 #[derive(TryFromBits, Debug)]
 enum MailboxType {
-    Error = 0x0,
+    Exception = 0x0,
     Ads = 0x1,
     Ethernet = 0x2,
     Can = 0x3,

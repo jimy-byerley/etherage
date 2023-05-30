@@ -69,7 +69,63 @@ impl<const N: usize> PduData for [u8; N] {
 	}
 }
 
-macro_rules! impl_pdudata {
+impl PduData for bool {
+	const ID: TypeId = TypeId::BOOL;
+	type ByteArray = [u8; 1];
+	
+	fn pack(&self) -> Self::ByteArray    {
+        Self::ByteArray::new(if *self {0b1} else {0b0})
+	}
+	fn unpack(src: &[u8]) -> PackingResult<Self>  {
+		Ok(src[0] & 0b1 == 0b1)
+	}
+}
+
+/// macro implementing [PduData] for a given struct generated with `bilge`
+#[macro_export]
+macro_rules! bilge_pdudata {
+    ($t: ty) => { packed_pdudata!($t); }
+//     ($t: ty, $id: ident) => { impl PduData for $t {
+//         const ID: TypeId = TypeId::CUSTOM;
+//         type ByteArray = [u8; ($id::BITS as usize + 7)/8];
+//         
+//         fn pack(&self) -> PackingResult<Self::ByteArray> {
+//             Ok($id::from(*self).to_le_bytes())
+//         }
+//         fn unpack(src: &[u8]) -> PackingResult<Self> {
+//             Ok(Self::from($id::from_le_bytes(src.try_into().map_err(|_|
+//                 PackingError::BufferSizeMismatch{
+//                     expected: ($id::BITS as usize + 7)/8,
+//                     actual: src.len(),
+//                 })?.clone()
+//                 )))
+//         }
+//     }};
+}
+
+/// unsafe macro implementing [PduData] for a given struct with `repr(packed)`
+#[macro_export]
+macro_rules! packed_pdudata {
+    ($t: ty) => { impl PduData for $t {
+        const ID: TypeId = TypeId::CUSTOM;
+        type ByteArray = [u8; core::mem::size_of::<$t>()];
+        
+        fn pack(&self) -> Self::ByteArray {
+            unsafe{ core::mem::transmute::<Self, Self::ByteArray>(self.clone()) }
+        }
+        fn unpack(src: &[u8]) -> PackingResult<Self> {
+            let src: &Self::ByteArray = src.try_into().map_err(|_|
+                PackingError::BufferSizeMismatch{
+                    expected: Self::ByteArray::len(),
+                    actual: src.len(),
+                })?;
+            Ok(unsafe{ core::mem::transmute::<Self::ByteArray, Self>(src.clone()) })
+        }
+    }};
+}
+
+/// macro implementing [PduData] for numeric types
+macro_rules! num_pdudata {
 	($t: ty, $id: ident) => { impl PduData for $t {
 			const ID: TypeId = TypeId::$id;
 			type ByteArray = [u8; core::mem::size_of::<$t>()];
@@ -87,19 +143,19 @@ macro_rules! impl_pdudata {
 					))
 			}
 		}};
-	($t: ty) => { impl_pdudata_float(t, TypeId::CUSTOM) };
+	($t: ty) => { num_pdudata!(t, TypeId::CUSTOM) };
 }
 
-impl_pdudata!(u8, U8);
-impl_pdudata!(u16, U16);
-impl_pdudata!(u32, U32);
-impl_pdudata!(u64, U64);
-impl_pdudata!(i8, I8);
-impl_pdudata!(i16, I16);
-impl_pdudata!(i32, I32);
-impl_pdudata!(i64, I64);
-impl_pdudata!(f32, F32);
-impl_pdudata!(f64, F64);
+num_pdudata!(u8, U8);
+num_pdudata!(u16, U16);
+num_pdudata!(u32, U32);
+num_pdudata!(u64, U64);
+num_pdudata!(i8, I8);
+num_pdudata!(i16, I16);
+num_pdudata!(i32, I32);
+num_pdudata!(i64, I64);
+num_pdudata!(f32, F32);
+num_pdudata!(f64, F64);
 
 
 
@@ -118,9 +174,13 @@ pub struct Field<T: PduData> {
 }
 impl<T: PduData> Field<T>
 {
-	/// build a Field from its content
+	/// build a Field from its byte offset and byte length
 	pub fn new(byte: usize, len: usize) -> Self {
 		Self{extracted: PhantomData, byte, len}
+	}
+	/// build a Field from its byte offset, infering its length from the data nominal size
+	pub fn simple(byte: usize) -> Self {
+        Self{extracted: PhantomData, byte, len: T::ByteArray::len()}
 	}
 	/// extract the value pointed by the field in the given byte array
 	pub fn get(&self, data: &[u8]) -> T       {
