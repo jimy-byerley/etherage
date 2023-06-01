@@ -1,5 +1,10 @@
-use crate::mailbox::{Mailbox, MailboxType};
+use crate::{
+	mailbox::{Mailbox, MailboxType},
+	sdo::Sdo,
+	data::PduData,
+	};
 use bilge::prelude::*;
+use std::io::Cursor;
 
 
 
@@ -21,7 +26,7 @@ pub struct Can<'a> {
 }
 impl Can<'_> {
     /// read and SDO, any size
-	pub async fn sdo_read<T>(&mut self, address: Sdo<T>, priority: u2) -> T   {
+	pub async fn sdo_read<T>(&mut self, sdo: Sdo<T>, priority: u2) -> T   {
 		let mut data = T::ByteArray::new(0);
         let mut response_buf = [0; SEGMENT_MAX_SIZE 
                                     + CanHeader::ByteArray::len() 
@@ -31,7 +36,7 @@ impl Can<'_> {
 			service: CanService::SDORequest,
 			};
         // generic request
-        self.mailbox.write(MailboxType::Can, address, priority, &CoeFrame::new(
+        self.mailbox.write(MailboxType::Can, priority, &CoeFrame::new(
             coe,
             &SdoFrame::new(
                 SdoHeader::new(
@@ -47,7 +52,7 @@ impl Can<'_> {
             ).pack(),
         ).pack());
         // receive data
-        self.mailbox.read(MailboxType::Can, address, priority, &mut response_buf);
+        self.mailbox.read(MailboxType::Can, priority, &mut response_buf);
         let response = SdoFrame::unpack(
                         CoeFrame::unpack(response_buf).unwrap()
                             .data
@@ -74,7 +79,7 @@ impl Can<'_> {
             while received < data.len() {
                 assert!(response.more());
                 
-                self.mailbox.read(MailboxType::Can, address, priority, &mut response_buf);
+                self.mailbox.read(MailboxType::Can, priority, &mut response_buf);
                 let response = SegmentFrame::unpack(
                                 CoeFrame::unpack(response_buf).unwrap()
                                     .data
@@ -121,7 +126,7 @@ impl Can<'_> {
             // receive acknowledge
             self.mailbox.read(MailboxType::Can, priority, &mut response_buf);
             let response = SdoFrame::unpack(
-                        CoeFrame::unpack(buf).unwrap()
+                        CoeFrame::unpack(response_buf).unwrap()
                             .data
                         ).unwrap()
                         .header;
@@ -134,7 +139,7 @@ impl Can<'_> {
 			let mut sent = 0;
 			
 			// send one download request with the start of data
-			let segment = data.len().min(MAILBOX_MAX_SIZE - SdoHeader::ByteArray::len());
+			let segment = data.len().min(SEGMENT_MAX_SIZE);
 			self.mailbox.write(MailboxType::Can, priority, CoeFrame::new(
 				coe,
 				&SdoFrame::new(
@@ -167,9 +172,8 @@ impl Can<'_> {
             let mut toggle = false;
             while sent < data.len() {
                 // send segment
-                let max_segment = MAILBOX_MAX_SIZE - SdoSegment::ByteArray::len();
-                let (segment, more) = if data.len() < max_segment
-                    {(data.len(), false)} else {(max_segment, true)};
+                let (segment, more) = if data.len() < SEGMENT_MAX_SIZE
+                    {(data.len(), false)} else {(SEGMENT_MAX_SIZE, true)};
                 self.mailbox.write(MailboxType::Can, priority, CoeFrame::new(
                     coe,
                     SdoFrame::new(
@@ -304,73 +308,73 @@ impl<'a> SdoFrame<'a> {
     }
 }
 
-enum SdoAbortCode {
-    /// Toggle bit not changed
-    0x05_03_00_00,
-    /// SDO protocol timeout
-    0x05_04_00_00,
-    /// Client/Server command specifier not valid or unknown
-    0x05_04_00_01,
-    /// Out of memory
-    0x05_04_00_05,
-    /// Unsupported access to an object
-    0x06_01_00_00,
-    /// Attempt to read to a write only object
-    0x06_01_00_01,
-    /// Attempt to write to a read only object
-    0x06_01_00_02,
-    /// Subindex cannot be written, SI0 must be 0 for write access
-    0x06_01_00_03,
-    /// SDO Complete access not supported for objects of variable length such as ENUMobject types
-
-    0x06_01_00_04,
-    /// Object length exceeds mailbox size
-    0x06_01_00_05,
-    /// Object mapped to RxPDO, SDO Download blocked
-    0x06_01_00_06,
-    /// The object does not exist in the object directory
-    0x06_02_00_00,
-    /// The object can not be mapped into the PDO
-    0x06_04_00_41,
-    /// The number and length of the objects to be mapped would exceed the PDO length
-    0x06_04_00_42,
-    /// General parameter incompatibility reason
-    0x06_04_00_43,
-    /// General internal incompatibility in the device
-    0x06_04_00_47,
-    /// Access failed due to a hardware error
-    0x06_06_00_00,
-    /// Data type does not match, length of service parameter does not match
-    0x06_07_00_10,
-    /// Data type does not match, length of service parameter too high
-    0x06_07_00_12,
-    /// Data type does not match, length of service parameter too low
-    0x06_07_00_13,
-    /// Subindex does not exist
-    0x06_09_00_11,
-    /// Value range of parameter exceeded (only for write access)
-    0x06_09_00_30,
-    /// Value of parameter written too high
-    0x06_09_00_31,
-    /// Value of parameter written too low
-    0x06_09_00_32,
-    /// Maximum value is less than minimum value
-    0x06_09_00_36,
-    /// General error
-    0x08_00_00_00,
-    /// Data cannot be transferred or stored to the applicationNOTE: This is the general Abort Code in case no further detail on the reason can determined. It is recommended to use one of the more detailed Abort Codes (0x08000021, 0x08000022)
-
-    0x08_00_00_20,
-    /** Data cannot be transferred or stored to the application because of local control
-    NOTE: “local control” means an application specific reason. It does not mean the
-    ESM-specific control
-    */
-    0x08_00_00_21,
-    /** Data cannot be transferred or stored to the application because of the present
-    device state
-    NOTE: “device state” means the ESM state
-    */
-    0x08_00_00_22,
-    /// Object dictionary dynamic generation fails or no object dictionary is present
-    0x08_00_00_23,
-}
+// enum SdoAbortCode {
+//     /// Toggle bit not changed
+//     0x05_03_00_00,
+//     /// SDO protocol timeout
+//     0x05_04_00_00,
+//     /// Client/Server command specifier not valid or unknown
+//     0x05_04_00_01,
+//     /// Out of memory
+//     0x05_04_00_05,
+//     /// Unsupported access to an object
+//     0x06_01_00_00,
+//     /// Attempt to read to a write only object
+//     0x06_01_00_01,
+//     /// Attempt to write to a read only object
+//     0x06_01_00_02,
+//     /// Subindex cannot be written, SI0 must be 0 for write access
+//     0x06_01_00_03,
+//     /// SDO Complete access not supported for objects of variable length such as ENUMobject types
+// 
+//     0x06_01_00_04,
+//     /// Object length exceeds mailbox size
+//     0x06_01_00_05,
+//     /// Object mapped to RxPDO, SDO Download blocked
+//     0x06_01_00_06,
+//     /// The object does not exist in the object directory
+//     0x06_02_00_00,
+//     /// The object can not be mapped into the PDO
+//     0x06_04_00_41,
+//     /// The number and length of the objects to be mapped would exceed the PDO length
+//     0x06_04_00_42,
+//     /// General parameter incompatibility reason
+//     0x06_04_00_43,
+//     /// General internal incompatibility in the device
+//     0x06_04_00_47,
+//     /// Access failed due to a hardware error
+//     0x06_06_00_00,
+//     /// Data type does not match, length of service parameter does not match
+//     0x06_07_00_10,
+//     /// Data type does not match, length of service parameter too high
+//     0x06_07_00_12,
+//     /// Data type does not match, length of service parameter too low
+//     0x06_07_00_13,
+//     /// Subindex does not exist
+//     0x06_09_00_11,
+//     /// Value range of parameter exceeded (only for write access)
+//     0x06_09_00_30,
+//     /// Value of parameter written too high
+//     0x06_09_00_31,
+//     /// Value of parameter written too low
+//     0x06_09_00_32,
+//     /// Maximum value is less than minimum value
+//     0x06_09_00_36,
+//     /// General error
+//     0x08_00_00_00,
+//     /// Data cannot be transferred or stored to the applicationNOTE: This is the general Abort Code in case no further detail on the reason can determined. It is recommended to use one of the more detailed Abort Codes (0x08000021, 0x08000022)
+// 
+//     0x08_00_00_20,
+//     /** Data cannot be transferred or stored to the application because of local control
+//     NOTE: “local control” means an application specific reason. It does not mean the
+//     ESM-specific control
+//     */
+//     0x08_00_00_21,
+//     /** Data cannot be transferred or stored to the application because of the present
+//     device state
+//     NOTE: “device state” means the ESM state
+//     */
+//     0x08_00_00_22,
+//     /// Object dictionary dynamic generation fails or no object dictionary is present
+//     0x08_00_00_23,
+// }

@@ -1,5 +1,9 @@
-use crate::rawmaster::RawMaster;
-use crate::data::Field;
+use crate::{
+	socket::EthercatSocket,
+	rawmaster::RawMaster,
+	data::Field,
+	registers,
+	};
 use bilge::prelude::*;
 
 
@@ -7,35 +11,36 @@ use bilge::prelude::*;
     implementation of communication with a slave's mailbox
 */
 pub struct Mailbox<'a> {
-    master: &'a dyn RawMaster,
+    master: &'a RawMaster<dyn EthercatSocket>,
 	slave: u16,
 	count: u8,
 }
-impl Mailbox<'_> {
-    /// read the frame currently in the mailbox, wait for it if not already present
+impl Mailbox<'_> {	
+	/// read the frame currently in the mailbox, wait for it if not already present
     /// `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
     /// this function does not return the data size read, so the read frame should provide a length
 	pub async fn read(&mut self, ty: MailboxType, priority: u2, data: &mut [u8]) {
-		let mailbox = registers::sync_managers.mailbox_out();
+		let mailbox = registers::sync_managers::interface.mailbox_out();
 		// inform the mailbox we want to read it
-		while ! master.fprd(self.slave, mailbox.read, true).await.worked() {}
+		while self.master.fprd(self.slave, mailbox.read, true).await.answers == 0 {}
 		let received = loop {
 			// read data
-			if let Worked(data) = master.fprd(self.slave, mailbox.address) {
-				break data;
+			let reading = self.master.fprd(self.slave, mailbox.address);
+			if reading.answers == 1 {
+				break reading.value;
 			}
 			// transmission loss, wait for repetition
 			else {
-				while ! master.fpwr(self.slave, mailbox.repeat, true).await.worked()  {}
-				while ! master.fprd(self.slave, mailbox.ready).await.unwrap_or(false) {}
+				while self.master.fpwr(self.slave, mailbox.repeat, true).await.answers == 0  {}
+				while ! self.master.fprd(self.slave, mailbox.ready).await.value {}
 			}
 		};
 		data.write_from_slice(received);
 	}
 	/// write the given frame in the mailbox
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
-        self.count = (count % 6)+1;
-		let mailbox = registers::sync_managers.mailbox_in();
+        self.count = (self.count % 6)+1;
+		let mailbox = registers::sync_managers::interface.mailbox_in();
 		let sent = MailboxFrame::new(
 			MailboxHeader {
 				length: data.len(),
@@ -47,10 +52,10 @@ impl Mailbox<'_> {
 			},
 			data,
 			);
-		while ! master.fprd(self.slave, mailbox.write, true).await.worked() {}
+		while self.master.fprd(self.slave, mailbox.write, true).await.answers == 0 {}
 		let received = loop {
 			// read data
-			if let Worked(_) = master.fpwr(self.slave, mailbox.address, sent) {
+			if self.master.fpwr(self.slave, mailbox.address, sent).await.answers == 1 {
 				break data;
 			}
 		};
@@ -87,7 +92,7 @@ struct MailboxHeader {
 /// ETG 1000.4 table 29
 #[bitsize(4)]
 #[derive(TryFromBits, Debug)]
-enum MailboxType {
+pub enum MailboxType {
     Exception = 0x0,
     Ads = 0x1,
     Ethernet = 0x2,
@@ -107,7 +112,7 @@ struct MailboxErrorFrame {
 // ETG 1000.4 table 30
 #[bitsize(16)]
 #[derive(TryFromBits, Debug)]
-enum MailboxError {
+pub enum MailboxError {
     Syntax = 0x1,
     UnsupportedProtocol = 0x2,
     InvalidChannel = 0x3,
