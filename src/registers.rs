@@ -676,7 +676,7 @@ mod sync_manager {
     const watchdog: Field<u16> = Field::simple(0x0420);
     /// ETG.1000.6 table 46
     const watchdog_status: Field<bool> = Field::simple(0x0440);
-	const interface: SyncManager = SyncManager {address: 0x0800, num: 16},
+	const interface: SyncManager = SyncManager {address: 0x0800, num: 16};
 }
 	
 	/*

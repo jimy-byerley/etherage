@@ -34,4 +34,11 @@ impl Slave<PreOperational> {
     pub fn sdo_read<T>(&self, sdo: Sdo<T>) -> T   {todo!()}
     pub fn sdo_write<T>(&self, sdo: Sdo<T>, value: T)  {todo!()}
 }
-
+impl Slave<SafeOperational> {
+    pub fn sdo_read<T>(&self, sdo: Sdo<T>) -> T   {todo!()}
+    pub fn sdo_write<T>(&self, sdo: Sdo<T>, value: T)  {todo!()}
+}
+impl Slave<Operational> {
+    pub fn sdo_read<T>(&self, sdo: Sdo<T>) -> T   {todo!()}
+    pub fn sdo_write<T>(&self, sdo: Sdo<T>, value: T)  {todo!()}
+}

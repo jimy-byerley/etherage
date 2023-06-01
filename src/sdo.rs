@@ -43,6 +43,7 @@ pub struct Sdo<T: PduData> {
 #[derive(Clone, Debug)]
 pub enum SdoPart {
     /// the whole SDO (the complete struct with its eventual paddings)
+    /// NOTE: this doesn't strictly follows the ethercat specifications, since for complete SDO request we could choose to include or exclude subitem 0
     Complete,
     /// one subitem value in the SDO
     Sub(u8),
@@ -76,6 +77,15 @@ impl<T: PduData> Sdo<T> {
 	pub async fn get(&self, slave: &Slave) -> T  {todo!()}
 	/// set the subitem value on the given slave
 	pub async fn set(&self, slave: &Slave, value: T)   {todo!()}
+}
+impl SdoPart {
+    /// return the subindex or 0 for a complete item
+    fn unwrap(self) -> u8 {
+        match self {
+            Self::Complete => 0,
+            Self::Sub(i) => i,
+        }
+    }
 }
 impl<T: PduData> fmt::Debug for Sdo<T> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
