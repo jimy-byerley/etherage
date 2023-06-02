@@ -197,7 +197,7 @@ impl<S: EthercatSocket> RawMaster<S> {
             if state.last_start < state.send.len() {
                 let start = state.last_start;
                 let place = &mut state.send[start ..][.. PduHeader::packed_size()];
-                let mut header = PduHeader::unpack_from_slice(place).unwrap();
+                let mut header = PduHeader::unpack(place).unwrap();
                 header.set_next(true);
                 place.copy_from_slice(&header.pack().unwrap());
             }
@@ -246,9 +246,7 @@ impl<S: EthercatSocket> RawMaster<S> {
 	fn pdu_receive(&self, state: &mut PduState, frame: &[u8]) {
         let mut frame = frame;
         loop {
-            let header = PduHeader::unpack_from_slice(
-                &frame[.. PduHeader::packed_size()]
-                ).unwrap();
+            let header = PduHeader::unpack(&frame).unwrap();
             if let Some(storage) = state.receive.get(&header.token()) {
                 let content = &frame[PduHeader::packed_size() ..];
                 let content = &content[.. header.len().value() as usize];
@@ -284,7 +282,7 @@ impl<S: EthercatSocket> RawMaster<S> {
         let size = self.socket.receive(receive.deref_mut()).unwrap();
         let frame = &receive[.. size];
         
-        let header = EthercatHeader::unpack(&frame[.. EthercatHeader::packed_size()]).unwrap();
+        let header = EthercatHeader::unpack(frame).unwrap();
         let content = &frame[EthercatHeader::packed_size() ..];
         let content = &content[.. header.len().value() as usize];
         

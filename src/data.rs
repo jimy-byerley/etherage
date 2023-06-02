@@ -174,7 +174,15 @@ impl<'a> FrameData<'a> for &'a [u8] {
     fn unpack(src: &'a [u8]) -> PackingResult<Self> {Ok(src)}
 }
 
-// impl FrameData<'static> for PduData {
+// impl<T: PduData> FrameData<'a> for T {
+//     fn packed_size(&self) -> usize {<Self as PduData>::packed_size()}
+//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {
+//         dst[.. self.packed_size()].copy_from_slice(<Self as PduData>::pack(self).as_bytes_slice());
+//         Ok(())
+//     }
+//     fn unpack(src: &'a [u8]) -> PackingResult<Self> {
+//         <Self as PduData>::unpack(src)
+//     }
 // }
 
 

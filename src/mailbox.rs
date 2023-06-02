@@ -2,7 +2,7 @@ use crate::{
 	socket::EthercatSocket,
 	rawmaster::{RawMaster, PduCommand},
 	registers,
-    data::{self, ByteArray},
+    data::{self, PduData, ByteArray, PackingResult},
 	};
 use bilge::prelude::*;
 
@@ -18,11 +18,12 @@ pub struct Mailbox<'a> {
 
 impl Mailbox<'_> {	
     pub async fn poll(&mut self) -> bool {todo!()}
+    pub async fn available(&mut self) -> usize {todo!()}
     
 	/// read the frame currently in the mailbox, wait for it if not already present
     /// `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
     /// this function does not return the data size read, so the read frame should provide a length
-	pub async fn read(&mut self, ty: MailboxType, priority: u2, data: &mut [u8]) {
+	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox = registers::sync_manager::interface.mailbox_out();
 		// wait for data
 		let state = loop {
@@ -51,11 +52,13 @@ impl Mailbox<'_> {
         }
         let frame = MailboxFrame::unpack(buffer).unwrap();
         assert!(frame.header.length() <= data.len());
-        assert_eq!(frame.header.ty, ty);
-        assert_eq!(frame.header.count, self.count);
+        assert_eq!(frame.header.ty(), ty);
+        assert_eq!(u8::from(frame.header.count()), self.count);
 		data[.. frame.data.len()].write_from_slice(frame.data);
 		
 		// TODO wait for mailbox to become ready again ?
+		
+		&data[.. frame.data.len()]
 	}
 	/// write the given frame in the mailbox
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
@@ -105,11 +108,11 @@ impl<'a> MailboxFrame<'a> {
         cursor.write(self.header.pack()).unwrap();
         cursor.write(self.data).unwrap();
     }
-    fn unpack(src: &[u8]) -> PackingResult<Self> {
-        Self {
-            header: MailboxHeader::unpack(src),
+    fn unpack(src: &'a [u8]) -> PackingResult<Self> {
+        Ok(Self {
+            header: MailboxHeader::unpack(src).unwrap(),
             data: src[MailboxHeader::packed_size() ..][.. header.length()],
-        }
+        })
     }
 }
 
