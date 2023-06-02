@@ -8,8 +8,11 @@ use core::time::Duration;
 use tokio::sync::Notify;
 use packed_struct::prelude::*;
 use bilge::prelude::*;
-use crate::socket::*;
-use crate::data::{PduData, ByteArray, PackingResult};
+
+use crate::{
+    socket::*,
+    data::{self, PduData, ByteArray, PackingResult},
+    };
 
 const MAX_ETHERCAT_FRAME: usize = 2050;
 
@@ -50,6 +53,7 @@ struct PduState {
 struct PduStorage {
     data: &'static [u8],
     ready: bool,
+    answers: u16,
 }
 impl<S: EthercatSocket> RawMaster<S> {
 	pub fn new(socket: S) -> Self {        
@@ -128,8 +132,8 @@ impl<S: EthercatSocket> RawMaster<S> {
             };
         let data = T::ByteArray::new(0);
         PduAnswer {
-			answers: self.pdu(command, slave, memory, data.as_bytes_slice_mut()).await,
-			value: T::unpack(&data).unwrap(),
+			answers: self.pdu(command, slave, memory, data.as_mut_bytes_slice()).await,
+			value: T::unpack(data.as_bytes_slice()).unwrap(),
 			}
     }
 	/// maps to a *wr command
@@ -141,7 +145,7 @@ impl<S: EthercatSocket> RawMaster<S> {
             SlaveAddress::Logical => (PduCommand::LWR, 0),
             };
 		PduAnswer {
-			answers: self.pdu(command, slave, memory, data.pack().as_bytes_slice_mut()).await,
+			answers: self.pdu(command, slave, memory, data.pack().as_mut_bytes_slice()).await,
 			value: (),
 			}
 	}
@@ -155,8 +159,8 @@ impl<S: EthercatSocket> RawMaster<S> {
             };
         let mut data = data.pack();
         PduAnswer {
-			answers: self.pdu(command, slave, memory, data.as_bytes_slice_mut()).await,
-			value: T::unpack(&data).unwrap(),
+			answers: self.pdu(command, slave, memory, data.as_mut_bytes_slice()).await,
+			value: T::unpack(data.as_bytes_slice()).unwrap(),
 			}
 	}
 	
@@ -170,7 +174,7 @@ impl<S: EthercatSocket> RawMaster<S> {
             let mut state = self.pdu_state.lock().unwrap();
             
             // sending the buffer if necessary
-            while MAX_ETHERCAT_FRAME < state.send.len() + data.len() + <PduHeader as PackedStruct>::ByteArray::len() {
+            while MAX_ETHERCAT_FRAME < state.send.len() + data.len() + PduHeader::packed_size() {
                 println!("no more space, waiting");
                 self.send.notify_one();
                 state = self.sent.wait(state).unwrap();
@@ -192,7 +196,7 @@ impl<S: EthercatSocket> RawMaster<S> {
             // change last value's PduHeader.next
             if state.last_start < state.send.len() {
                 let start = state.last_start;
-                let place = &mut state.send[start ..][.. <PduHeader as PackedStruct>::ByteArray::len()];
+                let place = &mut state.send[start ..][.. PduHeader::packed_size()];
                 let mut header = PduHeader::unpack_from_slice(place).unwrap();
                 header.set_next(true);
                 place.copy_from_slice(&header.pack().unwrap());
@@ -243,11 +247,12 @@ impl<S: EthercatSocket> RawMaster<S> {
         let mut frame = frame;
         loop {
             let header = PduHeader::unpack_from_slice(
-                &frame[.. <PduHeader as PackedStruct>::ByteArray::len()]
+                &frame[.. PduHeader::packed_size()]
                 ).unwrap();
             if let Some(storage) = state.receive.get(&header.token()) {
-                let content = &frame[<PduHeader as PackedStruct>::ByteArray::len() ..];
+                let content = &frame[PduHeader::packed_size() ..];
                 let content = &content[.. header.len().value() as usize];
+                let footer = PduFooter::unpack(&content[header.len().value() as usize ..]).unwrap();
                 
                 // copy the PDU content in the reception buffer
                 // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
@@ -258,11 +263,11 @@ impl<S: EthercatSocket> RawMaster<S> {
                     .copy_from_slice(content);
                 let storage = unsafe {&mut *(storage as *const PduStorage as *mut PduStorage)};
 				storage.ready = true;
-				storage.answers = header.working_count;
+				storage.answers = footer.working_count();
             }
             frame = &frame[
-                <PduHeader as PackedStruct>::ByteArray::len() 
-                + <PduFooter as PackedStruct>::ByteArray::len() 
+                PduHeader::packed_size() 
+                + PduFooter::packed_size() 
                 + header.len().value() as usize 
                 ..];
             if ! header.next() {break}
@@ -279,10 +284,8 @@ impl<S: EthercatSocket> RawMaster<S> {
         let size = self.socket.receive(receive.deref_mut()).unwrap();
         let frame = &receive[.. size];
         
-        let header = EthercatHeader::unpack_from_slice(
-            &frame[.. <EthercatHeader as PackedStruct>::ByteArray::len()]
-            ).unwrap();
-        let content = &frame[<EthercatHeader as PackedStruct>::ByteArray::len() ..];
+        let header = EthercatHeader::unpack(&frame[.. EthercatHeader::packed_size()]).unwrap();
+        let content = &frame[EthercatHeader::packed_size() ..];
         let content = &content[.. header.len().value() as usize];
         
         assert!(header.len().value() as usize <= content.len());
@@ -309,7 +312,7 @@ impl<S: EthercatSocket> RawMaster<S> {
         send.extend_from_slice(EthercatHeader::new(
             u11::new(state.send.len() as u16),
             EthercatType::PDU,
-            ).pack().unwrap().as_bytes_slice()).unwrap();
+            ).pack().as_bytes_slice()).unwrap();
         send.extend_from_slice(&state.send).unwrap();
         // reset state
         state.send.clear();
@@ -354,19 +357,11 @@ struct EthercatHeader {
     /// frame type
     ty: EthercatType,
 }
-impl PackedStruct for EthercatHeader {
-    type ByteArray = [u8; 2];
-    fn pack(&self) -> PackingResult<Self::ByteArray> {
-        Ok(u16::from(self.clone()).to_le_bytes())
-    }
-    fn unpack(src: &Self::ByteArray) -> PackingResult<Self> {
-        Ok(Self::from(u16::from_le_bytes(src.clone())))
-    }
-}
+data::bilge_pdudata!(EthercatHeader);
 
 /// type of ethercat frame
 #[bitsize(4)]
-#[derive(TryFromBits, Debug, Clone)]
+#[derive(TryFromBits, Debug, Copy, Clone)]
 enum EthercatType {
     /// process data unit, use to exchange with physical and logical memory in realtime or not
     /// the mailbox content sent to slaves shall be written to the physical memory through these
@@ -422,10 +417,10 @@ enum EthercatType {
 //     }
 //     fn unpack(src: &'a [u8]) -> Self {
 //         let header = PduHeader::unpack_from_slice(
-//             &src[.. <PduHeader as PackedStruct>::ByteArray::len()]
+//             &src[.. <PduHeader as PackedStruct>::packed_size()]
 //             ).unwrap();
-//         let data = &src[<PduHeader as PackedStruct>::ByteArray::len() ..];
-//         let data = &data[.. data.len() - <PduFooter as PackedStruct>::ByteArray::len()];
+//         let data = &src[<PduHeader as PackedStruct>::packed_size() ..];
+//         let data = &data[.. data.len() - <PduFooter as PackedStruct>::packed_size()];
 //         Self{header, data}
 //     }
 // }
@@ -450,34 +445,19 @@ struct PduHeader {
     next: bool,
     interrupt: u16,
 }
-impl PackedStruct for PduHeader {
-    type ByteArray = [u8; 10];
-    fn pack(&self) -> PackingResult<Self::ByteArray> {
-        Ok(u80::from(self.clone()).to_le_bytes())
-    }
-    fn unpack(src: &Self::ByteArray) -> PackingResult<Self> {
-        Ok(Self::from(u80::from_le_bytes(src.clone())))
-    }
-}
+data::bilge_pdudata!(PduHeader);
 
 /// footer for PDU exchange
 #[bitsize(16)]
-#[derive(FromBits, DebugBits, Clone, Default)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 struct PduFooter {
     working_count: u16,
 }
-impl PackedStruct for PduFooter {
-    type ByteArray = [u8; 2];
-    fn pack(&self) -> PackingResult<Self::ByteArray> {
-        Ok(u16::from(self.clone()).to_le_bytes())
-    }
-    fn unpack(src: &Self::ByteArray) -> PackingResult<Self> {
-        Ok(Self::from(u16::from_le_bytes(src.clone())))
-    }
-}
+data::bilge_pdudata!(PduFooter);
+
 /// the possible PDU commands
 #[bitsize(8)]
-#[derive(FromBits, Debug, Clone, Default)]
+#[derive(FromBits, Debug, Copy, Clone, Default)]
 pub enum PduCommand {
     /// no operation
     #[fallback]

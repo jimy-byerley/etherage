@@ -5,7 +5,7 @@ mod registers;
 mod mailbox;
 mod sdo;
 mod can;
-mod slave;
+// mod slave;
 mod master;
 
 pub use crate::data::{PduData, Field, BitField};

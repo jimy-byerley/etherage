@@ -5,12 +5,12 @@ use crate::{
 
 
 pub struct Master {
-    raw: RawMaster<dyn EthercatSocket>,
+    raw: RawMaster<impl EthercatSocket>,
 }
 impl Master {
-    async fn topology<'a>(&'a self) -> SlaveDiscovery<'a>   {todo!()}
+//     pub async fn topology<'a>(&'a self) -> SlaveDiscovery<'a>   {todo!()}
     
-    unsafe pub fn get_raw(&self) -> &RawMaster {todo!()}
-    pub fn into_raw(self) -> RawMaster {todo!()}
+    pub unsafe fn get_raw(&self) -> &RawMaster<impl EthercatSocket> {todo!()}
+    pub fn into_raw<S: EthercatSocket>(self) -> RawMaster<S> {todo!()}
 }
 

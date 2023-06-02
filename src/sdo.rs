@@ -23,7 +23,7 @@ Convenient structures to read/write the slave's dictionnary objects (SDO) and co
 */
 
 use crate::{
-	slave::Slave,
+// 	slave::Slave,
 	data::{BitField, PduData, ByteArray},
 	};
 use core::fmt;
@@ -73,19 +73,21 @@ impl<T: PduData> Sdo<T> {
 		field: BitField::new(0, size),
 	}}
 	
-	/// retreive the current subitem value from the given slave
-	pub async fn get(&self, slave: &Slave) -> T  {todo!()}
-	/// set the subitem value on the given slave
-	pub async fn set(&self, slave: &Slave, value: T)   {todo!()}
+// 	/// retreive the current subitem value from the given slave
+// 	pub async fn get(&self, slave: &Slave) -> T  {todo!()}
+// 	/// set the subitem value on the given slave
+// 	pub async fn set(&self, slave: &Slave, value: T)   {todo!()}
 }
 impl SdoPart {
     /// return the subindex or 0 for a complete item
-    fn unwrap(self) -> u8 {
-        match self {
+    pub fn unwrap(self) -> u8 { match self {
             Self::Complete => 0,
-            Self::Sub(i) => i,
-        }
-    }
+            Self::Sub(i) => i,  
+    }}
+    pub fn is_complete(&self) -> bool { match self {
+            Self::Complete => true,
+            _ => false,
+    }}
 }
 impl<T: PduData> fmt::Debug for Sdo<T> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

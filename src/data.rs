@@ -28,17 +28,19 @@ pub trait PduData: Sized {
 
     fn pack(&self) -> Self::ByteArray;
     fn unpack(src: &[u8]) -> PackingResult<Self>;
+    
+    fn packed_size() -> usize {Self::ByteArray::len()}
 }
-/// trait marking a [packed_struct::PackedStruct] is a [PduData]
-// TODO: see if this trait could be derived
-pub trait PduStruct: packed::PackedStruct {}
-impl<T: PduStruct> PduData for T {
-	const ID: TypeId = TypeId::CUSTOM;
-	type ByteArray = <T as packed::PackedStruct>::ByteArray;
-	
-	fn pack(&self) -> Self::ByteArray    {packed::PackedStruct::pack(self).unwrap()}
-	fn unpack(src: &[u8]) -> PackingResult<Self>  {packed::PackedStructSlice::unpack_from_slice(src)}
-}
+// /// trait marking a [packed_struct::PackedStruct] is a [PduData]
+// // TODO: see if this trait could be derived
+// pub trait PduStruct: packed::PackedStruct {}
+// impl<T: PduStruct> PduData for T {
+// 	const ID: TypeId = TypeId::CUSTOM;
+// 	type ByteArray = <T as packed::PackedStruct>::ByteArray;
+// 	
+// 	fn pack(&self) -> Self::ByteArray    {packed::PackedStruct::pack(self).unwrap()}
+// 	fn unpack(src: &[u8]) -> PackingResult<Self>  {packed::PackedStructSlice::unpack_from_slice(src)}
+// }
 
 /** dtype identifiers associated to dtypes allowing to dynamically check the type of a [PduData] implementor
 	
@@ -82,9 +84,8 @@ impl PduData for bool {
 }
 
 /// macro implementing [PduData] for a given struct generated with `bilge`
-#[macro_export]
 macro_rules! bilge_pdudata {
-    ($t: ty) => { packed_pdudata!($t); }
+    ($t: ty) => { crate::data::packed_pdudata!($t); }
 //     ($t: ty, $id: ident) => { impl PduData for $t {
 //         const ID: TypeId = TypeId::CUSTOM;
 //         type ByteArray = [u8; ($id::BITS as usize + 7)/8];
@@ -102,20 +103,20 @@ macro_rules! bilge_pdudata {
 //         }
 //     }};
 }
+pub(crate) use bilge_pdudata;
 
 /// unsafe macro implementing [PduData] for a given struct with `repr(packed)`
-#[macro_export]
 macro_rules! packed_pdudata {
-    ($t: ty) => { impl PduData for $t {
-        const ID: TypeId = TypeId::CUSTOM;
+    ($t: ty) => { impl crate::data::PduData for $t {
+        const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
         type ByteArray = [u8; core::mem::size_of::<$t>()];
         
         fn pack(&self) -> Self::ByteArray {
             unsafe{ core::mem::transmute::<Self, Self::ByteArray>(self.clone()) }
         }
-        fn unpack(src: &[u8]) -> PackingResult<Self> {
+        fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
             let src: &Self::ByteArray = src.try_into().map_err(|_|
-                PackingError::BufferSizeMismatch{
+                crate::data::PackingError::BufferSizeMismatch{
                     expected: Self::ByteArray::len(),
                     actual: src.len(),
                 })?;
@@ -123,27 +124,28 @@ macro_rules! packed_pdudata {
         }
     }};
 }
+pub(crate) use packed_pdudata;
 
 /// macro implementing [PduData] for numeric types
 macro_rules! num_pdudata {
-	($t: ty, $id: ident) => { impl PduData for $t {
-			const ID: TypeId = TypeId::$id;
+	($t: ty, $id: ident) => { impl crate::data::PduData for $t {
+			const ID: crate::data::TypeId = crate::data::TypeId::$id;
 			type ByteArray = [u8; core::mem::size_of::<$t>()];
 			
 			fn pack(&self) -> Self::ByteArray {
 				self.to_le_bytes()
 			}
-			fn unpack(src: &[u8]) -> PackingResult<Self> {
+			fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
 				Ok(Self::from_le_bytes(src
 					.try_into()
-					.map_err(|_|  PackingError::BufferSizeMismatch{
+					.map_err(|_|  crate::data::PackingError::BufferSizeMismatch{
 								expected: core::mem::size_of::<$t>(),
 								actual: src.len(),
 								})?
 					))
 			}
 		}};
-	($t: ty) => { num_pdudata!(t, TypeId::CUSTOM) };
+	($t: ty) => { num_pdudata!(t, crate::data::TypeId::CUSTOM) };
 }
 
 num_pdudata!(u8, U8);
@@ -157,6 +159,23 @@ num_pdudata!(i64, I64);
 num_pdudata!(f32, F32);
 num_pdudata!(f64, F64);
 
+
+/// much like PduData but works with variable size types, and allows partial decoding of data.
+/// [Self::unpack] however returns data limited to the lifetime of the unpacked buffer.
+pub trait FrameData<'a>: Sized {
+    fn packed_size(&self) -> usize;
+    fn pack(&self, dst: &mut [u8]) -> PackingResult<()>;
+    fn unpack(src: &'a [u8]) -> PackingResult<Self>;
+}
+
+impl<'a> FrameData<'a> for &'a [u8] {
+    fn packed_size(&self) -> usize {self.len()}
+    fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {Ok(dst.copy_from_slice(self))}
+    fn unpack(src: &'a [u8]) -> PackingResult<Self> {Ok(src)}
+}
+
+// impl FrameData<'static> for PduData {
+// }
 
 
 /** 

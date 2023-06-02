@@ -1,8 +1,7 @@
 //! structs and consts for every registers in a standard slave's EEPROM. This should be used instead of any hardcoded register value
 
 use bilge::prelude::*;
-use crate::data::*;
-use crate::{bilge_pdudata, packed_pdudata};
+use crate::data::{self, Field, BitField, ByteArray};
 
 
 
@@ -159,7 +158,7 @@ struct DLControl {
 	alias_enable: bool,
 	reserved: u7,
 }
-bilge_pdudata!(DLControl);
+data::bilge_pdudata!(DLControl);
 
 #[bitsize(1)]
 #[derive(TryFromBits, Debug, Copy, Clone)]
@@ -169,7 +168,7 @@ enum Forwarding {
 	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC[1] is set to 1 – locally administered address).
 	Filter = 1,
 }
-bilge_pdudata!(Forwarding);
+data::bilge_pdudata!(Forwarding);
 
 #[bitsize(2)]
 #[derive(TryFromBits, Debug, Copy, Clone)]
@@ -181,7 +180,7 @@ enum LoopControl {
 	AlwaysOpen = 2,
 	AlwaysClosed = 3,
 }
-bilge_pdudata!(LoopControl);
+data::bilge_pdudata!(LoopControl);
 
 /// ETG.1000.4 table 34
 #[bitsize(16)]
@@ -199,7 +198,7 @@ struct DLStatus {
 	/// indicates closed loop link status on each port
 	port_loop_status: [LoopStatus; 4],
 }
-bilge_pdudata!(DLStatus);
+data::bilge_pdudata!(DLStatus);
 
 #[bitsize(2)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
@@ -208,7 +207,7 @@ struct LoopStatus {
 	loop_back: bool,
 	signal_detection: bool,
 }
-bilge_pdudata!(LoopStatus);
+data::bilge_pdudata!(LoopStatus);
 
 /// The event registers are used to indicate an event to the DL -user. The event shall be acknowledged if the corresponding event source is read. The events can be masked.
 #[bitsize(32)]
@@ -226,7 +225,7 @@ struct DLSUserEvents {
 	sync_manager_channel: [bool; 16],
 	reserved: u8,
 }
-bilge_pdudata!(DLSUserEvents);
+data::bilge_pdudata!(DLSUserEvents);
 
 /**
 	The external event is mapped to IRQ parameter of all EtherCAT PDUs accessing this slave. If an event is set, and the associated mask is set the corresponding bit in the IRQ parameter of a PDU is set.
@@ -247,7 +246,7 @@ struct ExternalEvent {
 	sync_manager_channel: [bool; 8],
 	reserved: u1,
 }
-bilge_pdudata!(ExternalEvent);
+data::bilge_pdudata!(ExternalEvent);
 
 /// A write to one counter will reset all counters of the group
 #[repr(packed)]
@@ -255,7 +254,7 @@ bilge_pdudata!(ExternalEvent);
 struct PortsErrorCount {
 	port: [PortErrorCount; 4],
 }
-packed_pdudata!(PortsErrorCount);
+data::packed_pdudata!(PortsErrorCount);
 
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
@@ -265,7 +264,7 @@ struct PortErrorCount {
 	/// counts the occurrences of RX errors at the physical layer
 	physical: u8,
 }
-bilge_pdudata!(PortErrorCount);
+data::bilge_pdudata!(PortErrorCount);
 
 #[bitsize(32)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
@@ -273,7 +272,7 @@ struct LostLinkCount {
 	/// counts the occurrences of link down.
 	port: [u8; 4],
 }
-bilge_pdudata!(LostLinkCount);
+data::bilge_pdudata!(LostLinkCount);
 
 /**
 	A write to one counter will reset all Previous Error counters
@@ -290,7 +289,7 @@ struct FrameErrorCount {
 	/// counts occurrence of local problems. The counter will be cleared if the counter is written. The counting is stopped when the maximum value (255) is reached.
 	local_problem_count: u8,
 }
-bilge_pdudata!(FrameErrorCount);
+data::bilge_pdudata!(FrameErrorCount);
 
 /**
 	A write will reset the watchdog counters
@@ -305,7 +304,7 @@ struct WatchdogCounter {
 	/// counts the expiration of DL-user watchdogs.
 	pdi: u8,
 }
-bilge_pdudata!(WatchdogCounter);
+data::bilge_pdudata!(WatchdogCounter);
 
 
 /// ETH.1000.4 table 48
@@ -318,7 +317,7 @@ struct SiiAccess {
 	pdi: bool,
 	reserved: u7,
 }
-bilge_pdudata!(SiiAccess);
+data::bilge_pdudata!(SiiAccess);
 
 #[bitsize(1)]
 #[derive(FromBits, Debug, Copy, Clone)]
@@ -326,7 +325,7 @@ enum SiiOwner {
 	EthercatDL = 0,
 	Pdi = 1,
 }
-bilge_pdudata!(SiiOwner);
+data::bilge_pdudata!(SiiOwner);
 
 /** 
     register controling the read/write operations to Slave Information Interface (SII)
@@ -377,7 +376,7 @@ struct SiiControl {
 	/// operation is ongoing
 	busy: bool,
 }
-bilge_pdudata!(SiiControl);
+data::bilge_pdudata!(SiiControl);
 
 #[bitsize(1)]
 #[derive(FromBits, Debug, Copy, Clone)]
@@ -393,11 +392,20 @@ enum SiiUnit {
 }
 
 /// this is not a PduData but a struct transporting the address and number of FMMU registers
-struct FMMU {
+/// ETG.1000.4 table 57
+pub struct FMMU {
     /// address of the first entry
-	address: u16,
+	pub address: u16,
 	/// number of entries
-	num: u8,
+	pub num: u8,
+}
+
+impl FMMU {
+    /// return an entry of the FMMU
+    pub const fn entry(&self, index: u8) -> Field<FMMUEntry>  {
+        assert!(index < self.num, "index out of range");
+        Field::simple(usize::from(self.address + u16::from(index)*0x10))
+    }
 }
 
 /**
@@ -438,14 +446,28 @@ struct FMMUEntry {
 	reserved: u7,
 	reserved: u24,
 }
-bilge_pdudata!(FMMUEntry);
+data::bilge_pdudata!(FMMUEntry);
 
 /// this is not a PduData but a convenience struct transporting the addresses of a sync manager
-struct SyncManager {
+/// ETG.1000.4 table 59
+pub struct SyncManager {
     /// start address of the sync manager (address of the first channel)
-    address: u16,
+    pub address: u16,
     /// number of channels
-    num: u8,
+    pub num: u8,
+}
+
+impl SyncManager {
+    pub const fn channel(&self, index: u8) -> Field<SyncManagerChannel> {
+        assert!(index < self.num, "index out of range");
+        Field::simple(usize::from(self.address + u16::from(index)*0x8))
+    }
+    // return the sync manager channel reserved for mailbox in
+    pub const fn mailbox_in(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
+    // return the sync manager channel reserved for mailbox out
+    pub const fn mailbox_out(&self) -> Field<SyncManagerChannel>   {self.channel(1)}
+    // return one of the sync manager channels reserved for mapping
+    pub const fn mappable(&self, index: u8) -> Field<SyncManagerChannel>   {self.channel(2+index)}
 }
 
 /** 
@@ -477,7 +499,7 @@ struct SyncManagerChannel {
     /// if the monitoring of an access to the consistent DL-user memory area is enabled.
     watchdog: bool,
     reserved: u1,
-    /// if the consistent DL -user memory (direction write) has been written by the master and the even t enable parameter is set.
+    /// if the consistent DL -user memory (direction write) has been written by the master and the event enable parameter is set.
     write_event: bool,
     /// if the consistent DL -user memory (direction read) has been read by the master and the event enable parameter is set.
     read_event: bool,
@@ -505,7 +527,7 @@ struct SyncManagerChannel {
     repeat_ack: bool,
     reserved: u6,
 }
-bilge_pdudata!(SyncManagerChannel);
+data::bilge_pdudata!(SyncManagerChannel);
 
 /// ETG.1000.4 table 58
 #[bitsize(2)]
@@ -556,7 +578,7 @@ struct TimeDifference {
     /// true if local copy of system time smaller than received system time
     sign: bool,
 }
-bilge_pdudata!(TimeDifference);
+data::bilge_pdudata!(TimeDifference);
 
 
 
@@ -624,60 +646,66 @@ bilge_pdudata!(TimeDifference);
 
 
 
-mod address {
+pub mod address {
     use super::*;
     
     /// register of the station address, aka the fixed slave address
     /// ETG.1000.4 table 32
-    const fixed: Field<u16> = Field::simple(0x0010);
+    pub const fixed: Field<u16> = Field::simple(0x0010);
     /// slave address alias
     /// ETG.1000.4 table 32
-    const alias: Field<u16> = Field::simple(0x0012);
+    pub const alias: Field<u16> = Field::simple(0x0012);
 }
-mod dl {
+pub mod dl {
     use super::*;
     
-	const control: Field<DLControl> = Field::simple(0x0101);
-	const status: Field<DLStatus> = Field::simple(0x0110);
+	pub const control: Field<DLControl> = Field::simple(0x0101);
+	pub const status: Field<DLStatus> = Field::simple(0x0110);
 }
 	
-mod dls_user {
+pub mod dls_user {
     use super::*;
     
-    const r1: Field<u8> = Field::simple(0x0120);
-    const r2: Field<u8> = Field::simple(0x0121);
-    const r3: Field<u8> = Field::simple(0x0130);
-    const r4: Field<u8> = Field::simple(0x0131);
-    const r5: Field<u16> = Field::simple(0x0132);
-    const r6: Field<u16> = Field::simple(0x0134);
-    const r7: Field<u8> = Field::simple(0x0140);
-    const copy_r1_r3: BitField<bool> = BitField::new(0x0141*8, 1);
-    const r9: BitField<u8> = BitField::new(0x0141*8+1, 7);
-    const r8: Field<u8> = Field::simple(0x0150);
+    pub const r1: Field<u8> = Field::simple(0x0120);
+    pub const r2: Field<u8> = Field::simple(0x0121);
+    pub const r3: Field<u8> = Field::simple(0x0130);
+    pub const r4: Field<u8> = Field::simple(0x0131);
+    pub const r5: Field<u16> = Field::simple(0x0132);
+    pub const r6: Field<u16> = Field::simple(0x0134);
+    pub const r7: Field<u8> = Field::simple(0x0140);
+    pub const copy_r1_r3: BitField<bool> = BitField::new(0x0141*8, 1);
+    pub const r9: BitField<u8> = BitField::new(0x0141*8+1, 7);
+    pub const r8: Field<u8> = Field::simple(0x0150);
     
-    const event: Field<DLSUserEvents> = Field::simple(0x0220);
-    const event_mask: Field<DLSUserEvents> = Field::simple(0x0202);
-    const watchdog: Field<u16> = Field::simple(0x0410);
+    pub const event: Field<DLSUserEvents> = Field::simple(0x0220);
+    pub const event_mask: Field<DLSUserEvents> = Field::simple(0x0202);
+    pub const watchdog: Field<u16> = Field::simple(0x0410);
 }
 	
-const external_event: Field<ExternalEvent> = Field::simple(0x0210);
-const external_event_mask: Field<ExternalEvent> = Field::simple(0x0200);
+pub const external_event: Field<ExternalEvent> = Field::simple(0x0210);
+pub const external_event_mask: Field<ExternalEvent> = Field::simple(0x0200);
 	
-const ports_errors: Field<PortsErrorCount> = Field::simple(0x0300);
-const lost_link_count: Field<LostLinkCount> = Field::simple(0x0310);
-const frame_error_count: Field<FrameErrorCount> = Field::simple(0x0308);
-const watchdog_divider: Field<u16> = Field::simple(0x0400);
-const watchdog_counter: Field<WatchdogCounter> = Field::simple(0x0442);
+pub const ports_errors: Field<PortsErrorCount> = Field::simple(0x0300);
+pub const lost_link_count: Field<LostLinkCount> = Field::simple(0x0310);
+pub const frame_error_count: Field<FrameErrorCount> = Field::simple(0x0308);
+pub const watchdog_divider: Field<u16> = Field::simple(0x0400);
+pub const watchdog_counter: Field<WatchdogCounter> = Field::simple(0x0442);
 	
-mod sync_manager {
+pub mod sync_manager {
     use super::*;
 
     /// ETG.1000.6 table 45
-    const watchdog: Field<u16> = Field::simple(0x0420);
+    pub const watchdog: Field<u16> = Field::simple(0x0420);
     /// ETG.1000.6 table 46
-    const watchdog_status: Field<bool> = Field::simple(0x0440);
-	const interface: SyncManager = SyncManager {address: 0x0800, num: 16};
+    pub const watchdog_status: Field<bool> = Field::simple(0x0440);
+	pub const interface: SyncManager = SyncManager {address: 0x0800, num: 16};
 }
+
+pub const mailbox_buffers: [Field<[u8; 0x100]>; 3] = [
+	Field::simple(0x1000),
+	Field::simple(0x1100),
+	Field::simple(0x1200),
+	];
 	
 	/*
 	sii: {

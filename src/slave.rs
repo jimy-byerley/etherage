@@ -6,6 +6,7 @@ use crate::{
 	mailbox::Mailbox,
 	};
 
+#[repr(u8)]
 pub enum CommunicationState {
     Init,
     PreOperational,
@@ -18,16 +19,16 @@ pub struct Slave<'a, const State: CommunicationState> {
     master: &'a Master,
     rank: u16,
     address: u16,
-    mailbox_stuff: Mailbox,
+    mailbox_stuff: Mailbox<'a>,
 }
-impl<const State: CommunicationState> Slave<'_, State> {
+impl<const State: CommunicationState> Slave<'a, State> {
     pub fn informations(&self)  {todo!()}
     /// return the current state of the slave
     pub fn state(&self) -> CommunicationState {todo!()}
     /// send a state change request to the slave, and return once the slave has switched
-    pub fn switch<const S2: CommunicationState>(self) -> Slave<S2>  {todo!()}
+    pub fn switch<const S2: CommunicationState>(self) -> Slave<'a, S2>  {todo!()}
     /// check that the slave is in the desired communication mode, but does not switch it if not
-    pub fn expect<const S2: CommunicationState>(self) -> Slave<S2>  {todo!()}
+    pub fn expect<const S2: CommunicationState>(self) -> Slave<'a, S2>  {todo!()}
     
     pub fn register_read<T>(&self, field: Field<T>) -> T  {todo!()}
 }
