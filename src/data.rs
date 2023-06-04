@@ -4,7 +4,6 @@ use core::{
 	marker::PhantomData,
 	fmt,
 	};
-use packed_struct as packed;
 pub use packed_struct::{PackingResult, PackingError, types::bits::ByteArray};
 
 /**

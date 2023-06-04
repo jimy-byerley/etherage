@@ -22,12 +22,12 @@ const MAX_ETHERCAT_FRAME: usize = 2050;
     
     genericity allows to use a UDP socket or raw ethernet socket
 */
-pub struct RawMaster<S: EthercatSocket> {
+pub struct RawMaster {
 	/// (µs) acceptable delay time before sending buffered PDUs
 	pdu_merge_time: Duration,
 	
 	// socket implementation
-	socket: S,
+	socket: Box<dyn EthercatSocket>,
 	// synchronization signal for multitask reception
 	received: Notify,
 	sendable: Condvar,
@@ -55,12 +55,12 @@ struct PduStorage {
     ready: bool,
     answers: u16,
 }
-impl<S: EthercatSocket> RawMaster<S> {
-	pub fn new(socket: S) -> Self {        
+impl RawMaster {
+	pub fn new<S: EthercatSocket>(socket: S) -> Self {        
         Self {
             pdu_merge_time: std::time::Duration::from_micros(2000), // microseconds
             
-            socket,
+            socket: Box::new(socket),
             received: Notify::new(),
             sendable: Condvar::new(),
             send: Condvar::new(),
@@ -130,7 +130,7 @@ impl<S: EthercatSocket> RawMaster<S> {
             SlaveAddress::Configured(address) => (PduCommand::FPRD, address),
             SlaveAddress::Logical => (PduCommand::LRD, 0),
             };
-        let data = T::ByteArray::new(0);
+        let mut data = T::ByteArray::new(0);
         PduAnswer {
 			answers: self.pdu(command, slave, memory, data.as_mut_bytes_slice()).await,
 			value: T::unpack(data.as_bytes_slice()).unwrap(),
@@ -337,9 +337,9 @@ pub enum SlaveAddress {
 	Logical,
 }
 
-struct PduAnswer<T> {
-	answers: u16,
-	value: T,
+pub struct PduAnswer<T> {
+	pub answers: u16,
+	pub value: T,
 }
 
 

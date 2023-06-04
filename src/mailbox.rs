@@ -5,13 +5,14 @@ use crate::{
     data::{self, PduData, ByteArray, PackingResult},
 	};
 use bilge::prelude::*;
+use std::io::{Cursor, Write};
 
 
 /**
     implementation of communication with a slave's mailbox
 */
 pub struct Mailbox<'a> {
-    master: &'a RawMaster<impl EthercatSocket>,
+    master: &'a RawMaster,
 	slave: u16,
 	count: u8,
 }
@@ -24,10 +25,11 @@ impl Mailbox<'_> {
     /// `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
     /// this function does not return the data size read, so the read frame should provide a length
 	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
-		let mailbox = registers::sync_manager::interface.mailbox_out();
+		let mailbox_control = registers::sync_manager::interface.mailbox_out();
+		let mailbox_buffer = registers::mailbox_buffers[0];
 		// wait for data
 		let state = loop {
-            let state = self.master.fprd(self.slave, mailbox).await;
+            let state = self.master.fprd(self.slave, mailbox_control).await;
             if state.answers == 0 || ! state.value.mailbox_full()  {continue}
             break state.value
         };
@@ -37,15 +39,15 @@ impl Mailbox<'_> {
                                     .min(data.len() + MailboxHeader::packed_size())];
 		// read the mailbox content
 		loop {
-            let reading = self.master.pdu(PduCommand::FPRD, self.slave, address, buffer).await;
+            let reading = self.master.pdu(PduCommand::FPRD, self.slave, mailbox_buffer, buffer).await;
             if reading.answers == 1 {break}
             
             // trigger repeat
             state.set_repeat(true);
-            while self.master.fpwr(self.slave, mailbox, state).await.answers == 0  {}
+            while self.master.fpwr(self.slave, mailbox_control, state).await.answers == 0  {}
             // wait for repeated data to be available
             loop {
-                let state = self.master.fprd(self.slave, mailbox).await;
+                let state = self.master.fprd(self.slave, mailbox_control).await;
                 if state.answers == 0 || ! state.value.repeat_ack()  {continue}
                 break
             }
@@ -63,7 +65,8 @@ impl Mailbox<'_> {
 	/// write the given frame in the mailbox
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
         self.count = (self.count % 6)+1;
-		let mailbox = registers::sync_manager::interface.mailbox_in();
+		let mailbox_control = registers::sync_manager::interface.mailbox_in();
+		let mailbox_buffer = registers::mailbox_buffers[0];
 		let frame = MailboxFrame {
 			header: MailboxHeader::new(
 				data.len(),
@@ -77,16 +80,16 @@ impl Mailbox<'_> {
         };
         let mut buffer = [0; registers::mailbox_buffers[0].size];
         // the destination data is expected to be big enough for the data, so we will read only this data size
-        assert!(allocated.len() > frame.packed_size());
+        assert!(buffer.len() > frame.packed_size());
         frame.pack(&mut buffer);
 		// wait for mailbox to be empty
 		let state = loop {
-            let state = self.master.fprd(self.slave, mailbox).await;
+            let state = self.master.fprd(self.slave, mailbox_control).await;
             if state.answers == 0 || state.value.mailbox_full()  {continue}
             break state.value
         };
         // write data
-        while ! self.master.pdu(PduCommand::FPWR, self.slave, mailbox, buffer[.. frame.packed_size()]).await.answers == 1 {}
+        while ! self.master.pdu(PduCommand::FPWR, self.slave, mailbox_buffer, buffer[.. frame.packed_size()]).await.answers == 1 {}
 		
 		// TODO wait for mailbox to become ready again ?
 	}
@@ -105,13 +108,14 @@ impl<'a> MailboxFrame<'a> {
     }
     fn pack(&self, dst: &mut [u8]) {
         let cursor = Cursor::new(dst);
-        cursor.write(self.header.pack()).unwrap();
+        cursor.write(&self.header.pack()).unwrap();
         cursor.write(self.data).unwrap();
     }
     fn unpack(src: &'a [u8]) -> PackingResult<Self> {
+		let header = MailboxHeader::unpack(src).unwrap();
         Ok(Self {
-            header: MailboxHeader::unpack(src).unwrap(),
-            data: src[MailboxHeader::packed_size() ..][.. header.length()],
+            header,
+            data: src[MailboxHeader::packed_size() ..][.. header.length() as usize],
         })
     }
 }
