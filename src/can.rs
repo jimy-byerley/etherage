@@ -2,10 +2,9 @@ use crate::{
 	mailbox::{Mailbox, MailboxType},
 	registers,
 	sdo::Sdo,
-	data::{self, PduData, ByteArray, PackingResult},
+	data::{self, PduData, ByteArray, PackingResult, Cursor},
 	};
 use bilge::prelude::*;
-use std::io::{Cursor, Write};
 
 
 
@@ -36,76 +35,62 @@ impl Can<'_> {
 	pub async fn sdo_read<T: PduData>(&mut self, sdo: Sdo<T>, priority: u2) -> T   {
 		let mut data = T::ByteArray::new(0);
         let mut buffer = [0; MAILBOX_MAX_SIZE];
-		let coe = CoeHeader {
-			number: 0,
-			service: CanService::SDORequest,
-			};
         // generic request
-        coe.pack(&mut buffer);
-        buffer[CoeHeader::packed_size() ..].copy_from_slice(SdoHeader::new(
-                false,
-                false,
-                false,
+        let frame = Cursor::new(&mut buffer);
+        frame.pack(CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+        frame.pack(SdoHeader::new(
+                false,  // uninit
+                false,  // uninit
+                u2::new(0),  // uninit
                 sdo.sub.is_complete(),
-                SdoCommand::Upload,
+                u3::from(SdoCommandRequest::Upload),
                 sdo.index,
                 sdo.sub.unwrap(),
-            ).pack());
-        self.mailbox.write(MailboxType::Can, priority, &buffer).await;
+            ));
+        self.mailbox.write(MailboxType::Can, priority, frame.finish()).await;
         
         // receive data
         // TODO check for possible SDO error
-        let response = self.mailbox.read(MailboxType::Can, priority, &mut buffer).await;
-        assert_eq!(CoeHeader::unpack(&buffer).service, CanService::SdoRequest);
-        let header = SdoHeader::unpack(&buffer[CoeHeader::packed_size() ..]).unwrap();
-        assert_eq!(header.command(), SdoCommand::UploadResponse);
+        let frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
+        assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
+        let header = frame.unapck::<SdoHeader>().unwrap();
+        assert_eq!(SdoCommandResponse::from(header.command()), SdoCommandResponse::Upload);
         assert!(header.sized());
         assert_eq!(header.index(), sdo.index);
         assert_eq!(header.sub(), sdo.sub.unwrap());
         
         if header.expedited() {
             // expedited transfer
-            T::unpack(&buffer
-                [CoeHeader::packed_size() + SdoHeader::packed_size() ..]
-                [.. EXPEDITED_MAX_SIZE - usize::from(header.size())]
-                ).unwrap()
+            T::unpack(frame.read(EXPEDITED_MAX_SIZE - usize::from(header.size()))).unwrap()
         }
         else {
-            // normal transfer
-            let total = u32::unpack(&buffer
-                [CoeHeader::packed_size() + SdoHeader::packed_size() ..]
-                ).unwrap();
-            assert_eq!(total, data.len());
+            // normal transfer, eventually segmented
+            let total = frame.unpack::<u32>().unwrap();
+            assert_eq!(total, T.packed_size());
             
-            let mut received = 0;
+            let mut received = Cursor::new(data.as_bytes_slice());
             let mut toggle = true;
-            data[received ..][.. response.data.len()].copy_from_slice(&buffer
-                [CoeHeader::packed_size() + SdoHeader::packed_size() + u32::packed_size() ..]
-                );
-            received += received.data.len();
-            drop(response);
+            received.write(frame.remain()).unwrap();
             
             // receive more data from segments
             // TODO check for possible SDO error
             loop {
-                let response = self.mailbox.read(MailboxType::Can, priority, &mut buffer);
-                assert_eq!(CoeHeader::unpack(&buffer).service, CanService::SdoRequest);
-                let header = SdoSegmentHeader::unpack(&buffer
-                                [CoeHeader::packed_size() ..]
-                                ).unwrap();
+                let frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
+                assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
+                let header = frame.unpack::<SdoSegmentHeader>().unwrap();
                 assert_eq!(header.toggle(), toggle);
-                let content = &buffer[(total - received)
-                                .min(CoeHeader::packed_size() + SdoSegmentHeader::packed_size()) ..];
-                data[received ..][.. content.len()].copy_from_slice(content);
-                received += content.len();
+                let content = frame.read((total - received).min(frame.remain().len()));
+                received.write(content).unwrap();
                 toggle = ! toggle;
                 
-                assert!(received <= data.len());
-                if ! response.more  {break}
+                // TODO: check for abort
+                
+                assert!(received.position() <= T::packed_size());
+                if ! header.more () {break}
             }
-            assert_eq!(received, data.len());
+            assert_eq!(received.position(), T::packed_size());
             
-            T::unpack(&data).unwrap()
+            T::unpack(data.as_bytes_slice()).unwrap()
         }
         
         // TODO: error propagation instead of asserts
@@ -117,93 +102,90 @@ impl Can<'_> {
 		let data = packed.as_bytes_slice();
 		
         let mut buffer = [0; MAILBOX_MAX_SIZE];
-		let coe = CoeHeader::new(
-			u9::new(0),
-			CanService::SDORequest,
-			);
 		if data.len() < EXPEDITED_MAX_SIZE {
 			// expedited transfer
 			// send data in the 4 bytes instead of data size
-			buffer[.. CoeHeader::packed_size()].copy_from_slice(coe.pack().as_bytes_slice());
-			buffer[CoeHeader::packed_size() ..][.. SdoHeader::packed_size()].copy_from_slice(SdoHeader::new(
+			let frame = Cursor::new(&mut buffer);
+			frame.pack(CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+			frame.pack(SdoHeader::new(
                         true,
                         true,
-                        u2::from(EXPEDITED_MAX_SIZE - data.len()),
+                        u2::from((EXPEDITED_MAX_SIZE - data.len()) as u8),
                         sdo.sub.is_complete(),
-                        SdoCommand::DownloadRequest,
+                        u3::from(SdoCommandRequest::Download),
                         sdo.index,
                         sdo.sub.unwrap(),
-                    ).pack().as_bytes_slice());
-            buffer[CoeHeader::packed_size() + SdoHeader::packed_size() ..][.. data.len()].copy_from_slice(data);
-			self.mailbox.write(MailboxType::Can, priority, &buffer[.. CoeHeader::packed_size() + SdoHeader::packed_size() + data.len()]);
+                    )).unwrap();
+			frame.write(data).unwrap();
+			self.mailbox.write(MailboxType::Can, priority, frame.finish()).await;
             
             // receive acknowledge
-            // TODO check for possible SDO error
-            self.mailbox.read(MailboxType::Can, priority, &mut buffer);
-            let response = SdoFrame::unpack(
-                        CoeFrame::unpack(&buffer).unwrap()
-                            .data
-                        ).unwrap()
-                        .header;
-            assert_eq!(response.command(), SdoCommand::DownloadResponse);
+//             let response = self.mailbox.read::<'_, CoeFrame<'_, SdoFrame<'_>>>
+//                             (MailboxType::Can, priority, &mut buffer);
+                            
+            let content = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
+            let header = content.unpack::<CoeHeader>().unwrap();
+            assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
+            let header = content.unpack::<SdoHeader>().unwrap();
+            let data = content.read(EXPEDITED_MAX_SIZE - header.size());            
+            assert_eq!(SdoCommandResponse::from(response.command()), SdoCommandResponse::Download);
             assert_eq!(response.index(), sdo.index);
             assert_eq!(response.sub(), sdo.sub.unwrap());
 		}
 		else {
-			// normal transfer
-			let mut sent = 0;
+			// normal transfer, eventually segmented
+			let mut data = Cursor::new(data);
 			
 			// send one download request with the start of data
-			let segment = data.len().min(SDO_SEGMENT_MAX_SIZE);
-			self.mailbox.write(MailboxType::Can, priority, CoeFrame {
-				header: coe,
-				data: &SdoFrame {
-					header: SdoHeader::new(
+			let frame = Cursor::new(&mut buffer);
+			frame.pack(CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+			frame.pack(SdoHeader::new(
                         true,
                         false,
                         u2::new(0),
                         sdo.sub.is_complete(),
-                        SdoCommand::DownloadRequest,
+                        u3::from(SdoCommandRequest::Download),
                         sdo.index,
                         sdo.sub.unwrap(),
-                    ),
-					data: data[sent..][..segment],
-				}.pack(),
-            });
+                    )).unwrap();
+            frame.write(data.read(data.len().min(SDO_SEGMENT_MAX_SIZE)));
+			self.mailbox.write(MailboxType::Can, priority, frame.finish());
+			
             // receive acknowledge
             // TODO check for possible SDO error
-            self.mailbox.read(MailboxType::Can, priority, &mut buffer);
-            let response = SdoFrame::unpack(
-                        CoeFrame::unpack(&buffer).unwrap().data
-                        ).unwrap().header;
-            assert_eq!(response.command(), SdoCommand::DownloadResponse);
-            assert_eq!(response.index(), sdo.index);
-            assert_eq!(response.sub(), sdo.sub.unwrap());
-            sent += segment;
+            let frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
+            assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
+            let header = content.unpack::<SdoHeader>().unwrap();
+            assert_eq!(header.command(), SdoCommandResponse::Download);
+            assert_eq!(header.index(), sdo.index);
+            assert_eq!(header.sub(), sdo.sub.unwrap());
             
             // send many segments for the rest of the data, aknowledge each time
             let mut toggle = false;
             while sent < data.len() {
                 // send segment
-                let (segment, more) = if data.len() < SDO_SEGMENT_MAX_SIZE
-                    {(data.len(), false)} else {(SDO_SEGMENT_MAX_SIZE, true)};
-                self.mailbox.write(MailboxType::Can, priority, CoeFrame {
-                    header: coe,
-                    data: SdoSegmentFrame {
-                        header: SdoSegmentHeader::new(more, u3::new(0), toggle, SdoCommand::DownloadRequest),
-                        data: &data[sent..][..segment],
-                    }.pack(),
-                });
-                // aknowledge
+                let segment = data.read(data.remain().len().min(SDO_SEGMENT_MAX_SIZE)).unwrap();
+                let frame = Cursor::new(&mut buffer);
+                frame.pack(CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+                frame.pack(SdoSegmentHeader::new(
+                        more, 
+                        u3::new(0), 
+                        toggle, 
+                        u3::from(SdoCommandRequest::Download),
+                    )).unwrap();
+                frame.write(segment).unwrap();
+                self.mailbox.write(MailboxType::Can, priority, frame.finish()).await;
+                
+                // receive aknowledge
                 // TODO check for possible SDO error
-                self.mailbox.read(MailboxType::Can, priority, &mut buffer);
-                let response = SdoSegmentFrame::unpack(
-                        CoeFrame::unpack(&buffer).unwrap().data
-                        ).unwrap().header;
-                assert_eq!(response.command(), SdoCommand::DownloadSegmentResponse);
-                assert_eq!(response.toggle(), toggle);
+                let frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
+                assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
+                let header = frame.unpack::<SdoSegmentHeader>().unwrap();
+                assert_eq!(SdoCommandResponse::from(header.command()), SdoCommandResponse::DownloadSegment);
+                assert_eq!(header.toggle(), toggle);
                 toggle = !toggle;
-                sent += segment;
+                
+                // TODO: check for abort
             }
 		}
 		
@@ -218,10 +200,10 @@ impl Can<'_> {
 	pub fn info_subitem() {todo!()}
 }
 
-struct CoeFrame<'a> {
-    header: CoeHeader,
-    data: &'a [u8],
-}
+// struct CoeFrame<'a> {
+//     header: CoeHeader,
+//     data: &'a [u8],
+// }
 
 #[bitsize(16)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
@@ -256,29 +238,29 @@ enum CanService {
 data::bilge_pdudata!(CanService);
 
 
-use crate::data::FrameData;
-use core::marker::PhantomData;
-
-struct SdoFrame<'a, T: FrameData<'a>> {
-    header: SdoHeader,
-    data: T,
-    phantom: PhantomData<&'a ()>,
-}
-
-impl<'a, T: FrameData<'a>>   FrameData<'a> for SdoFrame<'a, T> {
-    fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {
-        dst[.. SdoHeader::packed_size()].copy_from_slice(&self.header.pack());
-        self.data.pack(&mut dst[SdoHeader::packed_size() ..])?;
-        Ok(())
-    }
-    fn unpack(src: &'a [u8]) -> PackingResult<Self> {
-		let header = SdoHeader::unpack(src)?;
-        Ok(Self {
-            header,
-            data: T::unpack(&src[SdoHeader::packed_size() ..][.. header.length() as usize])?,
-        })
-    }
-}
+// use crate::data::FrameData;
+// use core::marker::PhantomData;
+// 
+// struct SdoFrame<'a, T: FrameData<'a>> {
+//     header: SdoHeader,
+//     data: T,
+//     phantom: PhantomData<&'a ()>,
+// }
+// 
+// impl<'a, T: FrameData<'a>>   FrameData<'a> for SdoFrame<'a, T> {
+//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {
+//         dst[.. SdoHeader::packed_size()].copy_from_slice(&self.header.pack());
+//         self.data.pack(&mut dst[SdoHeader::packed_size() ..])?;
+//         Ok(())
+//     }
+//     fn unpack(src: &'a [u8]) -> PackingResult<Self> {
+// 		let header = SdoHeader::unpack(src)?;
+//         Ok(Self {
+//             header,
+//             data: T::unpack(&src[SdoHeader::packed_size() ..][.. header.length() as usize])?,
+//         })
+//     }
+// }
 
 
 /// Header for operations with SDOs
@@ -296,8 +278,8 @@ struct SdoHeader {
     size: u2,
     /// true if a complete SDO is accessed
     complete: bool,
-    /// operation to perform with the indexed SDO
-    command: SdoCommand,
+    /// operation to perform with the indexed SDO, this should be a value of [SdoCommandRequest] or [SdoCommandResponse]
+    command: u3,
     /// SDO index
     index: u16,
     /**
@@ -310,10 +292,10 @@ struct SdoHeader {
 }
 data::bilge_pdudata!(SdoHeader);
 
-struct SdoSegmentFrame<'a> {
-    header: SdoSegmentHeader,
-    data: &'a [u8],
-}
+// struct SdoSegmentFrame<'a> {
+//     header: SdoSegmentHeader,
+//     data: &'a [u8],
+// }
 
 #[bitsize(16)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
@@ -321,27 +303,37 @@ struct SdoSegmentHeader {
     more: bool,
     size: u3,
     toggle: bool,
-    command: SdoCommand,
+    command: u3,
 }
 data::bilge_pdudata!(SdoSegmentHeader);
 
-/// operation to perform with an SDO in CoE
+/// request operation to perform with an SDO in CoE
 ///
 /// ETG.1000.6 5.6.2.1-7
 #[bitsize(3)]
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
-enum SdoCommand {
-    DownloadRequest = 0x1,
-    DownloadResponse = 0x3,
-    DownloadSegmentRequest = 0x0,
-    DownloadSegmentResponse = 0x1,
-    UploadRequest = 0x2,
-    UploadResponse = 0x2,
-    UploadSegmentRequest = 0x3,
-    UploadSegmentResponse = 0x0,
+enum SdoCommandRequest {
+    Download = 0x1,
+    DownloadSegment = 0x0,
+    Upload = 0x2,
+    UploadSegment = 0x3,
     Abort = 0x4,
 }
-data::bilge_pdudata!(SdoCommand);
+data::bilge_pdudata!(SdoCommandRequest);
+
+/// response operation to perform with an SDO in CoE
+///
+/// ETG.1000.6 5.6.2.1-7
+#[bitsize(3)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+enum SdoCommandResponse {
+    Download = 0x3,
+    DownloadSegment = 0x1,
+    Upload = 0x2,
+    UploadSegment = 0x0,
+    Abort = 0x4,
+}
+data::bilge_pdudata!(SdoCommandResponse);
 
 
 // enum SdoAbortCode {
@@ -414,3 +406,4 @@ data::bilge_pdudata!(SdoCommand);
 //     /// Object dictionary dynamic generation fails or no object dictionary is present
 //     0x08_00_00_23,
 // }
+
