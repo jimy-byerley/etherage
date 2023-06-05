@@ -159,19 +159,19 @@ num_pdudata!(f32, F32);
 num_pdudata!(f64, F64);
 
 
-/// much like PduData but works with variable size types, and allows partial decoding of data.
-/// [Self::unpack] however returns data limited to the lifetime of the unpacked buffer.
-pub trait FrameData<'a>: Sized {
-    fn packed_size(&self) -> usize;
-    fn pack(&self, dst: &mut [u8]) -> PackingResult<()>;
-    fn unpack(src: &'a [u8]) -> PackingResult<Self>;
-}
-
-impl<'a> FrameData<'a> for &'a [u8] {
-    fn packed_size(&self) -> usize {self.len()}
-    fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {Ok(dst.copy_from_slice(self))}
-    fn unpack(src: &'a [u8]) -> PackingResult<Self> {Ok(src)}
-}
+// /// much like PduData but works with variable size types, and allows partial decoding of data.
+// /// [Self::unpack] however returns data limited to the lifetime of the unpacked buffer.
+// pub trait FrameData<'a>: Sized {
+//     fn packed_size(&self) -> usize;
+//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()>;
+//     fn unpack(src: &'a [u8]) -> PackingResult<Self>;
+// }
+// 
+// impl<'a> FrameData<'a> for &'a [u8] {
+//     fn packed_size(&self) -> usize {self.len()}
+//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {Ok(dst.copy_from_slice(self))}
+//     fn unpack(src: &'a [u8]) -> PackingResult<Self> {Ok(src)}
+// }
 
 // impl<T: PduData> FrameData<'a> for T {
 //     fn packed_size(&self) -> usize {<Self as PduData>::packed_size()}
@@ -201,11 +201,11 @@ pub struct Field<T: PduData> {
 impl<T: PduData> Field<T>
 {
 	/// build a Field from its byte offset and byte length
-	pub fn new(byte: usize, len: usize) -> Self {
+	pub const fn new(byte: usize, len: usize) -> Self {
 		Self{extracted: PhantomData, byte, len}
 	}
 	/// build a Field from its byte offset, infering its length from the data nominal size
-	pub fn simple(byte: usize) -> Self {
+	pub const fn simple(byte: usize) -> Self {
         Self{extracted: PhantomData, byte, len: T::ByteArray::len()}
 	}
 	/// extract the value pointed by the field in the given byte array
@@ -254,3 +254,62 @@ impl<T: PduData> fmt::Debug for BitField<T> {
 	}
 }
 
+
+
+
+pub struct Cursor<T> {
+    position: usize,
+    data: T,
+}
+impl<T> Cursor<T> {
+    pub fn new(data: T) -> Self   {Self{position: 0, data}}
+    pub fn position(&self) -> usize   {self.position}
+}
+impl<'a> Cursor<&'a [u8]> {
+    pub fn unpack<T: PduData>(&mut self) -> PackingResult<T> {
+        let start = self.position.clone();
+        self.position += T::packed_size();
+        T::unpack(&self.data[start .. self.position])
+    }
+    pub fn read(&mut self, size: usize) -> PackingResult<&'a [u8]> {
+        let start = self.position.clone();
+        self.position += size;
+        Ok(&self.data[start .. self.position])
+    }
+    pub fn remain(&self) -> &'a [u8] {
+        &self.data[self.position ..]
+    }
+    pub fn finish(self) -> &'a [u8] {
+        &self.data[.. self.position]
+    }
+}
+impl<'a> Cursor<&'a mut [u8]> {
+    pub fn unpack<T: PduData>(&mut self) -> PackingResult<T> {
+        let start = self.position.clone();
+        self.position += T::packed_size();
+        T::unpack(&self.data[start .. self.position])
+    }
+    pub fn read(&mut self, size: usize) -> PackingResult<&'a [u8]> {
+        let start = self.position.clone();
+        self.position += size;
+        Ok(&self.data[start .. self.position])
+    }
+    pub fn pack<T: PduData>(&mut self, value: &T) -> PackingResult<()> {
+        let start = self.position.clone();
+        self.position += T::packed_size();
+        self.data[start .. self.position].copy_from_slice(value.pack().as_bytes_slice());
+        Ok(())
+    }
+    pub fn write(&mut self, value: &[u8]) -> PackingResult<()> {
+        let start = self.position.clone();
+        self.position += value.len();
+        self.data[start .. self.position].copy_from_slice(value);
+        Ok(())
+    }
+    pub fn remain<'b>(&'b mut self) -> &'b mut [u8] {
+        &mut self.data[self.position ..]
+    }
+    pub fn finish(self) -> &'a mut [u8] {
+        &mut self.data[.. self.position]
+    }
+}

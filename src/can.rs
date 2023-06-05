@@ -53,22 +53,22 @@ impl Can<'_> {
         // TODO check for possible SDO error
         let frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
         assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
-        let header = frame.unapck::<SdoHeader>().unwrap();
-        assert_eq!(SdoCommandResponse::from(header.command()), SdoCommandResponse::Upload);
+        let header = frame.unpack::<SdoHeader>().unwrap();
+        assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::Upload);
         assert!(header.sized());
         assert_eq!(header.index(), sdo.index);
         assert_eq!(header.sub(), sdo.sub.unwrap());
         
         if header.expedited() {
             // expedited transfer
-            T::unpack(frame.read(EXPEDITED_MAX_SIZE - usize::from(header.size()))).unwrap()
+            T::unpack(frame.read(EXPEDITED_MAX_SIZE - u8::from(header.size()) as usize).unwrap()).unwrap()
         }
         else {
             // normal transfer, eventually segmented
-            let total = frame.unpack::<u32>().unwrap();
-            assert_eq!(total, T.packed_size());
+            let total = frame.unpack::<u32>().unwrap().try_into().expect("SDO is too big for memory");
+            assert_eq!(total, T::packed_size());
             
-            let mut received = Cursor::new(data.as_bytes_slice());
+            let mut received = Cursor::new(&mut data.as_mut_bytes_slice()[.. total]);
             let mut toggle = true;
             received.write(frame.remain()).unwrap();
             
@@ -78,9 +78,10 @@ impl Can<'_> {
                 let frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
                 assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
                 let header = frame.unpack::<SdoSegmentHeader>().unwrap();
+                assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::UploadSegment);
                 assert_eq!(header.toggle(), toggle);
-                let content = frame.read((total - received).min(frame.remain().len()));
-                received.write(content).unwrap();
+                let segment = frame.read(received.remain().len().min(frame.remain().len())).unwrap();
+                received.write(segment).unwrap();
                 toggle = ! toggle;
                 
                 // TODO: check for abort
@@ -120,17 +121,16 @@ impl Can<'_> {
 			self.mailbox.write(MailboxType::Can, priority, frame.finish()).await;
             
             // receive acknowledge
-//             let response = self.mailbox.read::<'_, CoeFrame<'_, SdoFrame<'_>>>
+//             let response = self.mailbox.read::<CoeFrame<SdoFrame<'_>>>
 //                             (MailboxType::Can, priority, &mut buffer);
                             
             let content = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
             let header = content.unpack::<CoeHeader>().unwrap();
             assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
             let header = content.unpack::<SdoHeader>().unwrap();
-            let data = content.read(EXPEDITED_MAX_SIZE - header.size());            
-            assert_eq!(SdoCommandResponse::from(response.command()), SdoCommandResponse::Download);
-            assert_eq!(response.index(), sdo.index);
-            assert_eq!(response.sub(), sdo.sub.unwrap());
+            assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::Download);
+            assert_eq!(header.index(), sdo.index);
+            assert_eq!(header.sub(), sdo.sub.unwrap());
 		}
 		else {
 			// normal transfer, eventually segmented
@@ -148,27 +148,27 @@ impl Can<'_> {
                         sdo.index,
                         sdo.sub.unwrap(),
                     )).unwrap();
-            frame.write(data.read(data.len().min(SDO_SEGMENT_MAX_SIZE)));
+            frame.write(data.read(data.remain().len().min(SDO_SEGMENT_MAX_SIZE)));
 			self.mailbox.write(MailboxType::Can, priority, frame.finish());
 			
             // receive acknowledge
             // TODO check for possible SDO error
             let frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
             assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
-            let header = content.unpack::<SdoHeader>().unwrap();
-            assert_eq!(header.command(), SdoCommandResponse::Download);
+            let header = frame.unpack::<SdoHeader>().unwrap();
+            assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::Download);
             assert_eq!(header.index(), sdo.index);
             assert_eq!(header.sub(), sdo.sub.unwrap());
             
             // send many segments for the rest of the data, aknowledge each time
             let mut toggle = false;
-            while sent < data.len() {
+            while data.remain().len() != 0 {
                 // send segment
                 let segment = data.read(data.remain().len().min(SDO_SEGMENT_MAX_SIZE)).unwrap();
                 let frame = Cursor::new(&mut buffer);
                 frame.pack(CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
                 frame.pack(SdoSegmentHeader::new(
-                        more, 
+                        data.remain().len() != 0, 
                         u3::new(0), 
                         toggle, 
                         u3::from(SdoCommandRequest::Download),
@@ -181,7 +181,7 @@ impl Can<'_> {
                 let frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
                 assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
                 let header = frame.unpack::<SdoSegmentHeader>().unwrap();
-                assert_eq!(SdoCommandResponse::from(header.command()), SdoCommandResponse::DownloadSegment);
+                assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::DownloadSegment);
                 assert_eq!(header.toggle(), toggle);
                 toggle = !toggle;
                 
@@ -189,6 +189,7 @@ impl Can<'_> {
             }
 		}
 		
+        // TODO: error propagation instead of asserts
         // TODO send SdoCommand::Abort in case any error
 	}
 	

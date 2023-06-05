@@ -11,7 +11,7 @@ use bilge::prelude::*;
 
 use crate::{
     socket::*,
-    data::{self, PduData, ByteArray, PackingResult},
+    data::{self, Field, PduData, ByteArray, PackingResult},
     };
 
 const MAX_ETHERCAT_FRAME: usize = 2050;
@@ -80,50 +80,50 @@ impl RawMaster {
 	
 	// shorthands to PDU commands
 	// the slave address is actually packed and unpacked to actual commands again, but this is greatly shortening the code and the compiler should optimize that
-	pub async fn brd<T: PduData>(&self, address: u16) -> PduAnswer<T> {
+	pub async fn brd<T: PduData>(&self, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Broadcast, address).await
 	}
-	pub async fn bwr<T: PduData>(&self, address: u16, data: T) -> PduAnswer<()> {
+	pub async fn bwr<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::Broadcast, address, data).await
 	}
-	pub async fn brw<T: PduData>(&self, address: u16, data: T) -> PduAnswer<T> {
+	pub async fn brw<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Broadcast, address, data).await
 	}
 	
-	pub async fn aprd<T: PduData>(&self, address: u16) -> PduAnswer<T> {
+	pub async fn aprd<T: PduData>(&self, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::AutoIncremented, address).await
 	}
-	pub async fn apwr<T: PduData>(&self, address: u16, data: T) -> PduAnswer<()> {
+	pub async fn apwr<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::AutoIncremented, address, data).await
 	}
-	pub async fn aprw<T: PduData>(&self, address: u16, data: T) -> PduAnswer<T> {
+	pub async fn aprw<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::AutoIncremented, address, data).await
 	}
 	pub async fn armw(&self) {todo!()}
 	
-	pub async fn fprd<T: PduData>(&self, slave: u16, address: u16) -> PduAnswer<T> {
+	pub async fn fprd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Configured(slave), address).await
 	}
-	pub async fn fpwr<T: PduData>(&self, slave: u16, address: u16, data: T) -> PduAnswer<()> {
+	pub async fn fpwr<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::Configured(slave), address, data).await
 	}
-	pub async fn fprw<T: PduData>(&self, slave: u16, address: u16, data: T) -> PduAnswer<T> {
+	pub async fn fprw<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Configured(slave), address, data).await
 	}
 	pub async fn frmw(&self) {todo!()}
 	
-	pub async fn lrd<T: PduData>(&self, slave: u16, address: u16) -> PduAnswer<T> {
+	pub async fn lrd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Logical, address).await
 	}
-	pub async fn lwr<T: PduData>(&self, slave: u16, address: u16, data: T) -> PduAnswer<()> {
+	pub async fn lwr<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::Logical, address, data).await
 	}
-	pub async fn lrw<T: PduData>(&self, slave: u16, address: u16, data: T) -> PduAnswer<T> {
+	pub async fn lrw<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Logical, address, data).await
 	}
 	
 	/// maps to a *rd command
-	pub async fn read<T: PduData>(&self, slave: SlaveAddress, memory: u16) -> PduAnswer<T> {
+	pub async fn read<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>) -> PduAnswer<T> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BRD, 0),
             SlaveAddress::AutoIncremented => (PduCommand::APRD, 0),
@@ -132,12 +132,12 @@ impl RawMaster {
             };
         let mut data = T::ByteArray::new(0);
         PduAnswer {
-			answers: self.pdu(command, slave, memory, data.as_mut_bytes_slice()).await,
+			answers: self.pdu(command, slave, memory.byte as u16, &mut data.as_mut_bytes_slice()[.. memory.len]).await,
 			value: T::unpack(data.as_bytes_slice()).unwrap(),
 			}
     }
 	/// maps to a *wr command
-	pub async fn write<T: PduData>(&self, slave: SlaveAddress, memory: u16, data: T) -> PduAnswer<()> {
+	pub async fn write<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<()> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BWR, 0),
             SlaveAddress::AutoIncremented => (PduCommand::APWR, 0),
@@ -145,12 +145,12 @@ impl RawMaster {
             SlaveAddress::Logical => (PduCommand::LWR, 0),
             };
 		PduAnswer {
-			answers: self.pdu(command, slave, memory, data.pack().as_mut_bytes_slice()).await,
+			answers: self.pdu(command, slave, memory.byte as u16, &mut data.pack().as_mut_bytes_slice()[.. memory.len]).await,
 			value: (),
 			}
 	}
 	/// maps to a *rw command
-	pub async fn exchange<T: PduData>(&self, slave: SlaveAddress, memory: u16, data: T) -> PduAnswer<T> {
+	pub async fn exchange<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<T> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BRW, 0),
             SlaveAddress::AutoIncremented => (PduCommand::APRW, 0),
@@ -159,7 +159,7 @@ impl RawMaster {
             };
         let mut data = data.pack();
         PduAnswer {
-			answers: self.pdu(command, slave, memory, data.as_mut_bytes_slice()).await,
+			answers: self.pdu(command, slave, memory.byte as u16, &mut data.as_mut_bytes_slice()[.. memory.len]).await,
 			value: T::unpack(data.as_bytes_slice()).unwrap(),
 			}
 	}
@@ -199,7 +199,7 @@ impl RawMaster {
                 let place = &mut state.send[start ..][.. PduHeader::packed_size()];
                 let mut header = PduHeader::unpack(place).unwrap();
                 header.set_next(true);
-                place.copy_from_slice(&header.pack().unwrap());
+                place.copy_from_slice(&header.pack());
             }
             else {
                 state.last_time = Instant::now();
@@ -216,10 +216,10 @@ impl RawMaster {
                 false,
                 false,
                 0,
-                ).pack().unwrap().as_bytes_slice());
+                ).pack().as_bytes_slice());
             state.send.extend_from_slice(data);
             state.send.extend_from_slice(PduFooter::new(0)
-                .pack().unwrap().as_bytes_slice());
+                .pack().as_bytes_slice());
             println!("buffered pdu {} {:?}", state.last_start, state.send);
             
             self.sendable.notify_one();

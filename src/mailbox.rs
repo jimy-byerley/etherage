@@ -2,10 +2,9 @@ use crate::{
 	socket::EthercatSocket,
 	rawmaster::{RawMaster, PduCommand},
 	registers,
-    data::{self, PduData, ByteArray, PackingResult},
+    data::{self, PduData, ByteArray, PackingResult, Cursor},
 	};
 use bilge::prelude::*;
-use std::io::{Cursor, Write};
 
 
 /**
@@ -33,14 +32,14 @@ impl Mailbox<'_> {
             if state.answers == 0 || ! state.value.mailbox_full()  {continue}
             break state.value
         };
-        let mut allocated = [0; registers::mailbox_buffers[0].size];
+        let mut allocated = [0; registers::mailbox_buffers[0].len];
         // the destination data is expected to be big enough for the data, so we will read only this data size
         let buffer = &mut allocated[.. allocated.len()
                                     .min(data.len() + MailboxHeader::packed_size())];
 		// read the mailbox content
 		loop {
-            let reading = self.master.pdu(PduCommand::FPRD, self.slave, mailbox_buffer, buffer).await;
-            if reading.answers == 1 {break}
+            if self.master.pdu(PduCommand::FPRD, self.slave, mailbox_buffer.byte as u16, buffer).await == 1 
+                {break}
             
             // trigger repeat
             state.set_repeat(true);
@@ -53,10 +52,10 @@ impl Mailbox<'_> {
             }
         }
         let frame = MailboxFrame::unpack(buffer).unwrap();
-        assert!(frame.header.length() <= data.len());
+        assert!(usize::from(frame.header.length()) <= data.len());
         assert_eq!(frame.header.ty(), ty);
         assert_eq!(u8::from(frame.header.count()), self.count);
-		data[.. frame.data.len()].write_from_slice(frame.data);
+		data[.. frame.data.len()].copy_from_slice(frame.data);
 		
 		// TODO wait for mailbox to become ready again ?
 		
@@ -69,16 +68,16 @@ impl Mailbox<'_> {
 		let mailbox_buffer = registers::mailbox_buffers[0];
 		let frame = MailboxFrame {
 			header: MailboxHeader::new(
-				data.len(),
-				0,  // address of master
-				0,  // this value has no effect and is reserved for future use
+				data.len() as u16,
+				u16::from(0),  // address of master
+				u6::from(0),  // this value has no effect and is reserved for future use
 				priority,
 				ty,
-				self.count,
+				u3::from(self.count),
 			),
 			data,
         };
-        let mut buffer = [0; registers::mailbox_buffers[0].size];
+        let mut buffer = [0; registers::mailbox_buffers[0].len];
         // the destination data is expected to be big enough for the data, so we will read only this data size
         assert!(buffer.len() > frame.packed_size());
         frame.pack(&mut buffer);
@@ -89,7 +88,8 @@ impl Mailbox<'_> {
             break state.value
         };
         // write data
-        while ! self.master.pdu(PduCommand::FPWR, self.slave, mailbox_buffer, buffer[.. frame.packed_size()]).await.answers == 1 {}
+        while ! self.master.pdu(PduCommand::FPWR, self.slave, mailbox_buffer.byte as u16, buffer[.. frame.packed_size()]).await == 1 
+            {}
 		
 		// TODO wait for mailbox to become ready again ?
 	}
@@ -115,7 +115,7 @@ impl<'a> MailboxFrame<'a> {
 		let header = MailboxHeader::unpack(src).unwrap();
         Ok(Self {
             header,
-            data: src[MailboxHeader::packed_size() ..][.. header.length() as usize],
+            data: &src[MailboxHeader::packed_size() ..][.. header.length() as usize],
         })
     }
 }
@@ -144,7 +144,7 @@ data::bilge_pdudata!(MailboxHeader);
 
 /// ETG 1000.4 table 29
 #[bitsize(4)]
-#[derive(TryFromBits, Debug, Copy, Clone)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum MailboxType {
     Exception = 0x0,
     Ads = 0x1,
@@ -157,7 +157,7 @@ pub enum MailboxType {
 
 /// ETG 1000.4 table 30
 #[bitsize(32)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 struct MailboxErrorFrame {
     ty: u16,
     detail: MailboxError,
@@ -166,7 +166,7 @@ data::bilge_pdudata!(MailboxErrorFrame);
 
 // ETG 1000.4 table 30
 #[bitsize(16)]
-#[derive(TryFromBits, Debug, Copy, Clone)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum MailboxError {
     Syntax = 0x1,
     UnsupportedProtocol = 0x2,
