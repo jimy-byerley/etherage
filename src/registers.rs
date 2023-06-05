@@ -122,19 +122,19 @@ pub enum AlError {
 /// ETG.1000.6 table 18
 #[bitsize(16)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-struct MailboxSupport {
+pub struct MailboxSupport {
     /// ADS over EtherCAT (routing and parallel services)
-    aoe: bool,
+    pub aoe: bool,
     /// Ethernet over EtherCAT (tunnelling of Data Link services)
-    eoe: bool,
+    pub eoe: bool,
     /// CAN application protocol over EtherCAT (access to SDO)
-    coe: bool,
+    pub coe: bool,
     /// File Access over EtherCAT
-    foe: bool,
+    pub foe: bool,
     /// Servo Drive Profile over EtherCAT
-    soe: bool,
+    pub soe: bool,
     /// Vendor specific protocol over EtherCAT
-    voe: bool,
+    pub voe: bool,
 }
 
 
@@ -142,7 +142,7 @@ struct MailboxSupport {
 /// ETG.1000.4 table 33
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-struct DLControl {
+pub struct DLControl {
 	/// enables forwarding non-ethercat frames
 	forwarding: Forwarding,
 	/// 0:permanent setting
@@ -162,7 +162,7 @@ data::bilge_pdudata!(DLControl);
 
 #[bitsize(1)]
 #[derive(TryFromBits, Debug, Copy, Clone)]
-enum Forwarding {
+pub enum Forwarding {
 	/// EtherCAT frames are processed, non-EtherCAT frames are forwarded without modification, The source MAC address is not changed for any frame
 	Transmit = 0, 
 	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC[1] is set to 1 – locally administered address).
@@ -172,7 +172,7 @@ data::bilge_pdudata!(Forwarding);
 
 #[bitsize(2)]
 #[derive(TryFromBits, Debug, Copy, Clone)]
-enum LoopControl {
+pub enum LoopControl {
 	/// closed at “link down”, open with “link up”
 	Auto = 0, 
 	/// loop closed at “link down”, opened with writing 01 after “link up” (or receiving a valid Ethernet frame at the closed port)
@@ -185,44 +185,44 @@ data::bilge_pdudata!(LoopControl);
 /// ETG.1000.4 table 34
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct DLStatus {
+pub struct DLStatus {
 	/// trie if operational
-	dls_user_operational: bool,
+	pub dls_user_operational: bool,
 	/// true if watchdog not expired
-	dls_user_watchdog: bool,
+	pub dls_user_watchdog: bool,
 	/// true if activated for at least one port
-	extended_link_detection: bool,
+	pub extended_link_detection: bool,
 	reserved: u1,
 	/// indicates physical link on each port
-	port_link_status: [bool; 4],
+	pub port_link_status: [bool; 4],
 	/// indicates closed loop link status on each port
-	port_loop_status: [LoopStatus; 4],
+	pub port_loop_status: [LoopStatus; 4],
 }
 data::bilge_pdudata!(DLStatus);
 
 #[bitsize(2)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct LoopStatus {
+pub struct LoopStatus {
 	/// indicates forwarding on the same port i.e. loop back.
-	loop_back: bool,
-	signal_detection: bool,
+	pub loop_back: bool,
+	pub signal_detection: bool,
 }
 data::bilge_pdudata!(LoopStatus);
 
 /// The event registers are used to indicate an event to the DL -user. The event shall be acknowledged if the corresponding event source is read. The events can be masked.
 #[bitsize(32)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct DLSUserEvents {
+pub struct DLSUserEvents {
 	/// R1 was written
-	r1_change: bool,
-	dc: [bool; 3],
+	pub r1_change: bool,
+	pub dc: [bool; 3],
 	/// event active (one or more Sync manager channels were changed)
-	sync_manager_change: bool,
+	pub sync_manager_change: bool,
 	/// EEPROM command pending
-	eeprom_emulation: bool,
+	pub eeprom_emulation: bool,
 	reserved: u2,
 	/// mark whether each sync manager channel was accessed
-	sync_manager_channel: [bool; 16],
+	pub sync_manager_channel: [bool; 16],
 	reserved: u8,
 }
 data::bilge_pdudata!(DLSUserEvents);
@@ -234,16 +234,16 @@ data::bilge_pdudata!(DLSUserEvents);
 */
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct ExternalEvent {
+pub struct ExternalEvent {
 	/// dc event 0
-	dc0: bool,
+	pub dc0: bool,
 	reserved: u1,
 	/// dl status register was changed
-	dl_status_change: bool,
+	pub dl_status_change: bool,
 	/// R3 or R4 was written
-	r3_r4_change: bool,
+	pub r3_r4_change: bool,
 	/// sync manager channel was accessed by slave
-	sync_manager_channel: [bool; 8],
+	pub sync_manager_channel: [bool; 8],
 	reserved: u1,
 }
 data::bilge_pdudata!(ExternalEvent);
@@ -251,26 +251,26 @@ data::bilge_pdudata!(ExternalEvent);
 /// A write to one counter will reset all counters of the group
 #[repr(packed)]
 #[derive(Clone, Debug)]
-struct PortsErrorCount {
-	port: [PortErrorCount; 4],
+pub struct PortsErrorCount {
+	pub port: [PortErrorCount; 4],
 }
 data::packed_pdudata!(PortsErrorCount);
 
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct PortErrorCount {
+pub struct PortErrorCount {
 	/// counts the occurrences of frame errors (including RX errors within frame)
-	frame: u8,
+	pub frame: u8,
 	/// counts the occurrences of RX errors at the physical layer
-	physical: u8,
+	pub physical: u8,
 }
 data::bilge_pdudata!(PortErrorCount);
 
 #[bitsize(32)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct LostLinkCount {
+pub struct LostLinkCount {
 	/// counts the occurrences of link down.
-	port: [u8; 4],
+	pub port: [u8; 4],
 }
 data::bilge_pdudata!(LostLinkCount);
 
@@ -279,15 +279,15 @@ data::bilge_pdudata!(LostLinkCount);
 */
 #[bitsize(48)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct FrameErrorCount {
+pub struct FrameErrorCount {
 	/**
 	The optional previous indicate a problem on checksum this could be counter is written. The reached. error counter registers contain information about error frames that the predecessor links. As frames with error have a specific type of detected and reported. All previous error counters will be cleared if one counting is stopped for each counter whose maximum value (255) is reached.
 	*/
-	previous_error_count: [u8; 4],
+	pub previous_error_count: [u8; 4],
 	/// counts frames with i.e. wrong datagram structure. The counter will be cleared if the counter is written. The counting is stopped when the maximum value (255) is reached.
-	malformat_frame_count: u8,
+	pub malformat_frame_count: u8,
 	/// counts occurrence of local problems. The counter will be cleared if the counter is written. The counting is stopped when the maximum value (255) is reached.
-	local_problem_count: u8,
+	pub local_problem_count: u8,
 }
 data::bilge_pdudata!(FrameErrorCount);
 
@@ -298,11 +298,11 @@ data::bilge_pdudata!(FrameErrorCount);
 */
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct WatchdogCounter {
+pub struct WatchdogCounter {
 	/// counts the expiration of all Sync manager watchdogs.
-	sync_manager: u8,
+	pub sync_manager: u8,
 	/// counts the expiration of DL-user watchdogs.
-	pdi: u8,
+	pub pdi: u8,
 }
 data::bilge_pdudata!(WatchdogCounter);
 
@@ -310,18 +310,18 @@ data::bilge_pdudata!(WatchdogCounter);
 /// ETH.1000.4 table 48
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct SiiAccess {
-	owner: SiiOwner,
-	lock: bool,
-	reserved: u6,
-	pdi: bool,
-	reserved: u7,
+pub struct SiiAccess {
+	pub owner: SiiOwner,
+	pub lock: bool,
+	pub reserved: u6,
+	pub pdi: bool,
+	pub reserved: u7,
 }
 data::bilge_pdudata!(SiiAccess);
 
 #[bitsize(1)]
 #[derive(FromBits, Debug, Copy, Clone)]
-enum SiiOwner {
+pub enum SiiOwner {
 	EthercatDL = 0,
 	Pdi = 1,
 }
@@ -334,59 +334,59 @@ data::bilge_pdudata!(SiiOwner);
 */
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
-struct SiiControl {
+pub struct SiiControl {
 	/// true if SOO is writable
-	write_access: bool,
+	pub write_access: bool,
 	reserved: u4,
 	/**
 		- false: Normal operation (DL interfaces to SII)
 		- true: DL-user emulates SII
 	*/
-	eeprom_emulation: bool,
+	pub eeprom_emulation: bool,
 	/// number of bytes per read transaction
-	read_size: SiiTransaction,
+	pub read_size: SiiTransaction,
 	/// unit of SII addresses
-	address_unit: SiiUnit,
+	pub address_unit: SiiUnit,
 	
 	/**
 		read operation requested (parameter write) or read operation busy (parameter read)
 		To start a new read operation there must be a positive edge on this parameter
 	*/
-	read_operation: bool,
+	pub read_operation: bool,
 	/**
 		write operation requested (parameter write) or write operation busy (parameter read)
 		To start a new write operation there must be a positive edge on this parameter
 	*/
-	write_operation: bool,
+	pub write_operation: bool,
 	/**
 		reload operation requested (parameter write) or reload operation busy (parameter read)
 		To start a new reload operation there must be a positive edge on this parameter
 	*/
-	reload_operation: bool,
+	pub reload_operation: bool,
 	
 	/// checksum error while reading at startup
-	checksum_error: bool,
+	pub checksum_error: bool,
 	/// error on reading Device Information
-	device_info_error: bool,
+	pub device_info_error: bool,
 	/// error on last command PDI Write only in SII emulation mode
-	command_error: bool,
+	pub command_error: bool,
 	/// error on last write operation
-	write_error: bool,
+	pub write_error: bool,
 	
 	/// operation is ongoing
-	busy: bool,
+	pub busy: bool,
 }
 data::bilge_pdudata!(SiiControl);
 
 #[bitsize(1)]
 #[derive(FromBits, Debug, Copy, Clone)]
-enum SiiTransaction {
+pub enum SiiTransaction {
 	Bytes4 = 0,
 	Bytes8 = 1,
 }
 #[bitsize(1)]
 #[derive(FromBits, Debug, Copy, Clone)]
-enum SiiUnit {
+pub enum SiiUnit {
 	Byte = 0,
 	Word = 1,
 }
@@ -417,32 +417,32 @@ impl FMMU {
 */
 #[bitsize(128)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-struct FMMUEntry {
+pub struct FMMUEntry {
 	/// start byte in the logical memory
-	logical_start_byte: u32,
+	pub logical_start_byte: u32,
 	/// byte size of the data (rounded to lower value in case of bit-sized data ?)
-	logical_len_byte: u16,
+	pub logical_len_byte: u16,
 	/// offset of the start bit in the logical start byte
-	logical_start_bit: u3,
+	pub logical_start_bit: u3,
 	reserved: u5,
 	/// offset of the end bit in the logical start byte
-	logical_end_bit: u3,
+	pub logical_end_bit: u3,
 	reserved: u5,
 	
 	/// start byte in the physical memory (set by the sync manager)
-	physical_start_byte: u16,
+	pub physical_start_byte: u16,
 	/// start bit in the physical start byte
-	physical_start_bit: u3,
+	pub physical_start_bit: u3,
 	reserved: u5,
 	
 	/// entity will be used for read service
-	read: bool,
+	pub read: bool,
 	/// entity will be used for write service
-	write: bool,
+	pub write: bool,
 	reserved: u6,
 	
 	/// enable this FMMU entry, so physical memory will be copied from/to logical memory on read/write
-	enable: bool,
+	pub enable: bool,
 	reserved: u7,
 	reserved: u24,
 }
@@ -482,49 +482,49 @@ impl SyncManager {
 */
 #[bitsize(64)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-struct SyncManagerChannel {
+pub struct SyncManagerChannel {
     /// start address in octets in the physical memory of the consistent DL-user memory area.
-    address: u16,
+    pub address: u16,
     /// size in octets of the consistent DL -user memory area.
-    length: u16,
+    pub length: u16,
     /// whether the buffer is used for mailbox or exchange through mapping to the logical memory
-    buffer_type: SyncBufferType,
+    pub buffer_type: SyncBufferType,
     /// whether the consistent DL -user memory area is read or written by the master.
-    direction: SyncBufferDirection,
+    pub direction: SyncBufferDirection,
     
     /// an event is generated if there is new data available in the consistent DL-user memory area which was written by the master (direction write) or if the new data from the DL-user was read by the master (direction read).
-    ec_event: bool,
+    pub ec_event: bool,
     /// an event is generated if there is new data available in the consistent DL-user memory area which was written by DLS-user or if the new data from the Master was read by the DLS-user.
-    dls_user_event: bool,
+    pub dls_user_event: bool,
     /// if the monitoring of an access to the consistent DL-user memory area is enabled.
-    watchdog: bool,
+    pub watchdog: bool,
     reserved: u1,
     /// if the consistent DL -user memory (direction write) has been written by the master and the event enable parameter is set.
-    write_event: bool,
+    pub write_event: bool,
     /// if the consistent DL -user memory (direction read) has been read by the master and the event enable parameter is set.
-    read_event: bool,
+    pub read_event: bool,
     reserved: u1,
     
-    mailbox_full: bool,
+    pub mailbox_full: bool,
     /// state (buffer number, locked) of the consistent DL-user memory if it is of buffered access type.
-    buffer_state: u2,
-    read_buffer_open: bool,
-    write_buffer_open: bool,
+    pub buffer_state: u2,
+    pub read_buffer_open: bool,
+    pub write_buffer_open: bool,
     
     /// activate this channel
-    enable: bool,
+    pub enable: bool,
     /// A change in this parameter indicates a repeat request. This is primarily used to repeat the last mailbox interactions.
-    repeat: bool,
+    pub repeat: bool,
     reserved: u4,
     
     /// if the DC 0 Event shall be invoked in case of a EtherCAT write
-    dc_event_bus: bool,
+    pub dc_event_bus: bool,
     /// if the DC 0 Event shall be invoked in case of a local write
-    dc_event_local: bool,
+    pub dc_event_local: bool,
     /// disable this channel for PDI access
-    disable_pdi: bool,
+    pub disable_pdi: bool,
     /// indicates a repeat request acknowledge. After setting the value of Repeat in the parameter repeat acknowledge.
-    repeat_ack: bool,
+    pub repeat_ack: bool,
     reserved: u6,
 }
 data::bilge_pdudata!(SyncManagerChannel);
@@ -532,14 +532,14 @@ data::bilge_pdudata!(SyncManagerChannel);
 /// ETG.1000.4 table 58
 #[bitsize(2)]
 #[derive(TryFromBits, Debug)]
-enum SyncBufferType {
+pub enum SyncBufferType {
     Buffered = 0,
     Mailbox = 2,
 }
 /// ETG.1000.4 table 58
 #[bitsize(2)]
 #[derive(TryFromBits, Debug)]
-enum SyncBufferDirection {
+pub enum SyncBufferDirection {
     /// buffer is read by the master
     Read = 0,
     /// buffer is written by the master
@@ -549,34 +549,34 @@ enum SyncBufferDirection {
 /// ETG.1000.4 table 60
 #[repr(packed)]
 #[derive(Clone, Debug)]
-struct DistributedClock {
+pub struct DistributedClock {
     /**
         A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly). 
         This array contains the latched receival time on each port.
     */
-    received_time: [u32; 4],
+    pub received_time: [u32; 4],
     /**
         A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
     */
-    system_time: u64,
+    pub system_time: u64,
     /**
         Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
     */
-    receive_time_unit: u64,
+    pub receive_time_unit: u64,
     /// Offset between the local time (in ns) and the local system time (in ns)
-    system_offset: u64,
+    pub system_offset: u64,
     /// Offset between the reference system time (in ns) and the local system time (in ns)
-    system_delay: u32,
-    system_difference: TimeDifference,
-    _reserved: [u32; 3],
+    pub system_delay: u32,
+    pub system_difference: TimeDifference,
+    reserved: [u32; 3],
 }
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-struct TimeDifference {
+pub struct TimeDifference {
     /// Mean difference between local copy of System Time and received System Time values
-    mean: u31,
+    pub mean: u31,
     /// true if local copy of system time smaller than received system time
-    sign: bool,
+    pub sign: bool,
 }
 data::bilge_pdudata!(TimeDifference);
 
