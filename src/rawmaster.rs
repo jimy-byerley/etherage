@@ -11,7 +11,7 @@ use bilge::prelude::*;
 
 use crate::{
     socket::*,
-    data::{self, Field, PduData, ByteArray, PackingResult},
+    data::{self, Field, PduData, Storage, PackingResult, Cursor},
     };
 
 const MAX_ETHERCAT_FRAME: usize = 2050;
@@ -45,8 +45,9 @@ pub struct RawMaster {
 struct PduState {
 	pub token: u8,
 	pub last_start: usize,
+	pub last_end: usize,
 	pub last_time: Instant,
-	pub send: Vec<u8>,
+	pub send: [u8; MAX_ETHERCAT_FRAME],
 	pub receive: HashMap<u8, PduStorage>,
 }
 /// struct for internal use in RawMaster
@@ -56,7 +57,7 @@ struct PduStorage {
     answers: u16,
 }
 impl RawMaster {
-	pub fn new<S: EthercatSocket>(socket: S) -> Self {        
+	pub fn new<S: EthercatSocket + 'static>(socket: S) -> Self {        
         Self {
             pdu_merge_time: std::time::Duration::from_micros(2000), // microseconds
             
@@ -69,8 +70,9 @@ impl RawMaster {
             pdu_state: Mutex::new(PduState {
                 token: 0,
                 last_start: 0,
+                last_end: EthercatHeader::packed_size(),
                 last_time: Instant::now(),
-                send: Vec::new(),
+                send: [0; MAX_ETHERCAT_FRAME],
                 receive: HashMap::new(),
                 }),
             ethercat_send: Mutex::new(Default::default()),
@@ -130,10 +132,10 @@ impl RawMaster {
             SlaveAddress::Configured(address) => (PduCommand::FPRD, address),
             SlaveAddress::Logical => (PduCommand::LRD, 0),
             };
-        let mut data = T::ByteArray::new(0);
+        let mut buffer = T::Packed::uninit();
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut data.as_mut_bytes_slice()[.. memory.len]).await,
-			value: T::unpack(data.as_bytes_slice()).unwrap(),
+			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
+			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
     }
 	/// maps to a *wr command
@@ -144,8 +146,10 @@ impl RawMaster {
             SlaveAddress::Configured(address) => (PduCommand::FPWR, address),
             SlaveAddress::Logical => (PduCommand::LWR, 0),
             };
+        let mut buffer = T::Packed::uninit();
+        data.pack(buffer.as_mut()).unwrap();
 		PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut data.pack().as_mut_bytes_slice()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
 			value: (),
 			}
 	}
@@ -157,10 +161,11 @@ impl RawMaster {
             SlaveAddress::Configured(address) => (PduCommand::FPRW, address),
             SlaveAddress::Logical => (PduCommand::LRW, 0),
             };
-        let mut data = data.pack();
+        let mut buffer = T::Packed::uninit();
+        data.pack(buffer.as_mut()).unwrap();
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut data.as_mut_bytes_slice()[.. memory.len]).await,
-			value: T::unpack(data.as_bytes_slice()).unwrap(),
+			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
+			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
 	}
 	
@@ -174,7 +179,7 @@ impl RawMaster {
             let mut state = self.pdu_state.lock().unwrap();
             
             // sending the buffer if necessary
-            while MAX_ETHERCAT_FRAME < state.send.len() + data.len() + PduHeader::packed_size() {
+            while MAX_ETHERCAT_FRAME < state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size() {
                 println!("no more space, waiting");
                 self.send.notify_one();
                 state = self.sent.wait(state).unwrap();
@@ -194,33 +199,37 @@ impl RawMaster {
                 });
             
             // change last value's PduHeader.next
-            if state.last_start < state.send.len() {
-                let start = state.last_start;
-                let place = &mut state.send[start ..][.. PduHeader::packed_size()];
+            if state.last_start < state.last_end {
+                let range = state.last_start .. state.last_end;
+                let place = &mut state.send[range];
                 let mut header = PduHeader::unpack(place).unwrap();
                 header.set_next(true);
-                place.copy_from_slice(&header.pack());
+                header.pack(place);
             }
             else {
                 state.last_time = Instant::now();
             }
             
             // stacking the PDU in self.pdu_receive
-            state.last_start = state.send.len();
-            state.send.extend_from_slice(PduHeader::new(
-                command as u8,
-                token,
-                slave_address,
-                memory_address,
-                u11::new(data.len().try_into().unwrap()),
-                false,
-                false,
-                0,
-                ).pack().as_bytes_slice());
-            state.send.extend_from_slice(data);
-            state.send.extend_from_slice(PduFooter::new(0)
-                .pack().as_bytes_slice());
-            println!("buffered pdu {} {:?}", state.last_start, state.send);
+            let advance = {
+                let range = state.last_end ..;
+                let mut cursor = Cursor::new(&mut state.send[range]);
+                cursor.pack(&PduHeader::new(
+                    command as u8,
+                    token,
+                    slave_address,
+                    memory_address,
+                    u11::new(data.len().try_into().unwrap()),
+                    false,
+                    false,
+                    u16::new(0),
+                    )).unwrap();
+                cursor.write(data).unwrap();
+                cursor.pack(&PduFooter::new(0)).unwrap();
+                cursor.position()
+            };
+            state.last_start = state.last_end;
+            state.last_end = state.last_start + advance;
             
             self.sendable.notify_one();
         
@@ -305,22 +314,20 @@ impl RawMaster {
         let state = self.sendable.wait(state).unwrap();
         let mut state = self.send.wait_timeout(state, self.pdu_merge_time).unwrap().0;
         
-        let mut send = self.ethercat_send.lock().unwrap();
-        // send
-        send.extend_from_slice(EthercatHeader::new(
-            u11::new(state.send.len() as u16),
+        // check header
+        EthercatHeader::new(
+            u11::new((state.last_end - EthercatHeader::packed_size()) as u16),
             EthercatType::PDU,
-            ).pack().as_bytes_slice()).unwrap();
-        send.extend_from_slice(&state.send).unwrap();
+            ).pack(&mut state.send).unwrap();
+        
+        // send
+        // we are blocking the async machine until the send ends
+        // we assume it is not a long operation to copy those data into the system buffer
+        self.socket.send(&state.send[.. state.last_end]).unwrap();
         // reset state
-        state.send.clear();
+        state.last_end = 0;
         state.last_start = 0;
         drop(state);
-        
-        self.socket.send(send.deref()).unwrap();
-        // reset send
-        send.clear();
-        drop(send);
 	}
 }
 

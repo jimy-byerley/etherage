@@ -3,8 +3,9 @@
 use core::{
 	marker::PhantomData,
 	fmt,
+	ops::{Index, IndexMut, Range},
+	slice::SliceIndex,
 	};
-pub use packed_struct::{PackingResult, PackingError, types::bits::ByteArray};
 
 /**
 	trait for data types than can be packed/unpacked to/from a PDU
@@ -22,24 +23,42 @@ pub use packed_struct::{PackingResult, PackingError, types::bits::ByteArray};
 	It is also fine to implement [PduData] the regular way
 */
 pub trait PduData: Sized {
-	const ID: TypeId;
-    type ByteArray: ByteArray;
+    const ID: TypeId;
+    type Packed: Storage;
 
-    fn pack(&self) -> Self::ByteArray;
+    fn pack(&self, dst: &mut [u8]) -> PackingResult<()>;
     fn unpack(src: &[u8]) -> PackingResult<Self>;
     
-    fn packed_size() -> usize {Self::ByteArray::len()}
+    fn packed_size() -> usize  {Self::Packed::LEN}
+    fn packed_bitsize() -> usize {Self::Packed::LEN*8}
 }
-// /// trait marking a [packed_struct::PackedStruct] is a [PduData]
-// // TODO: see if this trait could be derived
-// pub trait PduStruct: packed::PackedStruct {}
-// impl<T: PduStruct> PduData for T {
-// 	const ID: TypeId = TypeId::CUSTOM;
-// 	type ByteArray = <T as packed::PackedStruct>::ByteArray;
-// 	
-// 	fn pack(&self) -> Self::ByteArray    {packed::PackedStruct::pack(self).unwrap()}
-// 	fn unpack(src: &[u8]) -> PackingResult<Self>  {packed::PackedStructSlice::unpack_from_slice(src)}
-// }
+
+/** Enum to identify and raise adapted error raised by this package
+*/
+#[derive(Copy, Clone, Debug)]
+pub enum PackingError {
+    BadSize(usize, &'static str),
+    BadAlignment(usize, &'static str),
+//     BadOrdering(BitOrdering, &'static str),
+    InvalidValue(&'static str),
+}
+
+pub type PackingResult<T> = Result<T, PackingError>;
+
+
+/// this trait is an equivalent to `packed_struct::ByteArray` but since rust doesn't actually support using generic consts in const expressions, we do not have choice
+pub trait Storage: AsRef<[u8]> + AsMut<[u8]> 
+//         + Index<Range<usize>, Output=[u8]> + IndexMut<Range<usize>, Output=[u8]> 
+//         + Index<usize, Output=u8> + IndexMut<usize, Output=u8>
+//             + Index<SliceIndex<[u8], Output=[u8]>, Output=[u8]> // + IndexMut<usize, Output=u8>
+{
+    const LEN: usize;
+    fn uninit() -> Self;
+}
+impl<const N: usize> Storage for [u8; N] {
+    const LEN: usize = N;
+    fn uninit() -> Self {unsafe {core::mem::uninitialized()}}
+}
 
 /** dtype identifiers associated to dtypes allowing to dynamically check the type of a [PduData] implementor
 	
@@ -57,27 +76,32 @@ pub enum TypeId {
 
 impl<const N: usize> PduData for [u8; N] {
 	const ID: TypeId = TypeId::CUSTOM;
-	type ByteArray = Self;
+	type Packed = Self;
 	
-	fn pack(&self) -> Self::ByteArray    {*self}
+	fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {
+        dst.copy_from_slice(self);
+        Ok(())
+    }
 	fn unpack(src: &[u8]) -> PackingResult<Self>  {
 		Ok(Self::try_from(src)
-			.map_err(|_| PackingError::BufferSizeMismatch{
-				expected: N, 
-				actual: src.len(),
-				})?
+			.map_err(|_| PackingError::BadSize(src.len(), "missing bytes cannot be implicitely zeroed"))?
 			.clone())
 	}
 }
 
 impl PduData for bool {
 	const ID: TypeId = TypeId::BOOL;
-	type ByteArray = [u8; 1];
+	type Packed = [u8; 1];
 	
-	fn pack(&self) -> Self::ByteArray    {
-        Self::ByteArray::new(if *self {0b1} else {0b0})
+	fn pack(&self, dst: &mut [u8]) -> PackingResult<()>  {
+        if dst.len() < Self::Packed::LEN  
+            {return Err(PackingError::BadSize(dst.len(), ""))}
+        dst[0] = if *self {0b1} else {0b0};
+        Ok(())
 	}
 	fn unpack(src: &[u8]) -> PackingResult<Self>  {
+        if src.len() < Self::Packed::LEN  
+            {return Err(PackingError::BadSize(src.len(), ""))}
 		Ok(src[0] & 0b1 == 0b1)
 	}
 }
@@ -108,18 +132,17 @@ pub(crate) use bilge_pdudata;
 macro_rules! packed_pdudata {
     ($t: ty) => { impl crate::data::PduData for $t {
         const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
-        type ByteArray = [u8; core::mem::size_of::<$t>()];
+        type Packed = [u8; core::mem::size_of::<$t>()];
         
-        fn pack(&self) -> Self::ByteArray {
-            unsafe{ core::mem::transmute::<Self, Self::ByteArray>(self.clone()) }
+        fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
+            dst.copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
+            Ok(())
         }
         fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
-            let src: &Self::ByteArray = src.try_into().map_err(|_|
-                crate::data::PackingError::BufferSizeMismatch{
-                    expected: Self::ByteArray::len(),
-                    actual: src.len(),
-                })?;
-            Ok(unsafe{ core::mem::transmute::<Self::ByteArray, Self>(src.clone()) })
+            let src: &Self::Packed = src.try_into().map_err(|_|
+                crate::data::PackingError::BadSize(src.len(), "struct cannot be implicitely zeroed")
+                )?;
+            Ok(unsafe{ core::mem::transmute::<Self::Packed, Self>(src.clone()) })
         }
     }};
 }
@@ -129,18 +152,16 @@ pub(crate) use packed_pdudata;
 macro_rules! num_pdudata {
 	($t: ty, $id: ident) => { impl crate::data::PduData for $t {
 			const ID: crate::data::TypeId = crate::data::TypeId::$id;
-			type ByteArray = [u8; core::mem::size_of::<$t>()];
+            type Packed = [u8; core::mem::size_of::<$t>()];
 			
-			fn pack(&self) -> Self::ByteArray {
-				self.to_le_bytes()
+            fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
+				dst.copy_from_slice(&self.to_le_bytes());
+				Ok(())
 			}
 			fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
 				Ok(Self::from_le_bytes(src
 					.try_into()
-					.map_err(|_|  crate::data::PackingError::BufferSizeMismatch{
-								expected: core::mem::size_of::<$t>(),
-								actual: src.len(),
-								})?
+					.map_err(|_|  crate::data::PackingError::BadSize(src.len(), "integger cannot be yet zeroed"))?
 					))
 			}
 		}};
@@ -190,7 +211,7 @@ num_pdudata!(f64, F64);
 	
 	It acts like a getter/setter of a value in a byte sequence. One can think of it as an offset to a data location because it does not actually point the data but only its offset in the byte sequence, it also contains its length to dynamically check memory bounds.
 */
-#[derive(Default, Clone)]
+#[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Field<T: PduData> {
 	extracted: PhantomData<T>,
 	/// start byte index of the object
@@ -206,7 +227,7 @@ impl<T: PduData> Field<T>
 	}
 	/// build a Field from its byte offset, infering its length from the data nominal size
 	pub const fn simple(byte: usize) -> Self {
-        Self{extracted: PhantomData, byte, len: T::ByteArray::len()}
+        Self{extracted: PhantomData, byte, len: T::Packed::LEN}
 	}
 	/// extract the value pointed by the field in the given byte array
 	pub fn get(&self, data: &[u8]) -> T       {
@@ -215,9 +236,7 @@ impl<T: PduData> Field<T>
 	}
 	/// dump the given value to the place pointed by the field in the byte array
 	pub fn set(&self, data: &mut [u8], value: T)   {
-		data[self.byte..][..self.len].copy_from_slice(
-			value.pack().as_bytes_slice()
-			);
+        value.pack(&mut data[self.byte..][..self.len]);
 	}
 }
 impl<T: PduData> fmt::Debug for Field<T> {
@@ -240,7 +259,7 @@ pub struct BitField<T: PduData> {
 }
 impl<T: PduData> BitField<T> {
 	/// build a Field from its content
-	pub fn new(bit: usize, len: usize) -> Self {
+	pub const fn new(bit: usize, len: usize) -> Self {
 		Self{extracted: PhantomData, bit, len}
 	}
 	/// extract the value pointed by the field in the given byte array
@@ -268,15 +287,15 @@ impl<T> Cursor<T> {
 impl<'a> Cursor<&'a [u8]> {
     pub fn unpack<T: PduData>(&mut self) -> PackingResult<T> {
         let start = self.position.clone();
-        self.position += T::packed_size();
+        self.position += T::Packed::LEN;
         T::unpack(&self.data[start .. self.position])
     }
-    pub fn read(&mut self, size: usize) -> PackingResult<&'a [u8]> {
+    pub fn read(&mut self, size: usize) -> PackingResult<&'_ [u8]> {
         let start = self.position.clone();
         self.position += size;
         Ok(&self.data[start .. self.position])
     }
-    pub fn remain(&self) -> &'a [u8] {
+    pub fn remain(&self) -> &'_ [u8] {
         &self.data[self.position ..]
     }
     pub fn finish(self) -> &'a [u8] {
@@ -286,19 +305,18 @@ impl<'a> Cursor<&'a [u8]> {
 impl<'a> Cursor<&'a mut [u8]> {
     pub fn unpack<T: PduData>(&mut self) -> PackingResult<T> {
         let start = self.position.clone();
-        self.position += T::packed_size();
+        self.position += T::Packed::LEN;
         T::unpack(&self.data[start .. self.position])
     }
-    pub fn read(&mut self, size: usize) -> PackingResult<&'a [u8]> {
+    pub fn read(&'a mut self, size: usize) -> PackingResult<&'_ [u8]> {
         let start = self.position.clone();
         self.position += size;
         Ok(&self.data[start .. self.position])
     }
     pub fn pack<T: PduData>(&mut self, value: &T) -> PackingResult<()> {
         let start = self.position.clone();
-        self.position += T::packed_size();
-        self.data[start .. self.position].copy_from_slice(value.pack().as_bytes_slice());
-        Ok(())
+        self.position += T::Packed::LEN;
+        value.pack(&mut self.data[start .. self.position])
     }
     pub fn write(&mut self, value: &[u8]) -> PackingResult<()> {
         let start = self.position.clone();
@@ -306,7 +324,7 @@ impl<'a> Cursor<&'a mut [u8]> {
         self.data[start .. self.position].copy_from_slice(value);
         Ok(())
     }
-    pub fn remain<'b>(&'b mut self) -> &'b mut [u8] {
+    pub fn remain<'b>(&'b mut self) -> &'_ mut [u8] {
         &mut self.data[self.position ..]
     }
     pub fn finish(self) -> &'a mut [u8] {

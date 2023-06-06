@@ -1,7 +1,89 @@
 //! structs and consts for every registers in a standard slave's EEPROM. This should be used instead of any hardcoded register value
 
 use bilge::prelude::*;
-use crate::data::{self, Field, BitField, ByteArray};
+use crate::data::{self, Field, BitField, Storage};
+
+
+pub mod address {
+    use super::*;
+    
+    /// register of the station address, aka the fixed slave address
+    /// ETG.1000.4 table 32
+    pub const fixed: Field<u16> = Field::simple(0x0010);
+    /// slave address alias
+    /// ETG.1000.4 table 32
+    pub const alias: Field<u16> = Field::simple(0x0012);
+}
+pub mod dl {
+    use super::*;
+    
+	pub const control: Field<DLControl> = Field::simple(0x0101);
+	pub const status: Field<DLStatus> = Field::simple(0x0110);
+}
+	
+pub mod dls_user {
+    use super::*;
+    
+    pub const r1: Field<u8> = Field::simple(0x0120);
+    pub const r2: Field<u8> = Field::simple(0x0121);
+    pub const r3: Field<u8> = Field::simple(0x0130);
+    pub const r4: Field<u8> = Field::simple(0x0131);
+    pub const r5: Field<u16> = Field::simple(0x0132);
+    pub const r6: Field<u16> = Field::simple(0x0134);
+    pub const r7: Field<u8> = Field::simple(0x0140);
+    pub const copy_r1_r3: BitField<bool> = BitField::new(0x0141*8, 1);
+    pub const r9: BitField<u8> = BitField::new(0x0141*8+1, 7);
+    pub const r8: Field<u8> = Field::simple(0x0150);
+    
+    pub const event: Field<DLSUserEvents> = Field::simple(0x0220);
+    pub const event_mask: Field<DLSUserEvents> = Field::simple(0x0202);
+    pub const watchdog: Field<u16> = Field::simple(0x0410);
+}
+	
+pub const external_event: Field<ExternalEvent> = Field::simple(0x0210);
+pub const external_event_mask: Field<ExternalEvent> = Field::simple(0x0200);
+	
+pub const ports_errors: Field<PortsErrorCount> = Field::simple(0x0300);
+pub const lost_link_count: Field<LostLinkCount> = Field::simple(0x0310);
+pub const frame_error_count: Field<FrameErrorCount> = Field::simple(0x0308);
+pub const watchdog_divider: Field<u16> = Field::simple(0x0400);
+pub const watchdog_counter: Field<WatchdogCounter> = Field::simple(0x0442);
+	
+pub mod sync_manager {
+    use super::*;
+
+    /// ETG.1000.6 table 45
+    pub const watchdog: Field<u16> = Field::simple(0x0420);
+    /// ETG.1000.6 table 46
+    pub const watchdog_status: Field<bool> = Field::simple(0x0440);
+	pub const interface: SyncManager = SyncManager {address: 0x0800, num: 16};
+}
+
+pub const mailbox_buffers: [Field<[u8; 0x100]>; 3] = [
+	Field::simple(0x1000),
+	Field::simple(0x1100),
+	Field::simple(0x1200),
+	];
+	
+	/*
+	sii: {
+		access: Field::<SiiAccess>::simple(0x0500),
+		control: Field::<SiiControl>::simple(0x0502),
+		/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
+		address: Field::<u32>::simple(0x0504),
+		/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
+		data: Field::<u32>::simple(0x0508),
+	},
+	
+	// TODO: MII (Media Independent Interface)
+	
+	fmmus: FMMU {address: 0x0600, num: 16},
+	sync_manager: SyncManager {address: 0x0800, num: 16},
+	clock: Field::<DistributedClock>::simple(0x0900),
+	clock_latch: Field::<u32>::simple(0x0900),
+};
+*/
+
 
 
 
@@ -135,6 +217,7 @@ pub struct MailboxSupport {
     pub soe: bool,
     /// Vendor specific protocol over EtherCAT
     pub voe: bool,
+    reserved: u10,
 }
 
 
@@ -244,7 +327,7 @@ pub struct ExternalEvent {
 	pub r3_r4_change: bool,
 	/// sync manager channel was accessed by slave
 	pub sync_manager_channel: [bool; 8],
-	reserved: u1,
+	reserved: u4,
 }
 data::bilge_pdudata!(ExternalEvent);
 
@@ -402,7 +485,7 @@ pub struct FMMU {
 
 impl FMMU {
     /// return an entry of the FMMU
-    pub const fn entry(&self, index: u8) -> Field<FMMUEntry>  {
+    pub fn entry(&self, index: u8) -> Field<FMMUEntry>  {
         assert!(index < self.num, "index out of range");
         Field::simple(usize::from(self.address + u16::from(index)*0x10))
     }
@@ -458,16 +541,16 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
-    pub const fn channel(&self, index: u8) -> Field<SyncManagerChannel> {
+    pub fn channel(&self, index: u8) -> Field<SyncManagerChannel> {
         assert!(index < self.num, "index out of range");
         Field::simple(usize::from(self.address + u16::from(index)*0x8))
     }
     // return the sync manager channel reserved for mailbox in
-    pub const fn mailbox_in(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
+    pub fn mailbox_in(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
     // return the sync manager channel reserved for mailbox out
-    pub const fn mailbox_out(&self) -> Field<SyncManagerChannel>   {self.channel(1)}
+    pub fn mailbox_out(&self) -> Field<SyncManagerChannel>   {self.channel(1)}
     // return one of the sync manager channels reserved for mapping
-    pub const fn mappable(&self, index: u8) -> Field<SyncManagerChannel>   {self.channel(2+index)}
+    pub fn mappable(&self, index: u8) -> Field<SyncManagerChannel>   {self.channel(2+index)}
 }
 
 /** 
@@ -582,10 +665,10 @@ data::bilge_pdudata!(TimeDifference);
 
 
 
-/** registers in physical memory of a slave
-	
-	this struct does not intend to match any structure defined in the ETG specs, it is only sorting fields pointing to the physical memory of a slave. according to the ETG specs, most of these fields shall exist in each slave's physical memory, others might be optional and the user must check for this before using them.
-*/
+// /** registers in physical memory of a slave
+// 	
+// 	this struct does not intend to match any structure defined in the ETG specs, it is only sorting fields pointing to the physical memory of a slave. according to the ETG specs, most of these fields shall exist in each slave's physical memory, others might be optional and the user must check for this before using them.
+// */
 // const registers = Registers {
 // 	address: {
 // 		fixed: Field::<u16>::new(0x0010),
@@ -645,83 +728,3 @@ data::bilge_pdudata!(TimeDifference);
 // };
 
 
-
-pub mod address {
-    use super::*;
-    
-    /// register of the station address, aka the fixed slave address
-    /// ETG.1000.4 table 32
-    pub const fixed: Field<u16> = Field::simple(0x0010);
-    /// slave address alias
-    /// ETG.1000.4 table 32
-    pub const alias: Field<u16> = Field::simple(0x0012);
-}
-pub mod dl {
-    use super::*;
-    
-	pub const control: Field<DLControl> = Field::simple(0x0101);
-	pub const status: Field<DLStatus> = Field::simple(0x0110);
-}
-	
-pub mod dls_user {
-    use super::*;
-    
-    pub const r1: Field<u8> = Field::simple(0x0120);
-    pub const r2: Field<u8> = Field::simple(0x0121);
-    pub const r3: Field<u8> = Field::simple(0x0130);
-    pub const r4: Field<u8> = Field::simple(0x0131);
-    pub const r5: Field<u16> = Field::simple(0x0132);
-    pub const r6: Field<u16> = Field::simple(0x0134);
-    pub const r7: Field<u8> = Field::simple(0x0140);
-    pub const copy_r1_r3: BitField<bool> = BitField::new(0x0141*8, 1);
-    pub const r9: BitField<u8> = BitField::new(0x0141*8+1, 7);
-    pub const r8: Field<u8> = Field::simple(0x0150);
-    
-    pub const event: Field<DLSUserEvents> = Field::simple(0x0220);
-    pub const event_mask: Field<DLSUserEvents> = Field::simple(0x0202);
-    pub const watchdog: Field<u16> = Field::simple(0x0410);
-}
-	
-pub const external_event: Field<ExternalEvent> = Field::simple(0x0210);
-pub const external_event_mask: Field<ExternalEvent> = Field::simple(0x0200);
-	
-pub const ports_errors: Field<PortsErrorCount> = Field::simple(0x0300);
-pub const lost_link_count: Field<LostLinkCount> = Field::simple(0x0310);
-pub const frame_error_count: Field<FrameErrorCount> = Field::simple(0x0308);
-pub const watchdog_divider: Field<u16> = Field::simple(0x0400);
-pub const watchdog_counter: Field<WatchdogCounter> = Field::simple(0x0442);
-	
-pub mod sync_manager {
-    use super::*;
-
-    /// ETG.1000.6 table 45
-    pub const watchdog: Field<u16> = Field::simple(0x0420);
-    /// ETG.1000.6 table 46
-    pub const watchdog_status: Field<bool> = Field::simple(0x0440);
-	pub const interface: SyncManager = SyncManager {address: 0x0800, num: 16};
-}
-
-pub const mailbox_buffers: [Field<[u8; 0x100]>; 3] = [
-	Field::simple(0x1000),
-	Field::simple(0x1100),
-	Field::simple(0x1200),
-	];
-	
-	/*
-	sii: {
-		access: Field::<SiiAccess>::simple(0x0500),
-		control: Field::<SiiControl>::simple(0x0502),
-		/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
-		address: Field::<u32>::simple(0x0504),
-		/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
-		data: Field::<u32>::simple(0x0508),
-	},
-	
-	// TODO: MII (Media Independent Interface)
-	
-	fmmus: FMMU {address: 0x0600, num: 16},
-	sync_manager: SyncManager {address: 0x0800, num: 16},
-	clock: Field::<DistributedClock>::simple(0x0900),
-	clock_latch: Field::<u32>::simple(0x0900),
-};
-*/

@@ -24,7 +24,7 @@ Convenient structures to read/write the slave's dictionnary objects (SDO) and co
 
 use crate::{
 // 	slave::Slave,
-	data::{BitField, PduData, ByteArray},
+	data::{BitField, PduData, Storage},
 	};
 use core::fmt;
 
@@ -40,7 +40,7 @@ pub struct Sdo<T: PduData> {
 	pub field: BitField<T>,
 }
 /// specifies which par of an SDO is addressed
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum SdoPart {
     /// the whole SDO (the complete struct with its eventual paddings)
     /// NOTE: this doesn't strictly follows the ethercat specifications, since for complete SDO request we could choose to include or exclude subitem 0
@@ -54,7 +54,7 @@ impl<T: PduData> Sdo<T> {
 	pub fn sub(index: u16, sub: u8, offset: usize) -> Self { Self{
 		index,
 		sub: SdoPart::Sub(sub),
-		field: BitField::new(offset, T::ByteArray::len()*8),
+		field: BitField::new(offset, T::Packed::LEN*8),
 	}}
 	pub fn sub_with_size(index: u16, sub: u8, offset: usize, size: usize) -> Self { Self{
 		index,
@@ -65,7 +65,7 @@ impl<T: PduData> Sdo<T> {
 	pub fn complete(index: u16) -> Self { Self{ 
 		index, 
 		sub: SdoPart::Complete, 
-		field: BitField::new(0, T::ByteArray::len()*8),
+		field: BitField::new(0, T::Packed::LEN*8),
 	}}
 	pub fn complete_with_size(index: u16, size: usize) -> Self { Self{ 
 		index, 

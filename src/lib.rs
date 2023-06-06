@@ -1,7 +1,7 @@
 mod socket;
 mod data;
 mod rawmaster;
-mod registers;
+#[allow(non_upper_case_globals)] mod registers;
 mod mailbox;
 mod sdo;
 mod can;

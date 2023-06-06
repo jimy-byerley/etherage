@@ -2,7 +2,7 @@ use crate::{
 	socket::EthercatSocket,
 	rawmaster::{RawMaster, PduCommand},
 	registers,
-    data::{self, PduData, ByteArray, PackingResult, Cursor},
+    data::{self, PduData, Storage, PackingResult, Cursor},
 	};
 use bilge::prelude::*;
 
@@ -25,17 +25,18 @@ impl Mailbox<'_> {
     /// this function does not return the data size read, so the read frame should provide a length
 	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox_control = registers::sync_manager::interface.mailbox_out();
-		let mailbox_buffer = registers::mailbox_buffers[0];
+		let mailbox_buffer = &registers::mailbox_buffers[0];
+        let mut allocated = [0; registers::mailbox_buffers[0].len];
+        
 		// wait for data
-		let state = loop {
+		let mut state = loop {
             let state = self.master.fprd(self.slave, mailbox_control).await;
             if state.answers == 0 || ! state.value.mailbox_full()  {continue}
             break state.value
         };
-        let mut allocated = [0; registers::mailbox_buffers[0].len];
         // the destination data is expected to be big enough for the data, so we will read only this data size
-        let buffer = &mut allocated[.. allocated.len()
-                                    .min(data.len() + MailboxHeader::packed_size())];
+        let range = .. allocated.len().min(data.len() + MailboxHeader::packed_size());
+        let buffer = &mut allocated[range];
 		// read the mailbox content
 		loop {
             if self.master.pdu(PduCommand::FPRD, self.slave, mailbox_buffer.byte as u16, buffer).await == 1 
@@ -51,36 +52,38 @@ impl Mailbox<'_> {
                 break
             }
         }
-        let frame = MailboxFrame::unpack(buffer).unwrap();
-        assert!(usize::from(frame.header.length()) <= data.len());
-        assert_eq!(frame.header.ty(), ty);
-        assert_eq!(u8::from(frame.header.count()), self.count);
-		data[.. frame.data.len()].copy_from_slice(frame.data);
+        let mut frame = Cursor::new(buffer.as_mut());
+        let mut received = Cursor::new(data);
+        let header = frame.unpack::<MailboxHeader>().unwrap();
+        assert!(usize::from(header.length()) <= received.remain().len());
+        assert_eq!(header.ty(), ty);
+        assert_eq!(u8::from(header.count()), self.count);
+        received.write(frame.read(header.length() as usize).unwrap()).unwrap();
 		
 		// TODO wait for mailbox to become ready again ?
 		
-		&data[.. frame.data.len()]
+		received.finish()
 	}
 	/// write the given frame in the mailbox
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
-        self.count = (self.count % 6)+1;
 		let mailbox_control = registers::sync_manager::interface.mailbox_in();
-		let mailbox_buffer = registers::mailbox_buffers[0];
-		let frame = MailboxFrame {
-			header: MailboxHeader::new(
+		let mailbox_buffer = &registers::mailbox_buffers[0];
+        let mut buffer = [0; registers::mailbox_buffers[0].len];
+		
+        self.count = (self.count % 6)+1;
+        
+        let mut frame = Cursor::new(buffer.as_mut());
+        frame.pack(&MailboxHeader::new(
 				data.len() as u16,
-				u16::from(0),  // address of master
-				u6::from(0),  // this value has no effect and is reserved for future use
+				u16::new(0),  // address of master
+				u6::new(0),  // this value has no effect and is reserved for future use
 				priority,
 				ty,
 				u3::from(self.count),
-			),
-			data,
-        };
-        let mut buffer = [0; registers::mailbox_buffers[0].len];
-        // the destination data is expected to be big enough for the data, so we will read only this data size
-        assert!(buffer.len() > frame.packed_size());
-        frame.pack(&mut buffer);
+			)).unwrap();
+        frame.write(data).unwrap();
+        let sent = frame.finish();
+        
 		// wait for mailbox to be empty
 		let state = loop {
             let state = self.master.fprd(self.slave, mailbox_control).await;
@@ -88,14 +91,14 @@ impl Mailbox<'_> {
             break state.value
         };
         // write data
-        while ! self.master.pdu(PduCommand::FPWR, self.slave, mailbox_buffer.byte as u16, buffer[.. frame.packed_size()]).await == 1 
+        while ! self.master.pdu(PduCommand::FPWR, self.slave, mailbox_buffer.byte as u16, sent).await == 1 
             {}
 		
 		// TODO wait for mailbox to become ready again ?
 	}
 }
 
-
+/*
 /// ETG 1000.4 5.6
 struct MailboxFrame<'a> {
     header: MailboxHeader,
@@ -118,7 +121,7 @@ impl<'a> MailboxFrame<'a> {
             data: &src[MailboxHeader::packed_size() ..][.. header.length() as usize],
         })
     }
-}
+}*/
 
 /// ETG 1000.4 table 29
 #[bitsize(48)]
