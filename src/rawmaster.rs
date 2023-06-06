@@ -3,8 +3,10 @@ use std::{
     collections::HashMap,
     sync::{Mutex, Condvar},
     };
-use core::ops::{Deref, DerefMut};
-use core::time::Duration;
+use core::{
+    ops::{Deref, DerefMut},
+    time::Duration,
+    };
 use tokio::sync::Notify;
 use packed_struct::prelude::*;
 use bilge::prelude::*;
@@ -204,7 +206,7 @@ impl RawMaster {
                 let place = &mut state.send[range];
                 let mut header = PduHeader::unpack(place).unwrap();
                 header.set_next(true);
-                header.pack(place);
+                header.pack(place).unwrap();
             }
             else {
                 state.last_time = Instant::now();

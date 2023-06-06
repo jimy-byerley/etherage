@@ -153,7 +153,7 @@ impl Can<'_> {
                         )).unwrap();
                 let segment = data.remain().len().min(SDO_SEGMENT_MAX_SIZE);
                 frame.write(data.read(segment).unwrap()).unwrap();
-                self.mailbox.write(MailboxType::Can, priority, frame.finish());
+                self.mailbox.write(MailboxType::Can, priority, frame.finish()).await;
             }
 			
             // receive acknowledge

@@ -9,18 +9,6 @@ use core::{
 
 /**
 	trait for data types than can be packed/unpacked to/from a PDU
-	
-	This trait is very close to [packed_struct::PackedStruct], but is distinct because struct implementing `PackedStruct` might not be meant for exchange in an ethercat PDU. However it can be easily declared as such when `Packed` is already implemented, by implementing [PduStruct] as well.
-	
-	The good practice for using `Packed` in combination with `PduData` is following this example:
-	
-		#[derive(PackedStruct)]
-		struct MyStruct { ... }
-		impl PduStruct for MyStruct {}
-		
-		// now PduData is now implemented using `Packed`
-		
-	It is also fine to implement [PduData] the regular way
 */
 pub trait PduData: Sized {
     const ID: TypeId;
@@ -232,11 +220,12 @@ impl<T: PduData> Field<T>
 	/// extract the value pointed by the field in the given byte array
 	pub fn get(&self, data: &[u8]) -> T       {
 		T::unpack(&data[self.byte..][..self.len])
-				.expect("cannot unpack from data")
+            .expect("cannot unpack from data")
 	}
 	/// dump the given value to the place pointed by the field in the byte array
 	pub fn set(&self, data: &mut [u8], value: T)   {
-        value.pack(&mut data[self.byte..][..self.len]);
+        value.pack(&mut data[self.byte..][..self.len])
+            .expect("cannot pack data")
 	}
 }
 impl<T: PduData> fmt::Debug for Field<T> {
@@ -275,58 +264,78 @@ impl<T: PduData> fmt::Debug for BitField<T> {
 
 
 
+/** helper to read/write sequencial data from/to a byte slice
 
+    It is close to what [std::io::Cursor] is doing, but this struct allows reading forward without consuming the stream, and returns slices without copying the data. It is also meant to work with [PduData]
+    
+    Depending on the mutability of the slice this struct is built on, different capabilities are provided.
+*/
 pub struct Cursor<T> {
     position: usize,
     data: T,
 }
 impl<T> Cursor<T> {
+    /// create a new cursor starting at position zero in the given slice
     pub fn new(data: T) -> Self   {Self{position: 0, data}}
+    /** current position in the read/write slice
+    
+        bytes before this position are considered read or written, and bytes after are coming for use in next read/write calls
+    */
     pub fn position(&self) -> usize   {self.position}
 }
 impl<'a> Cursor<&'a [u8]> {
+    /// read the next coming bytes with a [PduData] value, and increment the position
     pub fn unpack<T: PduData>(&mut self) -> PackingResult<T> {
         let start = self.position.clone();
         self.position += T::Packed::LEN;
         T::unpack(&self.data[start .. self.position])
     }
+    /// read the next coming `size` bytes and increment the position
     pub fn read(&mut self, size: usize) -> PackingResult<&'_ [u8]> {
         let start = self.position.clone();
         self.position += size;
         Ok(&self.data[start .. self.position])
     }
+    /// return all the remaining bytes after current position, but does not advance the cursor
     pub fn remain(&self) -> &'_ [u8] {
         &self.data[self.position ..]
     }
+    /// consume self and return a slice until current position
     pub fn finish(self) -> &'a [u8] {
         &self.data[.. self.position]
     }
 }
 impl<'a> Cursor<&'a mut [u8]> {
+    /// read the next coming bytes with a [PduData] value, and increment the position
     pub fn unpack<T: PduData>(&mut self) -> PackingResult<T> {
         let start = self.position.clone();
         self.position += T::Packed::LEN;
         T::unpack(&self.data[start .. self.position])
     }
+    /// read the next coming `size` bytes and increment the position
     pub fn read(&'a mut self, size: usize) -> PackingResult<&'_ [u8]> {
         let start = self.position.clone();
         self.position += size;
         Ok(&self.data[start .. self.position])
     }
+    /// write the next coming bytes with a [PduData] value, and increment the position
     pub fn pack<T: PduData>(&mut self, value: &T) -> PackingResult<()> {
         let start = self.position.clone();
         self.position += T::Packed::LEN;
         value.pack(&mut self.data[start .. self.position])
     }
+    /// write the next coming bytes with the given slice, and increment the position
     pub fn write(&mut self, value: &[u8]) -> PackingResult<()> {
         let start = self.position.clone();
         self.position += value.len();
         self.data[start .. self.position].copy_from_slice(value);
         Ok(())
     }
+    /// return all the remaining bytes after current position, but does not advance the cursor
     pub fn remain<'b>(&'b mut self) -> &'_ mut [u8] {
         &mut self.data[self.position ..]
     }
+    /// consume self and return a slice until current position
     pub fn finish(self) -> &'a mut [u8] {
         &mut self.data[.. self.position]
     }
