@@ -75,7 +75,6 @@ impl RawMaster {
                 send: [0; MAX_ETHERCAT_FRAME],
                 receive: HashMap::new(),
                 }),
-            ethercat_send: Mutex::new(Default::default()),
             ethercat_receive: Mutex::new([0; MAX_ETHERCAT_FRAME]),
         }
 	}
