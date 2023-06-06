@@ -63,26 +63,89 @@ pub const mailbox_buffers: [Field<[u8; 0x100]>; 3] = [
 	Field::simple(0x1000),
 	Field::simple(0x1100),
 	Field::simple(0x1200),
-	];
+];
+
+
+pub mod sii {
+    use super::*;
+    
+	pub const access: Field<SiiAccess> = Field::simple(0x0500);
+	pub const control: Field<SiiControl> = Field::simple(0x0502);
+	/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
+	pub const address: Field<u32> = Field::simple(0x0504);
+	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
+	pub const data: Field<u32> = Field::simple(0x0508);
+}
 	
-	/*
-	sii: {
-		access: Field::<SiiAccess>::simple(0x0500),
-		control: Field::<SiiControl>::simple(0x0502),
-		/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
-		address: Field::<u32>::simple(0x0504),
-		/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
-		data: Field::<u32>::simple(0x0508),
-	},
+// TODO: MII (Media Independent Interface)
 	
-	// TODO: MII (Media Independent Interface)
-	
-	fmmus: FMMU {address: 0x0600, num: 16},
-	sync_manager: SyncManager {address: 0x0800, num: 16},
-	clock: Field::<DistributedClock>::simple(0x0900),
-	clock_latch: Field::<u32>::simple(0x0900),
-};
-*/
+pub const fmmus: FMMU = FMMU {address: 0x0600, num: 16};
+pub const sync_managers: SyncManager = SyncManager {address: 0x0800, num: 16};
+pub const clock: Field<DistributedClock> = Field::simple(0x0900);
+pub const clock_latch: Field<u32> = Field::simple(0x0900);
+
+
+// /** registers in physical memory of a slave
+// 	
+// 	this struct does not intend to match any structure defined in the ETG specs, it is only sorting fields pointing to the physical memory of a slave. according to the ETG specs, most of these fields shall exist in each slave's physical memory, others might be optional and the user must check for this before using them.
+// */
+// const registers = Registers {
+// 	address: {
+// 		fixed: Field::<u16>::new(0x0010),
+// 		alias: Field::<u16>::new(0x0012),
+// 	},
+// 	dl_control: Field::<DLControl>::new(0x0101),
+// 	dl_status: Field::<DLStatus>::new(0x0110),
+// 	
+// 	dls_user: {
+// 		r1: Field::<u8>::simple(0x0120),
+// 		r2: Field::<u8>::simple(0x0121),
+// 		r3: Field::<u8>::simple(0x0130),
+// 		r4: Field::<u8>::simple(0x0131),
+// 		r5: Field::<u16>::simple(0x0132),
+// 		r6: Field::<u16>::simple(0x0134),
+// 		r7: Field::<u8>::simple(0x0140),
+// 		copy_r1_r3: BitField::<bool>::new(0x0141*8, 1),
+// 		r9: BitField::<u8>::new(0x0141*8+1, 7),
+// 		r8: Field::<u8>::simple(0x0150),
+// 		
+// 		event: Field::<DLSUserEvents>::simple(0x0220),
+// 		event_mask: Field::<DLSUserEvents>::simple(0x0202),
+// 		watchdog: Field::<u16>::simple(0x0410),
+// 	},
+// 	
+// 	external_event: Field::<ExternalEvent>::simple(0x0210),
+// 	external_event_mask: Field::<ExternalEvent>::simple(0x0200),
+// 	
+// 	ports_errors: Field::<PortsErrorCount>::simple(0x0300),
+// 	lost_link_count: Field::<LostLinkCount>::simple(0x0310),
+// 	frame_error_count: Field::<FrameErrorCount>::simple(0x0308),
+// 	watchdog_divider: Field::<u16>::simple(0x0400),
+// 	watchdog_counter: Field::<WatchdogCounter>::simple(0x0442),
+// 	
+// 	sync_manager: {
+// 		/// ETG.1000.6 table 45
+// 		watchdog: Field::<u16>::simple(0x0420),
+// 		/// ETG.1000.6 table 46
+// 		watchdog_status: Field::<bool>::simple(0x0440),
+// 	},
+// 	
+// 	sii: {
+// 		access: Field::<SiiAccess>::simple(0x0500),
+// 		control: Field::<SiiControl>::simple(0x0502),
+// 		/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
+// 		address: Field::<u32>::simple(0x0504),
+// 		/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
+// 		data: Field::<u32>::simple(0x0508),
+// 	},
+// 	
+// 	// TODO: MII (Media Independent Interface)
+// 	
+// 	fmmus: FMMU {address: 0x0600, num: 16},
+// 	sync_manager: SyncManager {address: 0x0800, num: 16},
+// 	clock: Field::<DistributedClock>::simple(0x0900),
+// 	clock_latch: Field::<u32>::simple(0x0900),
+// };
 
 
 
@@ -655,6 +718,8 @@ pub struct DistributedClock {
     pub system_difference: TimeDifference,
     reserved: [u32; 3],
 }
+data::packed_pdudata!(DistributedClock);
+
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct TimeDifference {
@@ -666,67 +731,5 @@ pub struct TimeDifference {
 data::bilge_pdudata!(TimeDifference, u32);
 
 
-
-// /** registers in physical memory of a slave
-// 	
-// 	this struct does not intend to match any structure defined in the ETG specs, it is only sorting fields pointing to the physical memory of a slave. according to the ETG specs, most of these fields shall exist in each slave's physical memory, others might be optional and the user must check for this before using them.
-// */
-// const registers = Registers {
-// 	address: {
-// 		fixed: Field::<u16>::new(0x0010),
-// 		alias: Field::<u16>::new(0x0012),
-// 	},
-// 	dl_control: Field::<DLControl>::new(0x0101),
-// 	dl_status: Field::<DLStatus>::new(0x0110),
-// 	
-// 	dls_user: {
-// 		r1: Field::<u8>::simple(0x0120),
-// 		r2: Field::<u8>::simple(0x0121),
-// 		r3: Field::<u8>::simple(0x0130),
-// 		r4: Field::<u8>::simple(0x0131),
-// 		r5: Field::<u16>::simple(0x0132),
-// 		r6: Field::<u16>::simple(0x0134),
-// 		r7: Field::<u8>::simple(0x0140),
-// 		copy_r1_r3: BitField::<bool>::new(0x0141*8, 1),
-// 		r9: BitField::<u8>::new(0x0141*8+1, 7),
-// 		r8: Field::<u8>::simple(0x0150),
-// 		
-// 		event: Field::<DLSUserEvents>::simple(0x0220),
-// 		event_mask: Field::<DLSUserEvents>::simple(0x0202),
-// 		watchdog: Field::<u16>::simple(0x0410),
-// 	},
-// 	
-// 	external_event: Field::<ExternalEvent>::simple(0x0210),
-// 	external_event_mask: Field::<ExternalEvent>::simple(0x0200),
-// 	
-// 	ports_errors: Field::<PortsErrorCount>::simple(0x0300),
-// 	lost_link_count: Field::<LostLinkCount>::simple(0x0310),
-// 	frame_error_count: Field::<FrameErrorCount>::simple(0x0308),
-// 	watchdog_divider: Field::<u16>::simple(0x0400),
-// 	watchdog_counter: Field::<WatchdogCounter>::simple(0x0442),
-// 	
-// 	sync_manager: {
-// 		/// ETG.1000.6 table 45
-// 		watchdog: Field::<u16>::simple(0x0420),
-// 		/// ETG.1000.6 table 46
-// 		watchdog_status: Field::<bool>::simple(0x0440),
-// 	},
-// 	
-// 	sii: {
-// 		access: Field::<SiiAccess>::simple(0x0500),
-// 		control: Field::<SiiControl>::simple(0x0502),
-// 		/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
-// 		address: Field::<u32>::simple(0x0504),
-// 		/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
-// 		data: Field::<u32>::simple(0x0508),
-// 	},
-// 	
-// 	// TODO: MII (Media Independent Interface)
-// 	
-// 	fmmus: FMMU {address: 0x0600, num: 16},
-// 	sync_manager: SyncManager {address: 0x0800, num: 16},
-// 	clock: Field::<DistributedClock>::simple(0x0900),
-// 	clock_latch: Field::<u32>::simple(0x0900),
-// };
 
 
