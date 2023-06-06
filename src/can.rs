@@ -75,19 +75,36 @@ impl Can<'_> {
             // receive more data from segments
             // TODO check for possible SDO error
             loop {
-                let mut frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
-                assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
-                let header = frame.unpack::<SdoSegmentHeader>().unwrap();
-                assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::UploadSegment);
-                assert_eq!(header.toggle(), toggle);
-                let segment = frame.read(received.remain().len().min(frame.remain().len())).unwrap();
-                received.write(segment).unwrap();
-                toggle = ! toggle;
+				// send segment request
+                {
+                    let mut frame = Cursor::new(buffer.as_mut_slice());
+                    frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+                    frame.pack(&SdoSegmentHeader::new(
+                            false, 
+                            u3::new(0), 
+                            toggle, 
+                            u3::from(SdoCommandRequest::UploadSegment),
+                        )).unwrap();
+                    self.mailbox.write(MailboxType::Can, priority, frame.finish()).await;
+                }
+            
+				// receive segment
+				{
+					let mut frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
+					assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
+					let header = frame.unpack::<SdoSegmentHeader>().unwrap();
+					assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::UploadSegment);
+					assert_eq!(header.toggle(), toggle);
+					let segment = frame.read(received.remain().len().min(frame.remain().len())).unwrap();
+					received.write(segment).unwrap();
+					
+					// TODO: check for abort
+					
+					assert!(received.position() <= T::Packed::LEN);
+					if ! header.more () {break}
+                }
                 
-                // TODO: check for abort
-                
-                assert!(received.position() <= T::Packed::LEN);
-                if ! header.more () {break}
+				toggle = ! toggle;
             }
             assert_eq!(received.position(), T::Packed::LEN);
             

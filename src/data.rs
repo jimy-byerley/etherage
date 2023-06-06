@@ -176,31 +176,6 @@ num_pdudata!(f32, F32);
 num_pdudata!(f64, F64);
 
 
-// /// much like PduData but works with variable size types, and allows partial decoding of data.
-// /// [Self::unpack] however returns data limited to the lifetime of the unpacked buffer.
-// pub trait FrameData<'a>: Sized {
-//     fn packed_size(&self) -> usize;
-//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()>;
-//     fn unpack(src: &'a [u8]) -> PackingResult<Self>;
-// }
-// 
-// impl<'a> FrameData<'a> for &'a [u8] {
-//     fn packed_size(&self) -> usize {self.len()}
-//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {Ok(dst.copy_from_slice(self))}
-//     fn unpack(src: &'a [u8]) -> PackingResult<Self> {Ok(src)}
-// }
-
-// impl<T: PduData> FrameData<'a> for T {
-//     fn packed_size(&self) -> usize {<Self as PduData>::packed_size()}
-//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {
-//         dst[.. self.packed_size()].copy_from_slice(<Self as PduData>::pack(self).as_bytes_slice());
-//         Ok(())
-//     }
-//     fn unpack(src: &'a [u8]) -> PackingResult<Self> {
-//         <Self as PduData>::unpack(src)
-//     }
-// }
-
 
 /** 
 	locate some data in a datagram by its byte position and length, which must be extracted to type `T` to be processed in rust

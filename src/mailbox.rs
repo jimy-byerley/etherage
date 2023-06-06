@@ -9,6 +9,8 @@ use bilge::prelude::*;
 
 /**
     implementation of communication with a slave's mailbox
+    
+    Following ETG.1000.4 6.7.1 it is using the first 2 sync managers in handshake mode. Buffered mode is not meant for mailbox.
 */
 pub struct Mailbox<'a> {
     master: &'a RawMaster,
@@ -97,31 +99,6 @@ impl Mailbox<'_> {
 		// TODO wait for mailbox to become ready again ?
 	}
 }
-
-/*
-/// ETG 1000.4 5.6
-struct MailboxFrame<'a> {
-    header: MailboxHeader,
-    data: &'a [u8],
-}
-impl<'a> MailboxFrame<'a> {
-    fn packed_size(&self) -> usize {
-        MailboxHeader::packed_size() 
-        + self.header.length() as usize
-    }
-    fn pack(&self, dst: &mut [u8]) {
-        let cursor = Cursor::new(dst);
-        cursor.write(&self.header.pack()).unwrap();
-        cursor.write(self.data).unwrap();
-    }
-    fn unpack(src: &'a [u8]) -> PackingResult<Self> {
-		let header = MailboxHeader::unpack(src).unwrap();
-        Ok(Self {
-            header,
-            data: &src[MailboxHeader::packed_size() ..][.. header.length() as usize],
-        })
-    }
-}*/
 
 /// ETG 1000.4 table 29
 #[bitsize(48)]

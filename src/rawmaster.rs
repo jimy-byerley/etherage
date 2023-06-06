@@ -40,7 +40,6 @@ pub struct RawMaster {
     // they should not be held for too long (and never during blocking operations) so they shouldn't disturb the async runtime too much
     
 	pdu_state: Mutex<PduState>,
-	ethercat_send: Mutex<heapless::Vec<u8, MAX_ETHERCAT_FRAME>>,
 	ethercat_receive: Mutex<[u8; MAX_ETHERCAT_FRAME]>,
 }
 struct PduState {
@@ -393,51 +392,6 @@ enum EthercatType {
 }
 
 
-// this is to see if the brute frame assembling currently made in RawMaster could be made in a packing/unpacking scheme like for ethernet frames
-// use std::io::{Cursor, Write};
-// 
-// struct PduFrames<T> {
-//     data: T,
-//     last: usize,
-//     position: usize,
-// }
-// impl<'a, T: AsRef<[u8]>> PduFrames<T> {
-//     fn read(&'a mut self) -> PduFrame<'a> {
-//         let frame = PduFrame::unpack(&self.data.as_ref()[self.position ..]);
-//         self.position += frame.size();
-//         frame
-//     }
-// }
-// impl<T: AsMut<[u8]>> PduFrames<T> {
-//     fn write(&mut self, frame: PduFrame<'_>) {
-//         if self.last < self.position {
-//             PduFrame::unpack(&self.data.as_mut()[self.last ..]).header.set_next(true)
-//         }
-//         frame.pack(&mut self.data.as_mut()[self.position ..]);
-//         self.position += frame.size();
-//     }
-// }
-// 
-// struct PduFrame<'a> {
-//     header: PduHeader,
-//     data: &'a [u8],
-// }
-// impl<'a> PduFrame<'a> {
-//     fn size(&self) -> usize {0}
-//     fn pack(&self, dst: &mut [u8]) {
-//         let mut dst = Cursor::new(dst);
-//         dst.write(self.header.pack().unwrap().as_bytes_slice()).unwrap();
-//         dst.write(self.data).unwrap();
-//     }
-//     fn unpack(src: &'a [u8]) -> Self {
-//         let header = PduHeader::unpack_from_slice(
-//             &src[.. <PduHeader as PackedStruct>::packed_size()]
-//             ).unwrap();
-//         let data = &src[<PduHeader as PackedStruct>::packed_size() ..];
-//         let data = &data[.. data.len() - <PduFooter as PackedStruct>::packed_size()];
-//         Self{header, data}
-//     }
-// }
 
 /// header of a PDU frame, this one of the possible ethercat frames
 #[bitsize(80)]
