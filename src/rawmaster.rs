@@ -8,7 +8,6 @@ use core::{
     time::Duration,
     };
 use tokio::sync::Notify;
-use packed_struct::prelude::*;
 use bilge::prelude::*;
 
 use crate::{
@@ -29,7 +28,7 @@ pub struct RawMaster {
 	pdu_merge_time: Duration,
 	
 	// socket implementation
-	socket: Box<dyn EthercatSocket>,
+	socket: Box<dyn EthercatSocket + Send + Sync>,
 	// synchronization signal for multitask reception
 	received: Notify,
 	sendable: Condvar,
@@ -59,7 +58,7 @@ struct PduStorage {
     answers: u16,
 }
 impl RawMaster {
-	pub fn new<S: EthercatSocket + 'static>(socket: S) -> Self {        
+	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {        
         Self {
             pdu_merge_time: std::time::Duration::from_micros(2000), // microseconds
             
@@ -71,8 +70,8 @@ impl RawMaster {
             
             pdu_state: Mutex::new(PduState {
                 token: 0,
-                last_start: 0,
-                last_end: EthercatHeader::packed_size(),
+                last_start: EthercatHeader::packed_size(),
+                last_end: 0,
                 last_time: Instant::now(),
                 send: [0; MAX_ETHERCAT_FRAME],
                 receive: HashMap::new(),
@@ -175,6 +174,8 @@ impl RawMaster {
 	/// the PDU is buffered with more PDUs if possible
 	/// returns the number of slaves who processed the command
 	pub async fn pdu(&self, command: PduCommand, slave_address: u16, memory_address: u16, data: &mut [u8]) -> u16 {
+        println!("want to send {:?}", data);
+	
         let token;
         let (ready, finisher) = {
             // buffering the pdu sending
@@ -201,7 +202,7 @@ impl RawMaster {
                 });
             
             // change last value's PduHeader.next
-            if state.last_start < state.last_end {
+            if state.last_start <= state.last_end {
                 let range = state.last_start .. state.last_end;
                 let place = &mut state.send[range];
                 let mut header = PduHeader::unpack(place).unwrap();
@@ -210,6 +211,7 @@ impl RawMaster {
             }
             else {
                 state.last_time = Instant::now();
+                state.last_end = state.last_start;
             }
             
             // stacking the PDU in self.pdu_receive
@@ -217,7 +219,7 @@ impl RawMaster {
                 let range = state.last_end ..;
                 let mut cursor = Cursor::new(&mut state.send[range]);
                 cursor.pack(&PduHeader::new(
-                    command as u8,
+                    u8::from(command),
                     token,
                     slave_address,
                     memory_address,
@@ -226,12 +228,17 @@ impl RawMaster {
                     false,
                     u16::new(0),
                     )).unwrap();
+                println!("  advanced {}", cursor.position());
                 cursor.write(data).unwrap();
+                println!("  advanced {}", cursor.position());
                 cursor.pack(&PduFooter::new(0)).unwrap();
+                println!("  advanced {}", cursor.position());
                 cursor.position()
             };
             state.last_start = state.last_end;
             state.last_end = state.last_start + advance;
+            
+            println!("stacked pdu {:?}", &state.send[state.last_start .. state.last_end]);
             
             self.sendable.notify_one();
         
@@ -255,13 +262,12 @@ impl RawMaster {
 	
 	/// extract a received frame of PDUs and buffer each for reception by an eventual `self.pdu()` future waiting for it.
 	fn pdu_receive(&self, state: &mut PduState, frame: &[u8]) {
-        let mut frame = frame;
+        let mut frame = Cursor::new(frame);
         loop {
-            let header = PduHeader::unpack(&frame).unwrap();
+            let header = frame.unpack::<PduHeader>().unwrap();
             if let Some(storage) = state.receive.get(&header.token()) {
-                let content = &frame[PduHeader::packed_size() ..];
-                let content = &content[.. header.len().value() as usize];
-                let footer = PduFooter::unpack(&content[header.len().value() as usize ..]).unwrap();
+                let content = frame.read(usize::from(u16::from(header.len()))).unwrap();
+                println!("received len {} {}", header.len().value(), content.len());
                 
                 // copy the PDU content in the reception buffer
                 // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
@@ -270,17 +276,13 @@ impl RawMaster {
                     storage.data.len(),
                     )}
                     .copy_from_slice(content);
+                let footer = frame.unpack::<PduFooter>().unwrap();
                 let storage = unsafe {&mut *(storage as *const PduStorage as *mut PduStorage)};
 				storage.ready = true;
-				storage.answers = footer.working_count();
+				storage.answers = footer.value; //footer.working_count();
             }
-            frame = &frame[
-                PduHeader::packed_size() 
-                + PduFooter::packed_size() 
-                + header.len().value() as usize 
-                ..];
             if ! header.next() {break}
-            if frame.len() == 0 {todo!("raise frame error")}
+            if frame.remain().len() == 0 {todo!("raise frame error")}
         }
         // the working count in the footer is useless for the master, mostly used by slaves
         self.received.notify_waiters();
@@ -292,6 +294,8 @@ impl RawMaster {
         let mut receive = self.ethercat_receive.lock().unwrap();
         let size = self.socket.receive(receive.deref_mut()).unwrap();
         let frame = &receive[.. size];
+        
+        println!("frame received {:?}", frame);
         
         let header = EthercatHeader::unpack(frame).unwrap();
         let content = &frame[EthercatHeader::packed_size() ..];
@@ -321,6 +325,8 @@ impl RawMaster {
             u11::new((state.last_end - EthercatHeader::packed_size()) as u16),
             EthercatType::PDU,
             ).pack(&mut state.send).unwrap();
+            
+        println!("sending frame {:?}", &state.send[.. state.last_end]);
         
         // send
         // we are blocking the async machine until the send ends
@@ -328,8 +334,9 @@ impl RawMaster {
         self.socket.send(&state.send[.. state.last_end]).unwrap();
         // reset state
         state.last_end = 0;
-        state.last_start = 0;
+        state.last_start = EthercatHeader::packed_size();
         drop(state);
+        println!("sent");
 	}
 }
 
@@ -364,7 +371,7 @@ struct EthercatHeader {
     /// frame type
     ty: EthercatType,
 }
-data::bilge_pdudata!(EthercatHeader);
+data::bilge_pdudata!(EthercatHeader, u16);
 
 /// type of ethercat frame
 #[bitsize(4)]
@@ -444,7 +451,7 @@ struct PduHeader {
     slave_address: u16,
     /// memory address of the data to access, which memory is accessed depend on the command
     memory_address: u16,
-    /// data length starting from `memory_address`
+    /// data length following the header, excluding the footer. starting from `memory_address` in the addressed memory
     len: u11,
     reserved: u3,
     circulating: bool,
@@ -452,7 +459,7 @@ struct PduHeader {
     next: bool,
     interrupt: u16,
 }
-data::bilge_pdudata!(PduHeader);
+data::bilge_pdudata!(PduHeader, u80);
 
 /// footer for PDU exchange
 #[bitsize(16)]
@@ -460,7 +467,7 @@ data::bilge_pdudata!(PduHeader);
 struct PduFooter {
     working_count: u16,
 }
-data::bilge_pdudata!(PduFooter);
+data::bilge_pdudata!(PduFooter, u16);
 
 /// the possible PDU commands
 #[bitsize(8)]

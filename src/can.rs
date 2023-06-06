@@ -226,7 +226,7 @@ struct CoeHeader {
     /// Can command
     service: CanService,
 }
-data::bilge_pdudata!(CoeHeader);
+data::bilge_pdudata!(CoeHeader, u16);
 
 /**
     Type of can service
@@ -247,7 +247,7 @@ enum CanService {
     ReceivePdoRemoteRequest = 0x7,
     SdoInformation = 0x8,
 }
-data::bilge_pdudata!(CanService);
+data::bilge_pdudata!(CanService, u4);
 
 
 // use crate::data::FrameData;
@@ -302,7 +302,7 @@ struct SdoHeader {
     */
     sub: u8,
 }
-data::bilge_pdudata!(SdoHeader);
+data::bilge_pdudata!(SdoHeader, u32);
 
 // struct SdoSegmentFrame<'a> {
 //     header: SdoSegmentHeader,
@@ -317,7 +317,7 @@ struct SdoSegmentHeader {
     toggle: bool,
     command: u3,
 }
-data::bilge_pdudata!(SdoSegmentHeader);
+data::bilge_pdudata!(SdoSegmentHeader, u8);
 
 /// request operation to perform with an SDO in CoE
 ///
@@ -331,7 +331,7 @@ enum SdoCommandRequest {
     UploadSegment = 0x3,
     Abort = 0x4,
 }
-data::bilge_pdudata!(SdoCommandRequest);
+data::bilge_pdudata!(SdoCommandRequest, u3);
 
 /// response operation to perform with an SDO in CoE
 ///
@@ -345,7 +345,7 @@ enum SdoCommandResponse {
     UploadSegment = 0x0,
     Abort = 0x4,
 }
-data::bilge_pdudata!(SdoCommandResponse);
+data::bilge_pdudata!(SdoCommandResponse, u3);
 
 
 // enum SdoAbortCode {

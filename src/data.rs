@@ -71,9 +71,9 @@ impl<const N: usize> PduData for [u8; N] {
         Ok(())
     }
 	fn unpack(src: &[u8]) -> PackingResult<Self>  {
-		Ok(Self::try_from(src)
-			.map_err(|_| PackingError::BadSize(src.len(), "missing bytes cannot be implicitely zeroed"))?
-			.clone())
+        if src.len() < Self::Packed::LEN
+            {return Err(PackingError::BadSize(src.len(), "not enough bytes for desired slice"))}
+		Ok(Self::try_from(&src[.. Self::Packed::LEN]).unwrap().clone())
 	}
 }
 
@@ -95,24 +95,30 @@ impl PduData for bool {
 }
 
 /// macro implementing [PduData] for a given struct generated with `bilge`
+/// this is an ugly unsafe code to overcome the lack of traits providing containing ints in [bilge]
 macro_rules! bilge_pdudata {
-    ($t: ty) => { crate::data::packed_pdudata!($t); }
-//     ($t: ty, $id: ident) => { impl PduData for $t {
-//         const ID: TypeId = TypeId::CUSTOM;
-//         type ByteArray = [u8; ($id::BITS as usize + 7)/8];
-//         
-//         fn pack(&self) -> PackingResult<Self::ByteArray> {
-//             Ok($id::from(*self).to_le_bytes())
-//         }
-//         fn unpack(src: &[u8]) -> PackingResult<Self> {
-//             Ok(Self::from($id::from_le_bytes(src.try_into().map_err(|_|
-//                 PackingError::BufferSizeMismatch{
-//                     expected: ($id::BITS as usize + 7)/8,
-//                     actual: src.len(),
-//                 })?.clone()
-//                 )))
-//         }
-//     }};
+    ($t: ty, $id: ident) => { impl crate::data::PduData for $t {
+        // we cannot use Self.value for unknown reason
+        // we cannot use $id::from(Self) for unknown reason
+        // we cannot use $id::to_le_bytes because it is only implemented for byte exact integers
+        
+        const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
+        type Packed = [u8; ($id::BITS as usize + 7)/8];
+        
+        fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
+            if dst.len() < Self::Packed::LEN  
+                {return Err(crate::data::PackingError::BadSize(dst.len(), "bilge struct needs exact size"))}
+            dst[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
+            Ok(())
+        }
+        fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
+            if src.len() < Self::Packed::LEN  
+                {return Err(crate::data::PackingError::BadSize(src.len(), "bilge struct needs exact size"))}
+            let mut tmp = [0; core::mem::size_of::<Self>()];
+            tmp[.. Self::Packed::LEN].copy_from_slice(&src[.. Self::Packed::LEN]);
+            Ok(unsafe{ core::mem::transmute::<[u8; core::mem::size_of::<Self>()], Self>(tmp) })
+        }
+    }};
 }
 pub(crate) use bilge_pdudata;
 
@@ -123,13 +129,15 @@ macro_rules! packed_pdudata {
         type Packed = [u8; core::mem::size_of::<$t>()];
         
         fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
-            dst.copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
+            if dst.len() < Self::Packed::LEN
+                {return Err(crate::data::PackingError::BadSize(dst.len(), "not enough bytes for struct"))}
+            dst[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
             Ok(())
         }
         fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
-            let src: &Self::Packed = src.try_into().map_err(|_|
-                crate::data::PackingError::BadSize(src.len(), "struct cannot be implicitely zeroed")
-                )?;
+            if src.len() < Self::Packed::LEN
+                {return Err(crate::data::PackingError::BadSize(src.len(), "not enough bytes for struct"))}
+            let src: &Self::Packed = src[.. Self::Packed::LEN].try_into().unwrap();
             Ok(unsafe{ core::mem::transmute::<Self::Packed, Self>(src.clone()) })
         }
     }};

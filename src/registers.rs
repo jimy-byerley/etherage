@@ -198,6 +198,7 @@ pub enum AlError {
     // 0x00F0 - 0xFFF:  reserved
     // 0x8000 - 0xFFF:  vendor specific
 }
+data::bilge_pdudata!(AlError, u16);
 
 
 /// used by the slave to inform the master which mailbox protocl can be used with the slave.
@@ -219,6 +220,7 @@ pub struct MailboxSupport {
     pub voe: bool,
     reserved: u10,
 }
+data::bilge_pdudata!(MailboxSupport, u16);
 
 
 
@@ -241,7 +243,7 @@ pub struct DLControl {
 	alias_enable: bool,
 	reserved: u7,
 }
-data::bilge_pdudata!(DLControl);
+data::bilge_pdudata!(DLControl, u32);
 
 #[bitsize(1)]
 #[derive(TryFromBits, Debug, Copy, Clone)]
@@ -251,7 +253,7 @@ pub enum Forwarding {
 	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC[1] is set to 1 – locally administered address).
 	Filter = 1,
 }
-data::bilge_pdudata!(Forwarding);
+data::bilge_pdudata!(Forwarding, u1);
 
 #[bitsize(2)]
 #[derive(TryFromBits, Debug, Copy, Clone)]
@@ -263,7 +265,7 @@ pub enum LoopControl {
 	AlwaysOpen = 2,
 	AlwaysClosed = 3,
 }
-data::bilge_pdudata!(LoopControl);
+data::bilge_pdudata!(LoopControl, u2);
 
 /// ETG.1000.4 table 34
 #[bitsize(16)]
@@ -281,7 +283,7 @@ pub struct DLStatus {
 	/// indicates closed loop link status on each port
 	pub port_loop_status: [LoopStatus; 4],
 }
-data::bilge_pdudata!(DLStatus);
+data::bilge_pdudata!(DLStatus, u16);
 
 #[bitsize(2)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
@@ -290,7 +292,7 @@ pub struct LoopStatus {
 	pub loop_back: bool,
 	pub signal_detection: bool,
 }
-data::bilge_pdudata!(LoopStatus);
+data::bilge_pdudata!(LoopStatus, u2);
 
 /// The event registers are used to indicate an event to the DL -user. The event shall be acknowledged if the corresponding event source is read. The events can be masked.
 #[bitsize(32)]
@@ -308,7 +310,7 @@ pub struct DLSUserEvents {
 	pub sync_manager_channel: [bool; 16],
 	reserved: u8,
 }
-data::bilge_pdudata!(DLSUserEvents);
+data::bilge_pdudata!(DLSUserEvents, u32);
 
 /**
 	The external event is mapped to IRQ parameter of all EtherCAT PDUs accessing this slave. If an event is set, and the associated mask is set the corresponding bit in the IRQ parameter of a PDU is set.
@@ -329,7 +331,7 @@ pub struct ExternalEvent {
 	pub sync_manager_channel: [bool; 8],
 	reserved: u4,
 }
-data::bilge_pdudata!(ExternalEvent);
+data::bilge_pdudata!(ExternalEvent, u16);
 
 /// A write to one counter will reset all counters of the group
 #[repr(packed)]
@@ -347,7 +349,7 @@ pub struct PortErrorCount {
 	/// counts the occurrences of RX errors at the physical layer
 	pub physical: u8,
 }
-data::bilge_pdudata!(PortErrorCount);
+data::bilge_pdudata!(PortErrorCount, u16);
 
 #[bitsize(32)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
@@ -355,7 +357,7 @@ pub struct LostLinkCount {
 	/// counts the occurrences of link down.
 	pub port: [u8; 4],
 }
-data::bilge_pdudata!(LostLinkCount);
+data::bilge_pdudata!(LostLinkCount, u32);
 
 /**
 	A write to one counter will reset all Previous Error counters
@@ -372,7 +374,7 @@ pub struct FrameErrorCount {
 	/// counts occurrence of local problems. The counter will be cleared if the counter is written. The counting is stopped when the maximum value (255) is reached.
 	pub local_problem_count: u8,
 }
-data::bilge_pdudata!(FrameErrorCount);
+data::bilge_pdudata!(FrameErrorCount, u48);
 
 /**
 	A write will reset the watchdog counters
@@ -387,7 +389,7 @@ pub struct WatchdogCounter {
 	/// counts the expiration of DL-user watchdogs.
 	pub pdi: u8,
 }
-data::bilge_pdudata!(WatchdogCounter);
+data::bilge_pdudata!(WatchdogCounter, u16);
 
 
 /// ETH.1000.4 table 48
@@ -400,7 +402,7 @@ pub struct SiiAccess {
 	pub pdi: bool,
 	pub reserved: u7,
 }
-data::bilge_pdudata!(SiiAccess);
+data::bilge_pdudata!(SiiAccess, u16);
 
 #[bitsize(1)]
 #[derive(FromBits, Debug, Copy, Clone)]
@@ -408,7 +410,7 @@ pub enum SiiOwner {
 	EthercatDL = 0,
 	Pdi = 1,
 }
-data::bilge_pdudata!(SiiOwner);
+data::bilge_pdudata!(SiiOwner, u1);
 
 /** 
     register controling the read/write operations to Slave Information Interface (SII)
@@ -459,7 +461,7 @@ pub struct SiiControl {
 	/// operation is ongoing
 	pub busy: bool,
 }
-data::bilge_pdudata!(SiiControl);
+data::bilge_pdudata!(SiiControl, u16);
 
 #[bitsize(1)]
 #[derive(FromBits, Debug, Copy, Clone)]
@@ -529,7 +531,7 @@ pub struct FMMUEntry {
 	reserved: u7,
 	reserved: u24,
 }
-data::bilge_pdudata!(FMMUEntry);
+data::bilge_pdudata!(FMMUEntry, u128);
 
 /// this is not a PduData but a convenience struct transporting the addresses of a sync manager
 /// ETG.1000.4 table 59
@@ -610,7 +612,7 @@ pub struct SyncManagerChannel {
     pub repeat_ack: bool,
     reserved: u6,
 }
-data::bilge_pdudata!(SyncManagerChannel);
+data::bilge_pdudata!(SyncManagerChannel, u64);
 
 /// ETG.1000.4 table 58
 #[bitsize(2)]
@@ -661,7 +663,7 @@ pub struct TimeDifference {
     /// true if local copy of system time smaller than received system time
     pub sign: bool,
 }
-data::bilge_pdudata!(TimeDifference);
+data::bilge_pdudata!(TimeDifference, u32);
 
 
 

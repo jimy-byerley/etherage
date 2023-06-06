@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use core::time::Duration;
-use etherage::{PduData, EthernetSocket, RawMaster};
+use etherage::{PduData, Field, PduAnswer, EthernetSocket, RawMaster};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -17,29 +17,33 @@ async fn main() -> std::io::Result<()> {
     })};
     std::thread::sleep(Duration::from_millis(500));
     
+    let reg = Field::<u16>::simple(0x1234);
+            
     // test read/write
-//     let some: u16 = master.aprd(0x1234).await;
-//     master.apwr(0x1234, some).await;
+    let received = master.aprd(reg).await;
+    master.apwr(reg, received.value).await;
     
     // test simultaneous read/write
     let t1 = {
         let master = master.clone();
         tokio::task::spawn(async move {
-            let some: u16 = master.aprd(0x1234).await;
-            master.apwr(0x1234, some).await;
+            let received = master.aprd(reg).await;
+            assert_eq!(received.answers, 1);
+            master.apwr(reg, received.value).await;
         })
     };
     let t2 = {
         let master = master.clone();
         tokio::task::spawn(async move {
-            let some: u16 = master.aprd(0x2345).await;
-            master.apwr(0x2345, some).await;
+            let received = master.aprd(reg).await;
+            assert_eq!(received.answers, 1);
+            master.apwr(reg, received.value).await;
         })
     };
     t1.await.unwrap();
     t2.await.unwrap();
     
-//     println!("received {:x}", some);
+//     println!("received {:x}", value);
     Ok(())
 }
 

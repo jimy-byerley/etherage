@@ -143,7 +143,7 @@ struct MailboxHeader {
     count: u3,
     reserved: u1,
 }
-data::bilge_pdudata!(MailboxHeader);
+data::bilge_pdudata!(MailboxHeader, u48);
 
 /// ETG 1000.4 table 29
 #[bitsize(4)]
@@ -165,7 +165,7 @@ struct MailboxErrorFrame {
     ty: u16,
     detail: MailboxError,
 }
-data::bilge_pdudata!(MailboxErrorFrame);
+data::bilge_pdudata!(MailboxErrorFrame, u32);
 
 // ETG 1000.4 table 30
 #[bitsize(16)]
