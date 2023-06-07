@@ -18,7 +18,14 @@ pub struct Mailbox<'a> {
 	count: u8,
 }
 
-impl Mailbox<'_> {	
+impl<'b> Mailbox<'b> {	
+    pub fn new(master: &'b RawMaster, slave: u16) -> Self {
+        Self {
+            master,
+            slave,
+            count: 0,
+        }
+    }
     pub async fn poll(&mut self) -> bool {todo!()}
     pub async fn available(&mut self) -> usize {todo!()}
     
@@ -26,7 +33,7 @@ impl Mailbox<'_> {
     /// `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
     /// this function does not return the data size read, so the read frame should provide a length
 	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
-		let mailbox_control = registers::sync_manager::interface.mailbox_out();
+		let mailbox_control = registers::sync_manager::interface.mailbox_read();
 		let mailbox_buffer = &registers::mailbox_buffers[0];
         let mut allocated = [0; registers::mailbox_buffers[0].len];
         
@@ -68,7 +75,7 @@ impl Mailbox<'_> {
 	}
 	/// write the given frame in the mailbox
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
-		let mailbox_control = registers::sync_manager::interface.mailbox_in();
+		let mailbox_control = registers::sync_manager::interface.mailbox_write();
 		let mailbox_buffer = &registers::mailbox_buffers[0];
         let mut buffer = [0; registers::mailbox_buffers[0].len];
 		
@@ -81,7 +88,7 @@ impl Mailbox<'_> {
 				u6::new(0),  // this value has no effect and is reserved for future use
 				priority,
 				ty,
-				u3::from(self.count),
+				u3::new(self.count),
 			)).unwrap();
         frame.write(data).unwrap();
         let sent = frame.finish();

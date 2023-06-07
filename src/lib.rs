@@ -42,6 +42,7 @@ pub mod master;
 
 
 pub use crate::data::{PduData, Field, BitField};
+pub use crate::sdo::Sdo;
 pub use crate::socket::*;
 pub use crate::rawmaster::*;
 pub use crate::master::*;

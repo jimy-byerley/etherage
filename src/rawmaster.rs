@@ -91,25 +91,25 @@ impl RawMaster {
         self.exchange(SlaveAddress::Broadcast, address, data).await
 	}
 	
-	pub async fn aprd<T: PduData>(&self, address: Field<T>) -> PduAnswer<T> {
-        self.read(SlaveAddress::AutoIncremented, address).await
+	pub async fn aprd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
+        self.read(SlaveAddress::AutoIncremented(slave), address).await
 	}
-	pub async fn apwr<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<()> {
-        self.write(SlaveAddress::AutoIncremented, address, data).await
+	pub async fn apwr<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<()> {
+        self.write(SlaveAddress::AutoIncremented(slave), address, data).await
 	}
-	pub async fn aprw<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<T> {
-        self.exchange(SlaveAddress::AutoIncremented, address, data).await
+	pub async fn aprw<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<T> {
+        self.exchange(SlaveAddress::AutoIncremented(slave), address, data).await
 	}
 	pub async fn armw(&self) {todo!()}
 	
 	pub async fn fprd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
-        self.read(SlaveAddress::Configured(slave), address).await
+        self.read(SlaveAddress::Fixed(slave), address).await
 	}
 	pub async fn fpwr<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<()> {
-        self.write(SlaveAddress::Configured(slave), address, data).await
+        self.write(SlaveAddress::Fixed(slave), address, data).await
 	}
 	pub async fn fprw<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<T> {
-        self.exchange(SlaveAddress::Configured(slave), address, data).await
+        self.exchange(SlaveAddress::Fixed(slave), address, data).await
 	}
 	pub async fn frmw(&self) {todo!()}
 	
@@ -127,8 +127,8 @@ impl RawMaster {
 	pub async fn read<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>) -> PduAnswer<T> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BRD, 0),
-            SlaveAddress::AutoIncremented => (PduCommand::APRD, 0),
-            SlaveAddress::Configured(address) => (PduCommand::FPRD, address),
+            SlaveAddress::AutoIncremented(address) => (PduCommand::APRD, 0u16.wrapping_sub(address)),
+            SlaveAddress::Fixed(address) => (PduCommand::FPRD, address),
             SlaveAddress::Logical => (PduCommand::LRD, 0),
             };
         let mut buffer = T::Packed::uninit();
@@ -141,8 +141,8 @@ impl RawMaster {
 	pub async fn write<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<()> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BWR, 0),
-            SlaveAddress::AutoIncremented => (PduCommand::APWR, 0),
-            SlaveAddress::Configured(address) => (PduCommand::FPWR, address),
+            SlaveAddress::AutoIncremented(address) => (PduCommand::APWR, 0u16.wrapping_sub(address)),
+            SlaveAddress::Fixed(address) => (PduCommand::FPWR, address),
             SlaveAddress::Logical => (PduCommand::LWR, 0),
             };
         let mut buffer = T::Packed::uninit();
@@ -156,8 +156,8 @@ impl RawMaster {
 	pub async fn exchange<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<T> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BRW, 0),
-            SlaveAddress::AutoIncremented => (PduCommand::APRW, 0),
-            SlaveAddress::Configured(address) => (PduCommand::FPRW, address),
+            SlaveAddress::AutoIncremented(address) => (PduCommand::APRW, 0u16.wrapping_sub(address)),
+            SlaveAddress::Fixed(address) => (PduCommand::FPRW, address),
             SlaveAddress::Logical => (PduCommand::LRW, 0),
             };
         let mut buffer = T::Packed::uninit();
@@ -172,8 +172,6 @@ impl RawMaster {
 	/// the PDU is buffered with more PDUs if possible
 	/// returns the number of slaves who processed the command
 	pub async fn pdu(&self, command: PduCommand, slave_address: u16, memory_address: u16, data: &mut [u8]) -> u16 {
-        println!("want to send {:?}", data);
-	
         let token;
         let (ready, finisher) = {
             // buffering the pdu sending
@@ -226,17 +224,12 @@ impl RawMaster {
                     false,
                     u16::new(0),
                     )).unwrap();
-                println!("  advanced {}", cursor.position());
                 cursor.write(data).unwrap();
-                println!("  advanced {}", cursor.position());
                 cursor.pack(&PduFooter::new(0)).unwrap();
-                println!("  advanced {}", cursor.position());
                 cursor.position()
             };
             state.last_start = state.last_end;
             state.last_end = state.last_start + advance;
-            
-            println!("stacked pdu {:?}", &state.send[state.last_start .. state.last_end]);
             
             self.sendable.notify_one();
         
@@ -250,7 +243,6 @@ impl RawMaster {
             (ready, finisher)
         };
         
-        println!("waiting for answer");
         // waiting for the answer
         while ! *ready { self.received.notified().await; }
         
@@ -265,7 +257,6 @@ impl RawMaster {
             let header = frame.unpack::<PduHeader>().unwrap();
             if let Some(storage) = state.receive.get(&header.token()) {
                 let content = frame.read(usize::from(u16::from(header.len()))).unwrap();
-                println!("received len {} {}", header.len().value(), content.len());
                 
                 // copy the PDU content in the reception buffer
                 // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
@@ -292,8 +283,6 @@ impl RawMaster {
         let mut receive = self.ethercat_receive.lock().unwrap();
         let size = self.socket.receive(receive.deref_mut()).unwrap();
         let frame = &receive[.. size];
-        
-        println!("frame received {:?}", frame);
         
         let header = EthercatHeader::unpack(frame).unwrap();
         let content = &frame[EthercatHeader::packed_size() ..];
@@ -323,8 +312,6 @@ impl RawMaster {
             u11::new((state.last_end - EthercatHeader::packed_size()) as u16),
             EthercatType::PDU,
             ).pack(&mut state.send).unwrap();
-            
-        println!("sending frame {:?}", &state.send[.. state.last_end]);
         
         // send
         // we are blocking the async machine until the send ends
@@ -334,7 +321,6 @@ impl RawMaster {
         state.last_end = 0;
         state.last_start = EthercatHeader::packed_size();
         drop(state);
-        println!("sent");
 	}
 }
 
@@ -344,9 +330,9 @@ pub enum SlaveAddress {
 	/// every slave will receive and execute
 	Broadcast,
 	/// address will be determined by the topology (index of the slave in the ethernet loop)
-	AutoIncremented,
+	AutoIncremented(u16),
 	/// address has been set by the master previously
-	Configured(u16),
+	Fixed(u16),
 	/// the logical memory is the destination, all slaves are concerned
 	Logical,
 }

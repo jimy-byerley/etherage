@@ -28,11 +28,14 @@ const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
     It works exactly as in a Can bus, except each of its frame is encapsulated in a mailbox frame
 */
 pub struct Can<'a> {
-    mailbox: Mailbox<'a>,
+    mailbox: &'a mut Mailbox<'a>,
 }
-impl Can<'_> {
+impl<'a> Can<'a> {
+    pub fn new(mailbox: &'a mut Mailbox<'a>) -> Can<'a> {
+        Can {mailbox}
+    }
     /// read and SDO, any size
-	pub async fn sdo_read<T: PduData>(&mut self, sdo: Sdo<T>, priority: u2) -> T   {
+	pub async fn sdo_read<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2) -> T   {
 		let mut data = T::Packed::uninit();
         let mut buffer = [0; MAILBOX_MAX_SIZE];
         // generic request
@@ -47,6 +50,7 @@ impl Can<'_> {
                 sdo.index,
                 sdo.sub.unwrap(),
             )).unwrap();
+        frame.write(&[0; 4]);
         self.mailbox.write(MailboxType::Can, priority, frame.finish()).await;
         
         // receive data
@@ -115,7 +119,7 @@ impl Can<'_> {
         // TODO send SdoCommand::Abort in case any error
 	}
 	/// write SDO, any size
-	pub async fn sdo_write<T: PduData>(&mut self, sdo: Sdo<T>, priority: u2, data: T)  {		
+	pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)  {		
         let mut buffer = [0; MAILBOX_MAX_SIZE];
 		if T::Packed::LEN < EXPEDITED_MAX_SIZE {
 			// expedited transfer
@@ -126,7 +130,7 @@ impl Can<'_> {
                 frame.pack(&SdoHeader::new(
                             true,
                             true,
-                            u2::from((EXPEDITED_MAX_SIZE - T::Packed::LEN) as u8),
+                            u2::new((EXPEDITED_MAX_SIZE - T::Packed::LEN) as u8),
                             sdo.sub.is_complete(),
                             u3::from(SdoCommandRequest::Download),
                             sdo.index,
