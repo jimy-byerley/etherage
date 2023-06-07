@@ -3,7 +3,6 @@
 use bilge::prelude::*;
 use crate::data::{self, Field, BitField, Storage};
 
-
 pub mod address {
     use super::*;
     
@@ -16,8 +15,9 @@ pub mod address {
 }
 pub mod dl {
     use super::*;
-    
-	pub const control: Field<DLControl> = Field::simple(0x0101);
+
+    pub const information: Field<DLInformation> = Field::simple(0x0000);
+	pub const control: Field<DLControl> = Field::simple(0x0100);
 	pub const status: Field<DLStatus> = Field::simple(0x0110);
 }
 	
@@ -72,15 +72,14 @@ pub mod sii {
 	pub const access: Field<SiiAccess> = Field::simple(0x0500);
 	pub const control: Field<SiiControl> = Field::simple(0x0502);
 	/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
-	pub const address: Field<u32> = Field::simple(0x0504);
+	pub const address: Field<u16> = Field::simple(0x0504);
 	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
-	pub const data: Field<u32> = Field::simple(0x0508);
+	pub const data: Field<[u8;4]> = Field::simple(0x0508);
 }
 	
 // TODO: MII (Media Independent Interface)
 	
 pub const fmmus: FMMU = FMMU {address: 0x0600, num: 16};
-pub const sync_managers: SyncManager = SyncManager {address: 0x0800, num: 16};
 pub const clock: Field<DistributedClock> = Field::simple(0x0900);
 pub const clock_latch: Field<u32> = Field::simple(0x0900);
 
@@ -148,6 +147,75 @@ pub const clock_latch: Field<u32> = Field::simple(0x0900);
 // };
 
 
+/// ETG.1000.4 table 31
+#[bitsize(80)]
+pub struct DLInformation {
+    /// type of the slave controller
+    ty: u8,
+    /// (major revision) revision of the slave controller.
+    revision: u8,
+    /// (minor revision) build number of the slave controller
+    build: u16,
+    
+    /// Number of supported FMMU entities  (1 to 10)
+    fmmus: u8,
+    /// Number of supported Sync Manager channels (1 to 10)
+    sync_managers: u8,
+    
+    /// RAM size in koctet, means 1024 octets (1-60)
+    ram_size: u8,
+    /// tells which port are present on a slave
+    ports: [PortDescriptor; 4],
+    
+    /**
+        - `false`: bit operation supported
+        - `true`: bit operation not supported This feature bit does not affect mappability of SM.WriteEvent flag (MailboxIn)
+    */
+    fmmu_bit_operation_not_supported: bool,
+    /**
+        - `true`: shall only be used for legacy reasons. Reserved registers may not be written, reserved registers may not be read when out of register area (refer to documentation of specific slave controller (ESC) 
+        - `false`: no restriction in register access
+    */
+    reserved_registers_not_supported: bool,
+    dc_supported: bool,
+    dc_range: DcRange,
+    ebus_low_jitter: bool,
+    ebus_enhanced_link_detection: bool,
+    /// true if available
+    mii_enhanced_link_detection: bool,
+    /// if true, frames with modified FCS (additional nibble) should be counted separately in RX-Error Previous counter
+    separate_fcs_errors: bool,
+    /// true if available. This feature refers to registers 0x981[7:3], 0x0984
+    dc_sync_activation_enhanced: bool,
+    
+    /// if true, `LRW` is not supported
+    logical_exchange_not_supported: bool,
+    /// if true, `BRW`, `APRẀ`, `FPRW` is not supported
+    physicial_exchange_not_supported: bool,
+    
+    /**
+        - 0: not active
+        - 1: active, FMMU 0 is used for RxPDO (no bit mapping) FMMU 1 is used for TxPDO (no bit mapping) FMMU 2 is used for Mailbox write event bit of Sync manager 1 Sync manager 0 is used for write mailbox Sync manager 1 is used for read mailbox Sync manager 2 is used as Buffer for incoming data Sync manager 3 is used as Buffer for outgoing data
+    */
+    special_fmmu_config: bool,
+}
+
+#[bitsize(2)]
+enum PortDescriptor {
+    NotImplemented = 0b00,
+    NotConfigured = 0b01,
+    /// ethernet bus
+    Ebus = 0b10,
+    /// Machine Abstraction Interface (MII/RMII)
+    Mii = 0b11,
+}
+#[bitsize(1)]
+enum DcRange {
+    /// default
+    Bit32 = 0,
+    /// 64 bit for system time, system time offset and receive time processing unit
+    Bit64 = 1,
+}
 
 
 /// ETG.1000.6 table 11
@@ -611,9 +679,9 @@ impl SyncManager {
         Field::simple(usize::from(self.address + u16::from(index)*0x8))
     }
     // return the sync manager channel reserved for mailbox in
-    pub fn mailbox_in(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
+    pub fn mailbox_write(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
     // return the sync manager channel reserved for mailbox out
-    pub fn mailbox_out(&self) -> Field<SyncManagerChannel>   {self.channel(1)}
+    pub fn mailbox_read(&self) -> Field<SyncManagerChannel>   {self.channel(1)}
     // return one of the sync manager channels reserved for mapping
     pub fn mappable(&self, index: u8) -> Field<SyncManagerChannel>   {self.channel(2+index)}
 }
@@ -621,15 +689,14 @@ impl SyncManager {
 /** 
     The Sync manager controls the access to the DL-user memory. Each channel defines a consistent area of the DL-user memory.
 
-    There are two ways of data exchange between master and PDI:
-    
-        - Handshake mode (mailbox): one entity fills data in and cannot access the area until the other entity reads out the data.
-        - Buffered mode: the interaction between both producer of data and consumer of data is uncorrelated – each entity expects access at any time, always providing the consumer with the newest data.
+    There is two ways of data exchange between master and PDI:
+    - Handshake mode (mailbox): one entity fills data in and cannot access the area until the other entity reads out the data.
+    - Buffered mode: the interaction between both producer of data and consumer of data is uncorrelated – each entity expects access at any time, always providing the consumer with the newest data.
 
     ETG.1000.4 table 58
 */
 #[bitsize(64)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
 pub struct SyncManagerChannel {
     /// start address in octets in the physical memory of the consistent DL-user memory area.
     pub address: u16,
@@ -653,6 +720,7 @@ pub struct SyncManagerChannel {
     pub read_event: bool,
     reserved: u1,
     
+    /// true if there is data waiting to be read (by master or slave) in the buffer
     pub mailbox_full: bool,
     /// state (buffer number, locked) of the consistent DL-user memory if it is of buffered access type.
     pub buffer_state: u2,
