@@ -2,7 +2,7 @@ use crate::{
 	mailbox::{Mailbox, MailboxType},
 	registers,
 	sdo::Sdo,
-	data::{self, PduData, Storage, PackingResult, Cursor},
+	data::{self, PduData, Storage, Cursor},
 	};
 use bilge::prelude::*;
 
@@ -38,6 +38,7 @@ impl<'a> Can<'a> {
 	pub async fn sdo_read<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2) -> T   {
 		let mut data = T::Packed::uninit();
         let mut buffer = [0; MAILBOX_MAX_SIZE];
+        
         // generic request
         let mut frame = Cursor::new(buffer.as_mut_slice());
         frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
@@ -50,10 +51,11 @@ impl<'a> Can<'a> {
                 sdo.index,
                 sdo.sub.unwrap(),
             )).unwrap();
-        frame.write(&[0; 4]);
+        frame.write(&[0; 4]).unwrap();
         self.mailbox.write(MailboxType::Can, priority, frame.finish()).await;
         
         // receive data
+        println!("wait for sdo request answer");
         // TODO check for possible SDO error
         let mut frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
         assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
@@ -145,7 +147,6 @@ impl<'a> Can<'a> {
 //                             (MailboxType::Can, priority, &mut buffer);
             {
                 let mut frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
-                let header = frame.unpack::<CoeHeader>().unwrap();
                 assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
                 let header = frame.unpack::<SdoHeader>().unwrap();
                 assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::Download);

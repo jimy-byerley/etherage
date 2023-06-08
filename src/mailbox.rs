@@ -1,9 +1,9 @@
 use crate::{
-	socket::EthercatSocket,
 	rawmaster::{RawMaster, PduCommand},
 	registers,
-    data::{self, PduData, Storage, PackingResult, Cursor},
+    data::{self, PduData, Storage, Cursor},
 	};
+use core::ops::Range;
 use bilge::prelude::*;
 
 
@@ -26,6 +26,46 @@ impl<'b> Mailbox<'b> {
             count: 0,
         }
     }
+//     pub async fn new(master: &'b RawMaster, slave: u16, write: Range<u16>, read: Range<u16>) -> Self {
+//         // check that there is not previous error
+//         if master.fprd(slave, registers::al::response).await.one().error() {
+//             panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
+//         }
+//         
+//         // configure sync manager
+//         let writing = master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
+//             let mut config = registers::SyncManagerChannel::default();
+//             config.set_address(write.start);
+//             config.set_length(write.end - write.start);
+//             config.set_mode(registers::SyncMode::Mailbox);
+//             config.set_direction(registers::SyncDirection::Write);
+//             config.set_dls_user_event(true);
+//             config.set_ec_event(true);
+//             config.set_enable(true);
+//             config
+//         });
+//         
+//         master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
+//             let mut config = registers::SyncManagerChannel::default();
+//             config.set_address(read.start);
+//             config.set_length(read.end - read.start);
+//             config.set_mode(registers::SyncMode::Mailbox);
+//             config.set_direction(registers::SyncDirection::Read);
+//             config.set_dls_user_event(true);
+//             config.set_ec_event(true);
+//             config.set_enable(true);
+//             config
+//         });
+//         
+//         writing.await.one();
+//         reading.await.one();
+//     
+//         Self {
+//             master,
+//             slave,
+//             count: 0,
+//         }
+//     }
     pub async fn poll(&mut self) -> bool {todo!()}
     pub async fn available(&mut self) -> usize {todo!()}
     
@@ -34,8 +74,8 @@ impl<'b> Mailbox<'b> {
     /// this function does not return the data size read, so the read frame should provide a length
 	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
-		let mailbox_buffer = &registers::mailbox_buffers[0];
-        let mut allocated = [0; registers::mailbox_buffers[0].len];
+		let mailbox_buffer = &registers::mailbox_buffers[1];
+        let mut allocated = [0; registers::mailbox_buffers[1].len];
         
 		// wait for data
 		let mut state = loop {
@@ -91,14 +131,15 @@ impl<'b> Mailbox<'b> {
 				u3::new(self.count),
 			)).unwrap();
         frame.write(data).unwrap();
-        let sent = frame.finish();
+//         let sent = frame.finish();
+        let sent = &mut buffer[.. 0x100];
         
 		// wait for mailbox to be empty
-		let state = loop {
+		loop {
             let state = self.master.fprd(self.slave, mailbox_control).await;
             if state.answers == 0 || state.value.mailbox_full()  {continue}
-            break state.value
-        };
+            break
+        }
         // write data
         while ! self.master.pdu(PduCommand::FPWR, self.slave, mailbox_buffer.byte as u16, sent).await == 1 
             {}

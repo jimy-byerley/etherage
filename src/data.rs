@@ -3,8 +3,6 @@
 use core::{
 	marker::PhantomData,
 	fmt,
-	ops::{Index, IndexMut, Range},
-	slice::SliceIndex,
 	};
 
 /**
@@ -200,6 +198,7 @@ impl<T: PduData> Field<T>
 	pub const fn simple(byte: usize) -> Self {
         Self{extracted: PhantomData, byte, len: T::Packed::LEN}
 	}
+	
 	/// extract the value pointed by the field in the given byte array
 	pub fn get(&self, data: &[u8]) -> T       {
 		T::unpack(&data[self.byte..][..self.len])
@@ -213,7 +212,7 @@ impl<T: PduData> Field<T>
 }
 impl<T: PduData> fmt::Debug for Field<T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "Field{{{}, {}}}", self.byte, self.len)
+		write!(f, "Field{{0x{:x}, {}}}", self.byte, self.len)
 	}
 }
 /** 

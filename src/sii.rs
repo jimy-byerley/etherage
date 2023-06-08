@@ -1,4 +1,8 @@
 /*!
+    SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
+    
+    This module expose the standard SII registers.
+
     ETG.1000.6 5.4
 */
 
@@ -76,11 +80,11 @@ mod mailbox {
 }
 
 /**
-    size of E2PROM in [KiBit] + 1
+    size of EEPROM in [KiBit] + 1
     NOTE: KiBit means 1024 Bit.
     NOTE: size = 0 means a EEPROM size of 1 KiBit
 */
-const protocol: Field<u16> = Field::simple(WORD*0x003e);
+const size: Field<u16> = Field::simple(WORD*0x003e);
 /// This Version is 1
 const version: Field<u16> = Field::simple(WORD*0x003f);
 
@@ -91,10 +95,11 @@ const version: Field<u16> = Field::simple(WORD*0x003f);
 struct Sii<'a> {
     master: &'a RawMaster,
     slave: u16,
+    /// address unit (number of bytes) to use for communication
     unit: u16,
 }
 impl Sii<'_> {
-    async fn new(master: &'a RawMaster, slave: u16) -> Self {
+    pub async fn new(master: &'a RawMaster, slave: u16) -> Self {
         let control = master.fprd(slave, registers::sii::control).await;
         let unit = match control.address_unit {
             Byte => 1,
@@ -103,7 +108,7 @@ impl Sii<'_> {
         Self {master, slave, unit}
     }
     /// read data from the slave's EEPROM using the SII
-    async fn read<T>(&mut self, field: Field<T>) -> T {
+    pub async fn read<T>(&mut self, field: Field<T>) -> T {
         let buffer = T::Packed::uninit();
         let mut cursor = Cursor::new(buffer.as_mut());
         while cursor.remain().len() {
@@ -116,7 +121,7 @@ impl Sii<'_> {
         // TODO:  change the segment size using read_size
     }
     /// write data to the slave's EEPROM using the SII
-    async fn write<T>(&mut self, field: Field<T>, value: &T) {
+    pub async fn write<T>(&mut self, field: Field<T>, value: &T) {
         let buffer = T::Packed::uninit();
         value.pack(buffer.as_mut());
         let mut cursor = Cursor::new(buffer.as_mut());
@@ -148,7 +153,7 @@ struct CategoryHeader {
     /// Following Category Word Size x
     size: u16,
 }
-bilge_pdudata!(CategoryHeader, u32);
+data::bilge_pdudata!(CategoryHeader, u32);
 
 /// type of category in the SII
 #[bitsize(u15)]

@@ -27,23 +27,70 @@ async fn main() -> std::io::Result<()> {
     master.apwr(0, registers::address::fixed, 1).await;
     master.apwr(1, registers::address::fixed, 2).await;
     
-//     // configure sync manager
-//     let mut config = registers::SyncManagerChannel::default();
-//     config.set_address(registers::mailbox_buffers[0].byte as u16);
-//     config.set_length(registers::mailbox_buffers[0].len as u16);
-//     config.set_buffer_type(registers::SyncBufferType::Mailbox);
-//     config.set_direction(registers::SyncBufferDirection::Write);
-//     config.set_enable(true);
-//     assert_eq!(master.fpwr(1, registers::sync_manager::interface.mailbox_read(), config).await.answers, 1);
-//     
-//     let mut config = registers::SyncManagerChannel::default();
-//     config.set_address(registers::mailbox_buffers[0].byte as u16);
-//     config.set_length(registers::mailbox_buffers[0].len as u16);
-//     config.set_buffer_type(registers::SyncBufferType::Mailbox);
-//     config.set_direction(registers::SyncBufferDirection::Read);
-//     config.set_enable(true);
-//     assert_eq!(master.fpwr(1, registers::sync_manager::interface.mailbox_write(), config).await.answers, 1);
-//     
+    let slave = 1;
+    
+    let received = master.fprd(slave, registers::al::response).await.one();
+    if received.error() {
+        let received = master.fprd(slave, registers::al::error).await.one();
+        panic!("error on before change: {:?}", received);
+    }
+    
+    // configure sync manager
+    master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
+        let mut config = registers::SyncManagerChannel::default();
+        config.set_address(registers::mailbox_buffers[0].byte as u16);
+        config.set_length(registers::mailbox_buffers[0].len as u16);
+//         config.set_address(0x1000);
+//         config.set_length(0x80);
+        config.set_mode(registers::SyncMode::Mailbox);
+        config.set_direction(registers::SyncDirection::Write);
+        config.set_dls_user_event(true);
+        config.set_ec_event(true);
+        config.set_enable(true);
+        config
+    }).await.one();
+    
+    
+    master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
+        let mut config = registers::SyncManagerChannel::default();
+        config.set_address(registers::mailbox_buffers[1].byte as u16);
+        config.set_length(registers::mailbox_buffers[1].len as u16);
+//         config.set_address(0x1080);
+//         config.set_length(0x80);
+        config.set_mode(registers::SyncMode::Mailbox);
+        config.set_direction(registers::SyncDirection::Read);
+        config.set_dls_user_event(true);
+        config.set_ec_event(true);
+        config.set_enable(true);
+        config
+    }).await.one();
+        
+    master.fpwr(slave, registers::sii::access, {
+        let mut config = registers::SiiAccess::default();
+        config.set_owner(registers::SiiOwner::Pdi);
+        config
+    }).await.one();
+    
+    // switch to preop
+    master.fpwr(slave, registers::al::control, {
+        let mut config = registers::AlControlRequest::default();
+        config.set_state(registers::AlState::PreOperational);
+        config.set_ack(true);
+        config
+    }).await.one();
+    
+    loop {
+        let received = master.fprd(slave, registers::al::response).await;
+        assert_eq!(received.answers, 1);
+//         assert_eq!(received.value.error(), false);
+        if received.value.error() {
+            let received = master.fprd(slave, registers::al::error).await;
+            assert_eq!(received.answers, 1);
+            panic!("error on state change: {:?}", received.value);
+        }
+        if received.value.state() == registers::AlState::PreOperational  {break}
+    }
+
     // initialize mailbox
     let mut mailbox = Mailbox::new(&master, 1);
     let mut can = Can::new(&mut mailbox);

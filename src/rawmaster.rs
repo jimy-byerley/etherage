@@ -4,7 +4,7 @@ use std::{
     sync::{Mutex, Condvar},
     };
 use core::{
-    ops::{Deref, DerefMut},
+    ops::DerefMut,
     time::Duration,
     };
 use tokio::sync::Notify;
@@ -12,7 +12,7 @@ use bilge::prelude::*;
 
 use crate::{
     socket::*,
-    data::{self, Field, PduData, Storage, PackingResult, Cursor},
+    data::{self, Field, PduData, Storage, Cursor},
     };
 
 const MAX_ETHERCAT_FRAME: usize = 2050;
@@ -59,7 +59,7 @@ struct PduStorage {
 impl RawMaster {
 	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {        
         Self {
-            pdu_merge_time: std::time::Duration::from_micros(2000), // microseconds
+            pdu_merge_time: std::time::Duration::from_micros(100), // microseconds
             
             socket: Box::new(socket),
             received: Notify::new(),
@@ -113,13 +113,13 @@ impl RawMaster {
 	}
 	pub async fn frmw(&self) {todo!()}
 	
-	pub async fn lrd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
+	pub async fn lrd<T: PduData>(&self, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Logical, address).await
 	}
-	pub async fn lwr<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<()> {
+	pub async fn lwr<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::Logical, address, data).await
 	}
-	pub async fn lrw<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<T> {
+	pub async fn lrw<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Logical, address, data).await
 	}
 	
@@ -132,6 +132,7 @@ impl RawMaster {
             SlaveAddress::Logical => (PduCommand::LRD, 0),
             };
         let mut buffer = T::Packed::uninit();
+        buffer.as_mut().fill(0);
         PduAnswer {
 			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
@@ -173,7 +174,7 @@ impl RawMaster {
 	/// returns the number of slaves who processed the command
 	pub async fn pdu(&self, command: PduCommand, slave_address: u16, memory_address: u16, data: &mut [u8]) -> u16 {
         let token;
-        let (ready, finisher) = {
+        let (ready, _finisher) = {
             // buffering the pdu sending
             let mut state = self.pdu_state.lock().unwrap();
             
@@ -246,7 +247,7 @@ impl RawMaster {
         // waiting for the answer
         while ! *ready { self.received.notified().await; }
         
-		let mut state = self.pdu_state.lock().unwrap();
+		let state = self.pdu_state.lock().unwrap();
 		state.receive[&token].answers
 	}
 	
@@ -340,6 +341,15 @@ pub enum SlaveAddress {
 pub struct PduAnswer<T> {
 	pub answers: u16,
 	pub value: T,
+}
+impl<T> PduAnswer<T> {
+    pub fn one(self) -> T {
+        self.exact(1)
+    }
+    pub fn exact(self, n: u16) -> T {
+        assert_eq!(self.answers, n);
+        self.value
+    }
 }
 
 
