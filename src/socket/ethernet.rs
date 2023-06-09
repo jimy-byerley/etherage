@@ -1,7 +1,5 @@
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
-use packed_struct::prelude::*;
-use packed_struct::types::bits::ByteArray;
 use super::EthercatSocket;
 
 
@@ -123,7 +121,7 @@ impl EthercatSocket for EthernetSocket {
             packed.extend_from_slice(&padding[packed.len()..]);
         }
         let data = packed.as_slice();
-        
+
         let len = unsafe {
             libc::write(
                 self.as_raw_fd(),
@@ -177,19 +175,17 @@ fn ifreq_for(name: &str) -> ifreq {
     ifreq
 }
 
-
-
-#[derive(PackedStruct, Clone, Debug)]
-#[packed_struct(size_bytes="14", bit_numbering = "lsb0", endian = "msb")]
-struct EthernetHeader {
-    #[packed_field(bytes="8:13")]  dst: [u8;6],
-    #[packed_field(bytes="2:7")]  src: [u8;6],
-    // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
-//     #[packed_field(bytes="2:5")]  vlan: [u8;4],  
-    #[packed_field(bytes="0:1")]  ty: u16,
-}
-#[derive(PackedStruct, Clone, Debug)]
-#[packed_struct(size_bytes="4", bit_numbering = "lsb0", endian = "msb")]
-struct EthernetFooter {
-    #[packed_field(bytes="0:3")]  checksum: u32,
-}
+// #[derive(PackedStruct, Clone, Debug)]
+// #[packed_struct(size_bytes="14", bit_numbering = "lsb0", endian = "msb")]
+// struct EthernetHeader {
+//     #[packed_field(bytes="8:13")]  dst: [u8;6],
+//     #[packed_field(bytes="2:7")]  src: [u8;6],
+//     // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
+// //     #[packed_field(bytes="2:5")]  vlan: [u8;4],
+//     #[packed_field(bytes="0:1")]  ty: u16,
+// }
+// #[derive(PackedStruct, Clone, Debug)]
+// #[packed_struct(size_bytes="4", bit_numbering = "lsb0", endian = "msb")]
+// struct EthernetFooter {
+//     #[packed_field(bytes="0:3")]  checksum: u32,
+// }

@@ -6,10 +6,9 @@ use std::{
 use core::ops::{Deref, DerefMut};
 use core::time::Duration;
 use tokio::sync::Notify;
-use packed_struct::prelude::*;
 use num_enum::TryFromPrimitive;
-use crate::socket::*;
-use crate::data::{PduData, ByteArray, PackingResult};
+use crate::{socket::*, data::{PackingResult, BitOrdering, PackingError}};
+use crate::data::{PduData};
 
 /**
     low level ethercat functions, with no compile-time checking of the communication states
@@ -117,7 +116,7 @@ impl<S: EthercatSocket> RawMaster<S> {
             println!("prepare to send {:?}", command);
 
             // sending the buffer if necessary
-            while self.ethercat_capacity < state.send.len() + data.len() + <PduHeader as PackedStruct>::ByteArray::len() {
+            while self.ethercat_capacity < state.send.len() + data.len() + <PduHeader>::PACKED_SIZE {
                 println!("no more space, waiting");
                 self.send.notify_one();
                 state = self.sent.wait(state).unwrap();
@@ -201,7 +200,7 @@ impl<S: EthercatSocket> RawMaster<S> {
                 unsafe {&mut *(storage as *const PduStorage as *mut PduStorage)}
                     .ready = true;
             }
-            frame = &frame[<PduHeader as PackedStruct>::ByteArray::len() + header.len().value() as usize ..];
+            frame = &frame[<PduHeader>::PACKED_SIZE + header.len().value() as usize ..];
             if ! header.next() {break}
             if frame.len() == 0 {todo!("raise frame error")}
         }
@@ -217,8 +216,8 @@ impl<S: EthercatSocket> RawMaster<S> {
         let frame = &receive[..size];
 
         let header = EthercatHeader::unpack_from_slice(frame).unwrap();
-        let content = &frame[<EthercatHeader as PackedStruct>::ByteArray::len() ..];
-        assert_eq!(header.len as usize + <EthercatHeader as PackedStruct>::ByteArray::len(), frame.len());
+        let content = &frame[<EthercatHeader>::PACKED_SIZE ..];
+        assert_eq!(header.len as usize + <EthercatHeader>::PACKED_SIZE, frame.len());
         match header.ty {
             EthercatType::PDU => self.pdu_receive(
                                     self.pdu_state.lock().unwrap().deref_mut(),
@@ -281,16 +280,17 @@ struct EthercatHeader {
     /// frame type
     ty: EthercatType,  // 4 bits
 }
-impl PackedStruct for EthercatHeader {
-    type ByteArray = [u8; 2];
-    fn pack(&self) -> PackingResult<Self::ByteArray> {
+impl PduData for EthercatHeader {
+    // type ByteArray = [u8; 2];
+    const PACKED_SIZE: usize = 16;
+    fn pack(&self, &[u8]) -> PackingResult<()> {
         if self.len & 0xf000 != 0
             {return Err(PackingError::InvalidValue)}
         Ok((   (self.len & 0x0fff)
             | ((self.ty as u8 as u16) << 12)
           ).to_le_bytes())
     }
-    fn unpack(src: &Self::ByteArray) -> PackingResult<Self> {
+    fn unpack(src: &[u8]) -> PackingResult<Self> {
         let n = u16::from_le_bytes(src.clone());
         let len = n & 0x0fff;
         let ty = match EthercatType::try_from((n >> 12) as u8) {
@@ -302,7 +302,7 @@ impl PackedStruct for EthercatHeader {
 }
 
 /// type of ethercat frame
-#[derive(PrimitiveEnum_u8, TryFromPrimitive, Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(TryFromPrimitive, Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
 enum EthercatType {
     PDU = 0x1,
@@ -325,8 +325,7 @@ enum EthercatType {
 // }
 use bilge::prelude::*;
 
-#[bitsize(80)]
-#[derive(FromBits, DebugBits, Clone, Default)]
+#[derive(Clone, Default)]
 struct PduHeader {
     command: u8,
     token: u8,
@@ -338,12 +337,25 @@ struct PduHeader {
     next: bool,
     interrupt: u16,
 }
-impl PackedStruct for PduHeader {
-    type ByteArray = [u8; 10];
-    fn pack(&self) -> PackingResult<Self::ByteArray> {
-        Ok(unsafe {std::mem::transmute::<&Self, &Self::ByteArray>(self)}.clone())
+
+impl PduData for PduHeader {
+    const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
+    const PACKED_SIZE: usize = 80;
+
+    fn pack_slice(&self, data : &mut [u8], bitoffset: u8, bitsize: usize, bitordering: BitOrdering) -> PackingResult<()> {
+        self.command.pack(self);
+        self.token.pack(self);
+        Ok(());
     }
-    fn unpack(src: &Self::ByteArray) -> PackingResult<Self> {
+
+    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: BitOrdering) -> PackingResult<Self> {
+
+    }
+
+
+    fn pack(&self) -> PackingResult<Self> {
+        Ok(unsafe {std::mem::transmute::<&Self, &Self::ByteArray>(self)}.clone())}
+    fn unpack(src: &Self) -> PackingResult<Self> {
         Ok(unsafe {std::mem::transmute::<&Self::ByteArray, &Self>(src)}.clone())
     }
 }
