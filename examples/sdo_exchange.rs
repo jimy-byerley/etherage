@@ -29,41 +29,46 @@ async fn main() -> std::io::Result<()> {
     
     let slave = 1;
     
-    let received = master.fprd(slave, registers::al::response).await.one();
-    if received.error() {
-        let received = master.fprd(slave, registers::al::error).await.one();
-        panic!("error on before change: {:?}", received);
-    }
-    
-    // configure sync manager
-    master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
-        let mut config = registers::SyncManagerChannel::default();
-        config.set_address(registers::mailbox_buffers[0].byte as u16);
-        config.set_length(registers::mailbox_buffers[0].len as u16);
-//         config.set_address(0x1000);
-//         config.set_length(0x80);
-        config.set_mode(registers::SyncMode::Mailbox);
-        config.set_direction(registers::SyncDirection::Write);
-        config.set_dls_user_event(true);
-        config.set_ec_event(true);
-        config.set_enable(true);
-        config
-    }).await.one();
-    
-    
-    master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
-        let mut config = registers::SyncManagerChannel::default();
-        config.set_address(registers::mailbox_buffers[1].byte as u16);
-        config.set_length(registers::mailbox_buffers[1].len as u16);
-//         config.set_address(0x1080);
-//         config.set_length(0x80);
-        config.set_mode(registers::SyncMode::Mailbox);
-        config.set_direction(registers::SyncDirection::Read);
-        config.set_dls_user_event(true);
-        config.set_ec_event(true);
-        config.set_enable(true);
-        config
-    }).await.one();
+//     let received = master.fprd(slave, registers::al::response).await.one();
+//     if received.error() {
+//         let received = master.fprd(slave, registers::al::error).await.one();
+//         panic!("error on before change: {:?}", received);
+//     }
+//     
+//     // configure sync manager
+//     master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
+//         let mut config = registers::SyncManagerChannel::default();
+//         config.set_address(registers::mailbox_buffers[0].byte as u16);
+//         config.set_length(registers::mailbox_buffers[0].len as u16);
+// //         config.set_address(0x1000);
+// //         config.set_length(0x80);
+//         config.set_mode(registers::SyncMode::Mailbox);
+//         config.set_direction(registers::SyncDirection::Write);
+//         config.set_dls_user_event(true);
+//         config.set_ec_event(true);
+//         config.set_enable(true);
+//         config
+//     }).await.one();
+//     
+//     
+//     master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
+//         let mut config = registers::SyncManagerChannel::default();
+//         config.set_address(registers::mailbox_buffers[1].byte as u16);
+//         config.set_length(registers::mailbox_buffers[1].len as u16);
+// //         config.set_address(0x1080);
+// //         config.set_length(0x80);
+//         config.set_mode(registers::SyncMode::Mailbox);
+//         config.set_direction(registers::SyncDirection::Read);
+//         config.set_dls_user_event(true);
+//         config.set_ec_event(true);
+//         config.set_enable(true);
+//         config
+//     }).await.one();
+
+
+    // initialize mailbox
+    let mut mailbox = Mailbox::new(&master, 1, 0x1000 .. 0x1103, 0x1104 .. 0x1200).await;
+    let mut can = Can::new(&mut mailbox);
         
     master.fpwr(slave, registers::sii::access, {
         let mut config = registers::SiiAccess::default();
@@ -90,15 +95,13 @@ async fn main() -> std::io::Result<()> {
         }
         if received.value.state() == registers::AlState::PreOperational  {break}
     }
-
-    // initialize mailbox
-    let mut mailbox = Mailbox::new(&master, 1);
-    let mut can = Can::new(&mut mailbox);
     
     let sdo = Sdo::<u16>::complete(0x6041);
     
     // test read/write
+    println!("read");
     let received = can.sdo_read(&sdo, u2::new(1)).await;
+    println!("write");
     can.sdo_write(&sdo, u2::new(1), received).await;
     
 //     // test simultaneous read/write

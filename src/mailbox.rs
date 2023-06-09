@@ -1,11 +1,15 @@
 use crate::{
 	rawmaster::{RawMaster, PduCommand},
 	registers,
-    data::{self, PduData, Storage, Cursor},
+    data::{self, PduData, Field, Storage, Cursor},
 	};
 use core::ops::Range;
 use bilge::prelude::*;
 
+
+/// arbitrary maximum size for a mailbox buffer
+/// the user may select a smaller size, especially if the mailbox is used at the same time as buffered sync managers
+const MAILBOX_MAX_SIZE: usize = 1024;
 
 /**
     implementation of communication with a slave's mailbox
@@ -16,56 +20,55 @@ pub struct Mailbox<'a> {
     master: &'a RawMaster,
 	slave: u16,
 	count: u8,
+	read: Range<u16>,
+	write: Range<u16>,
 }
 
-impl<'b> Mailbox<'b> {	
-    pub fn new(master: &'b RawMaster, slave: u16) -> Self {
+impl<'b> Mailbox<'b> {
+    pub async fn new(master: &'b RawMaster, slave: u16, write: Range<u16>, read: Range<u16>) -> Mailbox<'b> {
+        // check that there is not previous error
+        if master.fprd(slave, registers::al::response).await.one().error() {
+            panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
+        }
+        
+        // configure sync manager
+        futures::join!(
+            async { master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
+                let mut config = registers::SyncManagerChannel::default();
+                config.set_address(write.start);
+                config.set_length(write.end - write.start);
+                config.set_mode(registers::SyncMode::Mailbox);
+                config.set_direction(registers::SyncDirection::Write);
+                config.set_dls_user_event(true);
+                config.set_ec_event(true);
+                config.set_enable(true);
+                config
+            }).await.one() },
+            
+            async { master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
+                let mut config = registers::SyncManagerChannel::default();
+                config.set_address(read.start);
+                config.set_length(read.end - read.start);
+                config.set_mode(registers::SyncMode::Mailbox);
+                config.set_direction(registers::SyncDirection::Read);
+                config.set_dls_user_event(true);
+                config.set_ec_event(true);
+                config.set_enable(true);
+                config
+            }).await.one() },
+        );
+        
+        assert!(usize::from(read.end - read.start) < MAILBOX_MAX_SIZE);
+        assert!(usize::from(write.end - write.start) < MAILBOX_MAX_SIZE);
+        
         Self {
             master,
             slave,
             count: 0,
+            read,
+            write,
         }
     }
-//     pub async fn new(master: &'b RawMaster, slave: u16, write: Range<u16>, read: Range<u16>) -> Self {
-//         // check that there is not previous error
-//         if master.fprd(slave, registers::al::response).await.one().error() {
-//             panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
-//         }
-//         
-//         // configure sync manager
-//         let writing = master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
-//             let mut config = registers::SyncManagerChannel::default();
-//             config.set_address(write.start);
-//             config.set_length(write.end - write.start);
-//             config.set_mode(registers::SyncMode::Mailbox);
-//             config.set_direction(registers::SyncDirection::Write);
-//             config.set_dls_user_event(true);
-//             config.set_ec_event(true);
-//             config.set_enable(true);
-//             config
-//         });
-//         
-//         master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
-//             let mut config = registers::SyncManagerChannel::default();
-//             config.set_address(read.start);
-//             config.set_length(read.end - read.start);
-//             config.set_mode(registers::SyncMode::Mailbox);
-//             config.set_direction(registers::SyncDirection::Read);
-//             config.set_dls_user_event(true);
-//             config.set_ec_event(true);
-//             config.set_enable(true);
-//             config
-//         });
-//         
-//         writing.await.one();
-//         reading.await.one();
-//     
-//         Self {
-//             master,
-//             slave,
-//             count: 0,
-//         }
-//     }
     pub async fn poll(&mut self) -> bool {todo!()}
     pub async fn available(&mut self) -> usize {todo!()}
     
@@ -74,8 +77,7 @@ impl<'b> Mailbox<'b> {
     /// this function does not return the data size read, so the read frame should provide a length
 	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
-		let mailbox_buffer = &registers::mailbox_buffers[1];
-        let mut allocated = [0; registers::mailbox_buffers[1].len];
+        let mut allocated = [0; MAILBOX_MAX_SIZE];
         
 		// wait for data
 		let mut state = loop {
@@ -84,11 +86,13 @@ impl<'b> Mailbox<'b> {
             break state.value
         };
         // the destination data is expected to be big enough for the data, so we will read only this data size
-        let range = .. allocated.len().min(data.len() + MailboxHeader::packed_size());
+        let range = .. allocated.len()
+                        .min(data.len() + MailboxHeader::packed_size())
+                        .min((self.read.end - self.read.start) as usize);
         let buffer = &mut allocated[range];
 		// read the mailbox content
 		loop {
-            if self.master.pdu(PduCommand::FPRD, self.slave, mailbox_buffer.byte as u16, buffer).await == 1 
+            if self.master.pdu(PduCommand::FPRD, self.slave, self.read.start, buffer).await == 1 
                 {break}
             
             // trigger repeat
@@ -109,16 +113,15 @@ impl<'b> Mailbox<'b> {
         assert_eq!(u8::from(header.count()), self.count);
         received.write(frame.read(header.length() as usize).unwrap()).unwrap();
 		
-		// TODO wait for mailbox to become ready again ?
-		
 		received.finish()
 	}
 	/// write the given frame in the mailbox
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
 		let mailbox_control = registers::sync_manager::interface.mailbox_write();
-		let mailbox_buffer = &registers::mailbox_buffers[0];
-        let mut buffer = [0; registers::mailbox_buffers[0].len];
-		
+        let mailbox_size = usize::from(self.write.end - self.write.start);
+        let mut allocated = [0; MAILBOX_MAX_SIZE];
+        let buffer = &mut allocated[.. mailbox_size];
+        
         self.count = (self.count % 6)+1;
         
         let mut frame = Cursor::new(buffer.as_mut());
@@ -131,8 +134,7 @@ impl<'b> Mailbox<'b> {
 				u3::new(self.count),
 			)).unwrap();
         frame.write(data).unwrap();
-//         let sent = frame.finish();
-        let sent = &mut buffer[.. 0x100];
+        let sent = frame.finish();
         
 		// wait for mailbox to be empty
 		loop {
@@ -141,10 +143,23 @@ impl<'b> Mailbox<'b> {
             break
         }
         // write data
-        while ! self.master.pdu(PduCommand::FPWR, self.slave, mailbox_buffer.byte as u16, sent).await == 1 
-            {}
-		
-		// TODO wait for mailbox to become ready again ?
+//         if mailbox_size - data.len() > 32 {
+//             loop {
+//                 // write beginning of buffer and last byte for slave triggering
+//                 let (writing, end) = futures::join!(
+//                     self.master.pdu(PduCommand::FPWR, self.slave, self.write.start, sent),
+//                     // the mailbox processing is done once the last mailbox byte is written, so write the last byte alone
+//                     self.master.fpwr(self.slave, Field::<u8>::simple(usize::from(self.write.end)-1), 0),
+//                     );
+//                 if end.answers == 1 && writing == 1
+//                     {break}
+//             }
+//         }
+//         else {
+            // write the full buffer
+            while self.master.pdu(PduCommand::FPWR, self.slave, self.write.start, buffer.as_mut()).await != 1
+                {}
+//         }
 	}
 }
 

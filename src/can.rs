@@ -147,11 +147,24 @@ impl<'a> Can<'a> {
 //                             (MailboxType::Can, priority, &mut buffer);
             {
                 let mut frame = Cursor::new(self.mailbox.read(MailboxType::Can, priority, &mut buffer).await);
-                assert_eq!(frame.unpack::<CoeHeader>().unwrap().service(), CanService::SdoResponse);
-                let header = frame.unpack::<SdoHeader>().unwrap();
-                assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::Download);
-                assert_eq!(header.index(), sdo.index);
-                assert_eq!(header.sub(), sdo.sub.unwrap());
+                
+                match frame.unpack::<CoeHeader>().unwrap().service() {
+                    CanService::SdoResponse => {
+                        let header = frame.unpack::<SdoHeader>().unwrap();
+                        assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), SdoCommandResponse::Download);
+                        assert_eq!(header.index(), sdo.index);
+                        assert_eq!(header.sub(), sdo.sub.unwrap());
+                        },
+                    CanService::SdoRequest => {
+                        let header = frame.unpack::<SdoHeader>().unwrap();
+                        assert_eq!(SdoCommandRequest::try_from(header.command()).unwrap(), SdoCommandRequest::Abort);
+                        assert_eq!(header.index(), sdo.index);
+                        assert_eq!(header.sub(), sdo.sub.unwrap());
+                        let code = frame.unpack::<u32>().unwrap();
+                        panic!("transfer aborted: {:x}", code);
+                        },
+                    _ => {panic!("should not be received")},
+                }
             }
 		}
 		else {
@@ -225,6 +238,41 @@ impl<'a> Can<'a> {
         // TODO: error propagation instead of asserts
         // TODO send SdoCommand::Abort in case any error
 	}
+	
+// 	fn sdo_response_check<T>(frame: &mut Cursor<[u8]>, sdo: &Sdo<T>, expected: SdoCommandResponse) -> Result<(), EthercatError<SdoAbortCode>> {
+//         match frame.unpack::<CoeHeader>().unwrap().service() {
+//             CanService::SdoResponse => {
+//                 let header = frame.unpack::<SdoHeader>().unwrap();
+//                 assert_eq!(SdoCommandResponse::try_from(header.command()).unwrap(), expected);
+//                 assert_eq!(header.index(), sdo.index);
+//                 assert_eq!(header.sub(), sdo.sub.unwrap());
+//                 Ok(())
+//                 },
+//             CanService::SdoRequest => {
+//                 let header = frame.unpack::<SdoHeader>().unwrap();
+//                 if SdoCommandRequest::try_from(header.command()).unwrap()  != SdoCommandRequest::Abort
+//                     {return Err(EthercatError::Protocol("slave answered a COE request")}
+//                 if header.index() != sdo.index        {return Err(EthercatError::Protocol("slave answered about wrong item"))}
+//                 if header.sub() != sdo.sub.unwrap()   {return Err(EthercatError::Protocol("slave answered about wrong subitem"))}
+//                 Err(EthercatError::Slave(frame.unpack::<u32>().unwrap()))
+//                 },
+//             _ => {return Err(EthercatError::Protocol("unexpected COE service")},
+//         }
+// 	}
+// 	
+// 	fn check_segment(frame: &mut Cursor<[u8]>) -> Result<(), SdoAbortCode> {
+//         match frame.unpack::<CoeHeader>().unwrap().service() {
+//             CanService::SdoResponse => Ok(()),
+//             CanService::SdoRequest => {
+//                 let header = frame.unpack::<SdoHeader>().unwrap();
+//                 assert_eq!(SdoCommandRequest::try_from(header.command()).unwrap(), SdoCommandRequest::Abort);
+//                 assert_eq!(header.index(), sdo.index);
+//                 assert_eq!(header.sub(), sdo.sub.unwrap());
+//                 Err(frame.unpack::<u32>().unwrap())
+//                 },
+//             _ => {panic!("should not be received")},
+//         }
+// 	}
 	
 	pub fn pdo_read() {todo!()}
 	pub fn pdo_write() {todo!()}
@@ -369,75 +417,100 @@ enum SdoCommandResponse {
 }
 data::bilge_pdudata!(SdoCommandResponse, u3);
 
+#[bitsize(32)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+enum SdoAbortCode {
+    /// Toggle bit not changed
+    BadToggle = 0x05_03_00_00,
+    /// SDO protocol timeout
+    Timeout = 0x05_04_00_00,
+    /// Client/Server command specifier not valid or unknown
+    UnsupportedCommand = 0x05_04_00_01,
+    /// Out of memory
+    OufOfMemory = 0x05_04_00_05,
+    /// Unsupported access to an object
+    UnsupportedAccess = 0x06_01_00_00,
+    /// Attempt to read to a write only object
+    WriteOnly = 0x06_01_00_01,
+    /// Attempt to write to a read only object
+    ReadOnly = 0x06_01_00_02,
+    /// Subindex cannot be written, SI0 must be 0 for write access
+    WriteError = 0x06_01_00_03,
+    /// SDO Complete access not supported for objects of variable length such as ENUM object types
+    VariableLength = 0x06_01_00_04,
+    /// Object length exceeds mailbox size
+    ObjectTooBig = 0x06_01_00_05,
+    /// Object mapped to RxPDO, SDO Download blocked
+    LockedByPdo = 0x06_01_00_06,
+    /// The object does not exist in the object directory
+    InvalidIndex = 0x06_02_00_00,
+    /// The object can not be mapped into the PDO
+    CannotMap = 0x06_04_00_41,
+    /// The number and length of the objects to be mapped would exceed the PDO length
+    PdoTooSmall = 0x06_04_00_42,
+    /// General parameter incompatibility reason
+    IncompatibleParameter = 0x06_04_00_43,
+    /// General internal incompatibility in the device
+    IncompatibleDevice = 0x06_04_00_47,
+    /// Access failed due to a hardware error
+    HardwareError = 0x06_06_00_00,
+    /// Data type does not match, length of service parameter does not match
+    InvalidLength = 0x06_07_00_10,
+    /// Data type does not match, length of service parameter too high
+    ServiceTooBig = 0x06_07_00_12,
+    /// Data type does not match, length of service parameter too low
+    ServiceTooSmall = 0x06_07_00_13,
+    /// Subindex does not exist
+    InvalidSubIndex = 0x06_09_00_11,
+    /// Value range of parameter exceeded (only for write access)
+    ValueOutOfRange = 0x06_09_00_30,
+    /// Value of parameter written too high
+    ValueTooHigh = 0x06_09_00_31,
+    /// Value of parameter written too low
+    ValueTooLow = 0x06_09_00_32,
+    /// Maximum value is less than minimum value
+    InvalidRange = 0x06_09_00_36,
+    /// General error
+    GeneralError = 0x08_00_00_00,
+    /** 
+    Data cannot be transferred or stored to the application
+    
+    NOTE: This is the general Abort Code in case no further detail on the reason can determined. It is recommended to use one of the more detailed Abort Codes (0x08000021, 0x08000022)
+    */
+    Refused = 0x08_00_00_20,
+    /** 
+    Data cannot be transferred or stored to the application because of local control
+    
+    NOTE: “local control” means an application specific reason. It does not mean the
+    ESM-specific control
+    */
+    ApplicationRefused = 0x08_00_00_21,
+    /** 
+    Data cannot be transferred or stored to the application because of the present device state
+    
+    NOTE: “device state” means the ESM state
+    */
+    StateRefused = 0x08_00_00_22,
+    /// Object dictionary dynamic generation fails or no object dictionary is present
+    DictionnaryEmpty = 0x08_00_00_23,
+}
 
-// enum SdoAbortCode {
-//     /// Toggle bit not changed
-//     0x05_03_00_00,
-//     /// SDO protocol timeout
-//     0x05_04_00_00,
-//     /// Client/Server command specifier not valid or unknown
-//     0x05_04_00_01,
-//     /// Out of memory
-//     0x05_04_00_05,
-//     /// Unsupported access to an object
-//     0x06_01_00_00,
-//     /// Attempt to read to a write only object
-//     0x06_01_00_01,
-//     /// Attempt to write to a read only object
-//     0x06_01_00_02,
-//     /// Subindex cannot be written, SI0 must be 0 for write access
-//     0x06_01_00_03,
-//     /// SDO Complete access not supported for objects of variable length such as ENUMobject types
-// 
-//     0x06_01_00_04,
-//     /// Object length exceeds mailbox size
-//     0x06_01_00_05,
-//     /// Object mapped to RxPDO, SDO Download blocked
-//     0x06_01_00_06,
-//     /// The object does not exist in the object directory
-//     0x06_02_00_00,
-//     /// The object can not be mapped into the PDO
-//     0x06_04_00_41,
-//     /// The number and length of the objects to be mapped would exceed the PDO length
-//     0x06_04_00_42,
-//     /// General parameter incompatibility reason
-//     0x06_04_00_43,
-//     /// General internal incompatibility in the device
-//     0x06_04_00_47,
-//     /// Access failed due to a hardware error
-//     0x06_06_00_00,
-//     /// Data type does not match, length of service parameter does not match
-//     0x06_07_00_10,
-//     /// Data type does not match, length of service parameter too high
-//     0x06_07_00_12,
-//     /// Data type does not match, length of service parameter too low
-//     0x06_07_00_13,
-//     /// Subindex does not exist
-//     0x06_09_00_11,
-//     /// Value range of parameter exceeded (only for write access)
-//     0x06_09_00_30,
-//     /// Value of parameter written too high
-//     0x06_09_00_31,
-//     /// Value of parameter written too low
-//     0x06_09_00_32,
-//     /// Maximum value is less than minimum value
-//     0x06_09_00_36,
-//     /// General error
-//     0x08_00_00_00,
-//     /// Data cannot be transferred or stored to the applicationNOTE: This is the general Abort Code in case no further detail on the reason can determined. It is recommended to use one of the more detailed Abort Codes (0x08000021, 0x08000022)
-// 
-//     0x08_00_00_20,
-//     /** Data cannot be transferred or stored to the application because of local control
-//     NOTE: “local control” means an application specific reason. It does not mean the
-//     ESM-specific control
-//     */
-//     0x08_00_00_21,
-//     /** Data cannot be transferred or stored to the application because of the present
-//     device state
-//     NOTE: “device state” means the ESM state
-//     */
-//     0x08_00_00_22,
-//     /// Object dictionary dynamic generation fails or no object dictionary is present
-//     0x08_00_00_23,
-// }
+impl SdoAbortCode {
+    pub fn object_related(self) -> bool   {u32::from(self) >> 24 == 0x06}
+    pub fn subitem_related(self) -> bool  {u32::from(self) >> 16 == 0x06_09}
+    pub fn mapping_related(self) -> bool  {u32::from(self) >> 16 == 0x06_04}
+    pub fn device_related(self) -> bool   {u32::from(self) >> 24 == 0x08}
+    pub fn protocol_related(self) -> bool {u32::from(self) >> 24 == 0x05}
+}
 
+/// general object reporting an unexpected result regarding ethercat communication
+pub enum EthercatError<T> {
+    /// error caused by communication support
+    Io(std::io::Error),
+    /// error reported by a slave, its type depend on the operation returning this error
+    Slave(T),
+    /// error reported by the master
+    Master(&'static str),
+    /// error detected by the master in the ethercat communication
+    Protocol(&'static str),
+}
