@@ -279,7 +279,7 @@ impl<'a> Cursor<&'a [u8]> {
         Ok(&self.data[start .. self.position])
     }
     /// return all the remaining bytes after current position, but does not advance the cursor
-    pub fn remain(&self) -> &'_ [u8] {
+    pub fn remain(&self) -> &'a [u8] {
         &self.data[self.position ..]
     }
     /// consume self and return a slice until current position
@@ -314,7 +314,7 @@ impl<'a> Cursor<&'a mut [u8]> {
         Ok(())
     }
     /// return all the remaining bytes after current position, but does not advance the cursor
-    pub fn remain<'b>(&'b mut self) -> &'_ mut [u8] {
+    pub fn remain(&mut self) -> &'_ mut [u8] {
         &mut self.data[self.position ..]
     }
     /// consume self and return a slice until current position
