@@ -4,6 +4,8 @@ use super::EthercatSocket;
 
 /**
     UDP socket with fixed port, allowing ethercat com through a regular switch
+    
+    Ethercat masters and slaves are IP-addressed, so there can be any number of masters and slaves on the network.
 */
 pub struct UdpSocket {
     socket: std::net::UdpSocket,

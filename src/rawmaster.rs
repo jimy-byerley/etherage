@@ -1,3 +1,9 @@
+/*!
+	low level ethercat communication functions.
+	
+	It wraps an ethercat socket to schedule, send and receive ethercat frames containing data or commands.
+*/
+
 use std::{
     time::Instant,
     collections::HashMap,
@@ -15,13 +21,36 @@ use crate::{
     data::{self, Field, PduData, Storage, Cursor},
     };
 
+
+/// maximum frame size, currently limited to the size tolerated by its header (content size coded with 11 bits)
 const MAX_ETHERCAT_FRAME: usize = 2050;
 
 /**
-    low level ethercat functions, with no compile-time checking of the communication states
-    this struct has no notion of slave, it is just executing basic commands
+    low level ethercat communication functions, with no notion of slave.
     
-    genericity allows to use a UDP socket or raw ethernet socket
+    genericity allows to use a UDP socket or raw ethernet socket, see [crate::socket] for more details.    
+    
+    This struct does not do any compile-time checking of the communication states on the slaves, and has no notion of slave, it is just executing the basic commands.
+    
+    The ethercat low level is all about PDUs: an ethercat frame intended for slaves is a PDU frame and PDU frames contain any number of PDU (Process Data Unit), each PDU is a command, acting on one of the 2 memories types:
+   
+   - **Physical Memory** (aka. registers)
+    
+		each slave has its own physical memory, commands for physical memory (`*P*`, `B*`) are addressing a specific slave, or combining the memory reads from all slaves
+		
+		The physical memory is divided into registers declared in [crate::registers]
+	
+	- **Logical Memory** (aka. fieldbus memory)
+	
+		this memory doesn't physically exist anywhere, but can be read/write using `L*`  commands with each slave contributing to the record according to the configuration set before.
+		
+		The logical memory is organized by the mapping set in the FMMU (Fieldbust Memory Management Unit)
+		
+	See variants of [PduCommand] for more details.
+	
+	The following scheme shows an overview of the features and memory areas of every ethercat slave. Memory copy operations are represented as plain arrows regardless of the real sequence of commands needed to perform the operation. *RT* flag marks what can be acheived in realtime, and what can not.
+	
+	![ethercat sub protocols](/etherage/schemes/ethercat-protocols.svg)
 */
 pub struct RawMaster {
 	/// (µs) acceptable delay time before sending buffered PDUs

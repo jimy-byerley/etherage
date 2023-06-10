@@ -1,19 +1,21 @@
 /*!
     Etherage is a crate implementing an ethercat master, with an API as close as possible to the concepts of the ethercat protocol.
     
-    It mainly features
+    ## It mainly features
     
     - [Master] for protocol-safe and memory-safe access to the functions of the master
     - [Slave] for protocol-safe and memory-safe access to the functions of slaves
     - [RawMaster] and other structures based on it for memory-safe but protocol-unsafe access to lower level features of the protocol
     
-    complete feature list:
+    ## Complete feature list
     
     - [x] master over different sockets
         + [x] raw ethernet
         + [x] UDP
-    - [x] PDU commands
-    - [x] registers access
+    - [ ] minimalistic features
+        - [x] PDU commands
+        - [x] registers access
+        - [ ] slave information access
     - [x] mailbox
         + generic messaging
         + [x] COE
@@ -38,7 +40,7 @@ pub mod mailbox;
 pub mod sdo;
 pub mod can;
 pub mod master;
-// mod slave;
+// pub mod slave;
 
 
 pub use crate::data::{PduData, Field, BitField};

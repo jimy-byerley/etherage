@@ -8,7 +8,7 @@ use super::EthercatSocket;
 /**
     Raw socket allowing direct ethercat com, but only one segment on the ethernet network
 
-    Raw sockets are not implemented in std::net, so here is an implementation found in `smoltcp` and `ethercrab`.
+    Raw sockets are not implemented in [std::net], so here is an implementation found in `smoltcp` and `ethercrab`.
     This implementation is unix-specific
 */
 #[derive(Debug)]

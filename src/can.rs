@@ -1,3 +1,5 @@
+//! implementation of CoE (Canopen Over Ethercat)
+
 use crate::{
 	mailbox::{Mailbox, MailboxType},
 	registers,
@@ -25,7 +27,25 @@ const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
 /**
     implementation of CoE (Canopen Over Ethercat)
     
-    It works exactly as in a Can bus, except each of its frame is encapsulated in a mailbox frame
+    It works exactly as in a Can bus, except each of its frame is encapsulated in a mailbox frame, and PDOs access is therefore not realtime.
+    For realtime PDOs exchange, they must be mapped to the logical memory using a SM (Sync Manager) channel.
+    
+    Canopen protocol exposes 2 data structures:
+    
+    - a dictionnary of simple values or single level structures, for non-realtime access
+    
+        these are named SDO (Service Data Object).
+        See [crate::sdo] for more details
+    
+    - several buffers gathering dictionnary objects for realtime access
+    
+        these are named PDO (Process Data Object)
+        
+    The following shows how the mapping of SDOs to PDOs is done, how it extends to logical memory in the case of CoE, and how the master interacts with each memory area.
+    
+    ![CoE mapping](/etherage/schemes/coe-mapping.svg)
+    
+    This scheme comes in addition to the slave memory areas described in [crate::rawmaster::RawMaster], for slaves supporting CoE.
 */
 pub struct Can<'a> {
     mailbox: &'a mut Mailbox<'a>,
@@ -34,7 +54,7 @@ impl<'a> Can<'a> {
     pub fn new(mailbox: &'a mut Mailbox<'a>) -> Can<'a> {
         Can {mailbox}
     }
-    /// read and SDO, any size
+    /// read an SDO, any size
 	pub async fn sdo_read<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2) -> T   {
 		let mut data = T::Packed::uninit();
         let mut buffer = [0; MAILBOX_MAX_SIZE];
@@ -112,7 +132,7 @@ impl<'a> Can<'a> {
         // TODO: error propagation instead of asserts
         // TODO send SdoCommand::Abort in case any error
 	}
-	/// write SDO, any size
+	/// write an SDO, any size
 	pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)  {		
         let mut buffer = [0; MAILBOX_MAX_SIZE];
 		if T::Packed::LEN < EXPEDITED_MAX_SIZE {

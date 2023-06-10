@@ -1,3 +1,5 @@
+//! implementation of communication with a slave's mailbox
+
 use crate::{
 	rawmaster::{RawMaster, PduCommand},
 	registers,
@@ -14,6 +16,10 @@ const MAILBOX_MAX_SIZE: usize = 1024;
 /**
     implementation of communication with a slave's mailbox
     
+    The mailbox is a mean for ethercat slaves to implement non-minimalistic ethercat features, and features that do not fit in registers (because they rely on imperative designs, or variable size data ...).
+    
+    The mailbox is an optional feature of an ethercat slave.
+    
     Following ETG.1000.4 6.7.1 it is using the first 2 sync managers in handshake mode. Buffered mode is not meant for mailbox.
 */
 pub struct Mailbox<'a> {
@@ -25,6 +31,7 @@ pub struct Mailbox<'a> {
 }
 
 impl<'b> Mailbox<'b> {
+    /// condigure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
     pub async fn new(master: &'b RawMaster, slave: u16, write: Range<u16>, read: Range<u16>) -> Mailbox<'b> {
         // check that there is not previous error
         if master.fprd(slave, registers::al::response).await.one().error() {
@@ -72,12 +79,18 @@ impl<'b> Mailbox<'b> {
     pub async fn poll(&mut self) -> bool {todo!()}
     pub async fn available(&mut self) -> usize {todo!()}
     
-	/// read the frame currently in the mailbox, wait for it if not already present
-    /// `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
-    /// this function does not return the data size read, so the read frame should provide a length
+	/** 
+        read the frame currently in the mailbox, wait for it if not already present
+	
+        `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
+    
+        return the slice of data received.
+    */
 	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
+        
+        self.count = (self.count % 6)+1;
         
 		// wait for data
 		let mut state = loop {
@@ -115,7 +128,9 @@ impl<'b> Mailbox<'b> {
 		
 		received.finish()
 	}
-	/// write the given frame in the mailbox
+	/**
+        write the given frame in the mailbox, wait for it first if already busy
+    */
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
 		let mailbox_control = registers::sync_manager::interface.mailbox_write();
         let mailbox_size = usize::from(self.write.end - self.write.start);
@@ -143,6 +158,8 @@ impl<'b> Mailbox<'b> {
             break
         }
         // write data
+        // we are forced to write the whole buffer (even if much bigger than data) because the slave will notice the data sent only if writing the complete buffer
+        // and writing the last byte instead does not work trick it.
 //         if mailbox_size - data.len() > 32 {
 //             loop {
 //                 // write beginning of buffer and last byte for slave triggering
