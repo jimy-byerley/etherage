@@ -152,7 +152,7 @@ impl RawMaster {
         self.exchange(SlaveAddress::Logical, address, data).await
 	}
 	
-	/// maps to a *rd command
+	/// maps to a `*RD` PDU command
 	pub async fn read<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>) -> PduAnswer<T> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BRD, 0),
@@ -167,7 +167,7 @@ impl RawMaster {
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
     }
-	/// maps to a *wr command
+	/// maps to a `*WR` PDU command
 	pub async fn write<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<()> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BWR, 0),
@@ -182,7 +182,7 @@ impl RawMaster {
 			value: (),
 			}
 	}
-	/// maps to a *rw command
+	/// maps to a `*RW` PDU command
 	pub async fn exchange<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<T> {
         let (command, slave) = match slave {
             SlaveAddress::Broadcast => (PduCommand::BRW, 0),
@@ -198,9 +198,13 @@ impl RawMaster {
 			}
 	}
 	
-	/// send a PDU on the ethercat bus
-	/// the PDU is buffered with more PDUs if possible
-	/// returns the number of slaves who processed the command
+	/**
+        send a PDU command on the ethercat bus
+	
+        the PDU is buffered with more PDUs if possible
+        
+        returns the number of slaves that processed the command
+    */
 	pub async fn pdu(&self, command: PduCommand, slave_address: u16, memory_address: u16, data: &mut [u8]) -> u16 {
         let token;
         let (ready, _finisher) = {
@@ -307,8 +311,11 @@ impl RawMaster {
         self.received.notify_waiters();
     }
 	
-	/// this is the socket reception handler
-	/// it receives and process one datagram, it may be called in loop with no particular timer since the sockets are assumed blocking
+	/**
+        this is the socket reception handler
+	
+        it receives and process one datagram, it may be called in loop with no particular timer since the sockets are assumed blocking
+    */
 	pub fn receive(&self) {
         let mut receive = self.ethercat_receive.lock().unwrap();
         let size = self.socket.receive(receive.deref_mut()).unwrap();
