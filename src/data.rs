@@ -615,6 +615,18 @@ impl<T: PduData> Field<T> {
         }
     }
 
+    /// Comsusme a Bitfield struct and perform a transmutation into Field
+    pub fn from_bitfield(src : BitField<T>) -> Self {
+        //TODO regard to bit size alignement -> what to do
+        let remaining_byte : usize = src.len() % 8;
+        Self {
+            extracted : src.extracted,
+            byte : 0,
+            len : src.len() / 8 + match remaining_byte { 0 => 0, _ => 1 },
+            endian : src.endian
+        }
+    }
+
     /// extract the value pointed by the field in the given byte array
     pub fn get(&self, data: &[u8]) -> PackingResult<T> {
         return T::unpack_slice(&data[self.byte..], 0, self.get_bits_len(), self.endian);
@@ -683,6 +695,11 @@ impl<T: PduData> BitField<T> {
             len: 0,
             endian: Endiannes::Big,
         }
+    }
+
+    /// Consume a Field struct and perfom a transmutation into Bitfield
+    pub fn from_field(src : Field<T>) -> Self {
+        Self { extracted: src.extracted, bit: 0, len: src.len() * 8, endian: src.endian }
     }
 
     /// extract the value pointed by the field in the given byte array
