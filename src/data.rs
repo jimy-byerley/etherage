@@ -615,18 +615,6 @@ impl<T: PduData> Field<T> {
         }
     }
 
-    /// Comsusme a Bitfield struct and perform a transmutation into Field
-    pub fn from_bitfield(src : BitField<T>) -> Self {
-        //TODO regard to bit size alignement -> what to do
-        let remaining_byte : usize = src.len() % 8;
-        Self {
-            extracted : src.extracted,
-            byte : 0,
-            len : src.len() / 8 + match remaining_byte { 0 => 0, _ => 1 },
-            endian : src.endian
-        }
-    }
-
     /// extract the value pointed by the field in the given byte array
     pub fn get(&self, data: &[u8]) -> PackingResult<T> {
         return T::unpack_slice(&data[self.byte..], 0, self.get_bits_len(), self.endian);
@@ -658,6 +646,21 @@ impl<T: PduData> fmt::Debug for Field<T> {
         else {
             write!(f, "Field{{ Byte: {}, Size: {}, Endian: {} }}", self.byte, self.len, self.endian) }
 
+    }
+}
+
+impl<T: PduData> std::convert::TryFrom<BitField<T>> for Field<T> {
+    type Error = PackingError;
+
+    /// Comsusme a Bitfield struct and perform a transmutation into Field
+    /// Caveat: If alignement is different thant 0 or size is not a multiple of 8 an error is throw.
+    fn try_from(src : BitField<T>) -> Result<Self, Self::Error> {
+        if src.bit != 0 {
+            return Err(PackingError::BadAlignment(src.bit, "Bit alignement different from 0")); }
+        return match src.len % 8 {
+            0 => Ok(Self { extracted : src.extracted, byte : 0, len : src.len() / 8, endian : src.endian }),
+            _ => Err(PackingError::BadSize(src.len(), "Must be a multiple of 8"))
+        };
     }
 }
 
@@ -697,11 +700,6 @@ impl<T: PduData> BitField<T> {
         }
     }
 
-    /// Consume a Field struct and perfom a transmutation into Bitfield
-    pub fn from_field(src : Field<T>) -> Self {
-        Self { extracted: src.extracted, bit: 0, len: src.len() * 8, endian: src.endian }
-    }
-
     /// extract the value pointed by the field in the given byte array
     pub fn get(&self, data: &[u8]) -> T {
         T::unpack_slice(&data[self.bit / 8 ..], (self.bit % 8) as u8, self.len, self.endian).expect("cannot unpack from data")
@@ -720,6 +718,17 @@ impl<T: PduData> BitField<T> {
 
 impl<T: PduData> fmt::Debug for BitField<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Field{{ Bit: {}, Size: {},  Endian: {} }}", self.bit, self.len, self.endian)
+        write!(f, "BitField{{ Bit: {}, Size: {},  Endian: {} }}", self.bit, self.len, self.endian)
+    }
+}
+
+impl<T:PduData> std::convert::TryFrom<Field<T>> for BitField<T> {
+    type Error = PackingError;
+
+    /// Consume a Field struct and perfom a transmutation into Bitfield
+    fn try_from(src : Field<T>) -> Result<Self, Self::Error> {
+        if src.byte != 0 {
+            return Err(PackingError::BadAlignment(src.byte, "Bit alignement different from 0")); }
+        return Ok(Self { extracted: src.extracted, bit: 0, len: src.len() * 8, endian: src.endian });
     }
 }
