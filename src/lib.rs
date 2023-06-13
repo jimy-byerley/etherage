@@ -53,3 +53,30 @@ pub use crate::socket::*;
 pub use crate::rawmaster::*;
 pub use crate::master::*;
 pub use crate::slave::*;
+
+
+use std::sync::Arc;
+
+/// general object reporting an unexpected result regarding ethercat communication
+#[derive(Clone, Debug)]
+pub enum EthercatError<T> {
+    /// error caused by communication support
+    ///
+    /// these errors are exterior to this library
+    Io(Arc<std::io::Error>),
+    
+    /// error reported by a slave, its type depend on the operation returning this error
+    ///
+    /// these errors can generally be handled and fixed by retrying the operation or reconfiguring the slave
+    Slave(T),
+    
+    /// error reported by the master
+    ///
+    /// these errors can generally be handled and fixed by retrying the operation or using the master differently
+    Master(&'static str),
+    
+    /// error detected by the master in the ethercat communication
+    ///
+    /// these errors can generally not be fixed and the whole communication has to be restarted
+    Protocol(&'static str),
+}

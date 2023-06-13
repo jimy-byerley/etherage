@@ -10,7 +10,7 @@ use crate::{
 	};
 use tokio::sync::{Mutex, MutexGuard};
 use core::ops::Range;
-use std::rc::Rc;
+use std::sync::Arc;
 
 // #[repr(u8)]
 // #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -47,8 +47,8 @@ pub struct Slave<'a> {
     
     // internal structures are inter-referencing, thus must be stored in Rc to ensure the references to it will not void because of deallocation or data move
 //     sii: Mutex<Sii>,
-    mailbox: Option<Rc<Mutex<Mailbox<'a>>>>,
-    coe: Option<Rc<Mutex<Can<'a>>>>,
+    mailbox: Option<Arc<Mutex<Mailbox<'a>>>>,
+    coe: Option<Arc<Mutex<Can<'a>>>>,
 //     clock: Option<Dc>,
 }
 impl<'a> Slave<'a> {
@@ -138,18 +138,18 @@ impl<'a> Slave<'a> {
             }).await.one();
 		
 		self.coe = None;
-        self.mailbox = Some(Rc::new(Mutex::new(mailbox)));
+        self.mailbox = Some(Arc::new(Mutex::new(mailbox)));
     }
     
     pub async fn init_coe(&mut self) {
         // override the mailbox reference lifetime, we will have to make sure we free any stored object using it before destroying the mailbox
         let mailbox = self.mailbox.clone().expect("mailbox not initialized");
-        self.coe = Some(Rc::new(Mutex::new(Can::new(mailbox))));
+        self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
     }
     
     pub async fn clock(&'a self) {todo!()}
     
-    pub async fn coe(&'a self) -> MutexGuard<'a, Can<'a>>    {
+    pub async fn coe(&self) -> MutexGuard<'_, Can<'a>>    {
         self.coe
             .as_ref().expect("coe not initialized")
             .lock().await

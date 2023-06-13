@@ -133,6 +133,10 @@ impl<'b> Mailbox<'b> {
         let mut received = Cursor::new(data);
         let header = frame.unpack::<MailboxHeader>().unwrap();
         assert!(usize::from(header.length()) <= received.remain().len());
+        if header.ty() == MailboxType::Exception {
+            let error = frame.unpack::<MailboxErrorFrame>().unwrap();
+            panic!("received mailbox error {:?}", error);
+        }
         assert_eq!(header.ty(), ty);
         assert_eq!(u8::from(header.count()), self.read.count);
         received.write(frame.read(header.length() as usize).unwrap()).unwrap();

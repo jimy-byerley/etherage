@@ -5,10 +5,11 @@ use crate::{
 	registers,
 	sdo::Sdo,
 	data::{self, PduData, Storage, Cursor},
+	EthercatError,
 	};
 use bilge::prelude::*;
 use tokio::sync::Mutex;
-use std::rc::Rc;
+use std::sync::Arc;
 
 
 
@@ -25,11 +26,10 @@ const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
                                         - <CoeHeader as PduData>::Packed::LEN
                                         - <SdoSegmentHeader as PduData>::Packed::LEN;
 
-
 /**
     implementation of CoE (Canopen Over Ethercat)
     
-    It works exactly as in a Can bus, except each of its frame is encapsulated in a mailbox frame, and PDOs access is therefore not realtime.
+    It works exactly as in a Can bus, except each of its frame is encapsulated in an ethercat mailbox frame, and PDOs access is therefore not realtime.
     For realtime PDOs exchange, they must be mapped to the logical memory using a SM (Sync Manager) channel.
     
     Canopen protocol exposes 2 data structures:
@@ -50,10 +50,10 @@ const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
     This scheme comes in addition to the slave memory areas described in [crate::rawmaster::RawMaster], for slaves supporting CoE.
 */
 pub struct Can<'a> {
-    mailbox: Rc<Mutex<Mailbox<'a>>>,
+    mailbox: Arc<Mutex<Mailbox<'a>>>,
 }
 impl<'a> Can<'a> {
-    pub fn new(mailbox: Rc<Mutex<Mailbox<'a>>>) -> Can<'a> {
+    pub fn new(mailbox: Arc<Mutex<Mailbox<'a>>>) -> Can<'a> {
         Can {mailbox}
     }
     /// read an SDO, any size
@@ -83,7 +83,6 @@ impl<'a> Can<'a> {
         mailbox.write(MailboxType::Can, priority, frame.finish()).await;
         
         // receive data
-        println!("wait for sdo request answer");
         let (header, frame) = Self::receive_sdo_response(
                 &mut mailbox,
                 &mut buffer, 
@@ -156,12 +155,12 @@ impl<'a> Can<'a> {
 	pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)  {
         let mut packed = T::Packed::uninit();
         data.pack(packed.as_mut()).unwrap();
-        self.sdo_write_slice(sdo, priority, &packed.as_ref()[.. T::packed_size()]).await;
+        self.sdo_write_slice(sdo, priority, &packed.as_ref()).await;
 	}
 	pub async fn sdo_write_slice<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: &[u8])  {
         let mut mailbox = self.mailbox.lock().await;		
         let mut buffer = [0; MAILBOX_MAX_SIZE];
-		if data.len() < EXPEDITED_MAX_SIZE {
+		if data.len() <= EXPEDITED_MAX_SIZE {
 			// expedited transfer
 			// send data in the 4 bytes instead of data size
 			{
@@ -206,6 +205,7 @@ impl<'a> Can<'a> {
                             sdo.index,
                             sdo.sub.unwrap(),
                         )).unwrap();
+                frame.pack(&(data.remain().len() as u32)).unwrap();
                 let segment = data.remain().len().min(SDO_SEGMENT_MAX_SIZE);
                 frame.write(data.read(segment).unwrap()).unwrap();
                 mailbox.write(MailboxType::Can, priority, frame.finish()).await;
@@ -545,29 +545,3 @@ impl SdoAbortCode {
     pub fn protocol_related(self) -> bool {u32::from(self) >> 24 == 0x05}
 }
 
-
-use std::sync::Arc;
-
-/// general object reporting an unexpected result regarding ethercat communication
-#[derive(Clone, Debug)]
-pub enum EthercatError<T> {
-    /// error caused by communication support
-    ///
-    /// these errors are exterior to this library
-    Io(Arc<std::io::Error>),
-    
-    /// error reported by a slave, its type depend on the operation returning this error
-    ///
-    /// these errors can generally be handled and fixed by retrying the operation or reconfiguring the slave
-    Slave(T),
-    
-    /// error reported by the master
-    ///
-    /// these errors can generally be handled and fixed by retrying the operation or using the master differently
-    Master(&'static str),
-    
-    /// error detected by the master in the ethercat communication
-    ///
-    /// these errors can generally not be fixed and the whole communication has to be restarted
-    Protocol(&'static str),
-}

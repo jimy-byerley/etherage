@@ -32,7 +32,7 @@ async fn main() -> std::io::Result<()> {
     // initialize mailbox
     let mut mailbox = Mailbox::new(&master, 1, 0x1000 .. 0x1103, 0x1104 .. 0x1200).await;
     let mut can = Can::new(&mut mailbox);
-        
+    
     master.fpwr(slave, registers::sii::access, {
         let mut config = registers::SiiAccess::default();
         config.set_owner(registers::SiiOwner::Pdi);
@@ -61,32 +61,9 @@ async fn main() -> std::io::Result<()> {
     let sdo = Sdo::<u16>::complete(0x6041);
     
     // test read/write
-    println!("read");
     let received = can.sdo_read(&sdo, u2::new(1)).await;
-    println!("write");
     can.sdo_write(&sdo, u2::new(1), received).await;
     
-//     // test simultaneous read/write
-//     let t1 = {
-//         let master = master.clone();
-//         tokio::task::spawn(async move {
-//             let received = master.aprd(reg).await;
-//             assert_eq!(received.answers, 1);
-//             master.apwr(reg, received.value).await;
-//         })
-//     };
-//     let t2 = {
-//         let master = master.clone();
-//         tokio::task::spawn(async move {
-//             let received = master.aprd(reg).await;
-//             assert_eq!(received.answers, 1);
-//             master.apwr(reg, received.value).await;
-//         })
-//     };
-//     t1.await.unwrap();
-//     t2.await.unwrap();
-    
-//     println!("received {:x}", value);
     Ok(())
 }
 

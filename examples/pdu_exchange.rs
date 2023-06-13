@@ -18,32 +18,26 @@ async fn main() -> std::io::Result<()> {
     std::thread::sleep(Duration::from_millis(500));
     
     let reg = Field::<u16>::simple(0x1234);
+    let slave = 0;
             
     // test read/write
-    let received = master.aprd(reg).await;
-    master.apwr(reg, received.value).await;
+    let received = master.aprd(slave, reg).await;
+    master.apwr(slave, reg, received.value).await;
     
     // test simultaneous read/write
-    let t1 = {
-        let master = master.clone();
-        tokio::task::spawn(async move {
-            let received = master.aprd(reg).await;
+    futures::join!(
+        async {
+            let received = master.aprd(slave, reg).await;
             assert_eq!(received.answers, 1);
-            master.apwr(reg, received.value).await;
-        })
-    };
-    let t2 = {
-        let master = master.clone();
-        tokio::task::spawn(async move {
-            let received = master.aprd(reg).await;
+            master.apwr(slave, reg, received.value).await;
+        },
+        async {
+            let received = master.aprd(slave, reg).await;
             assert_eq!(received.answers, 1);
-            master.apwr(reg, received.value).await;
-        })
-    };
-    t1.await.unwrap();
-    t2.await.unwrap();
+            master.apwr(slave, reg, received.value).await;
+        },
+    );
     
-//     println!("received {:x}", value);
     Ok(())
 }
 
