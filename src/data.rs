@@ -454,20 +454,19 @@ macro_rules! num_pdudata {
                 let array_len_bit : usize = data.len() * 8;
                 let field_len_bit : usize = core::mem::size_of::<$t>() * 8;
                 let excluded_bits : u8 = 8 - bitoffset;
-                
+
                 if bitsize == 0 {
                     return Err(PackingError::InvalidValue("Bit size couldn't be negative")); }
                 if bitoffset >= MAX_OFFSET {
                     return Err(PackingError::BadAlignment(bitoffset as usize, "Offset greater than 8")); }
                 if bitsize + bitoffset as usize > array_len_bit {
                     return Err(PackingError::BadSize(bitsize, "Data too large for the given slice")); }
-                if bitoffset == 0 && data.len() < core::mem::size_of::<$t>() {
-                    return Err(PackingError::InvalidValue("Data slice too short, must equal or greater than sizeof <$t>")); }
 
                 //Get unsed data
                 let prefix_mask : u8 = match bitoffset > 0 {
                     true => ( data[0] >> excluded_bits ) << excluded_bits,
-                    false => 0 };
+                    false => 0
+                };
 
                 //Ordering byte
                 let ordering_bits = match bitordering {
@@ -478,32 +477,27 @@ macro_rules! num_pdudata {
 
                 //Get suffix mask
                 let suffix_mask : u8 = match bitoffset > 0 {
-                    true => (ordering_bits[ordering_bits.len() -1] >> excluded_bits) << excluded_bits,
+                    true => (ordering_bits[ordering_bits.len() -1] << excluded_bits) >> excluded_bits,
                     _ => 0,
                 };
 
                 //Clear non used data
                 // Exemple (on 1 byte, with offset = 3 and bitsize = 4 | d d d d * * * * | -> | d d d d 0 0 0 0 | -> | 0 0 0  d d d d 0 |
                 // Exemple (on 1 byte, with offset = 3 and bitsize = 7 | d d d d d d d * | -> | d d d d d d d 0 | -> | 0 0 0  d d d d d |
-                let mut core = <$t>::from_be_bytes(ordering_bits);
+                let mut core = <$t>::from_ne_bytes(ordering_bits);
                 core >>= (field_len_bit - bitsize) as $t;
                 core <<= (field_len_bit - bitsize) as $t;
                 core >>= bitoffset;
-                let array = core.to_be_bytes();
+                let array = core.to_ne_bytes();
 
                 //Format final data
-                for i in 0..data.len()
+                for i in 0..bitsize / 8
                 {
-                    if i == 0 {
-                        data[i] = array[i] | prefix_mask;
-                    }
-                    else if i == array.len() && bitoffset > 0 {
-                        data[i] = suffix_mask;
-                    }
-                    else if i < array.len() {
-                        data[i] = array[i] ;
-                    }
+                    if i == 0 { data[i] = array[i] | prefix_mask; }
+                    else { data[i] = array[i] ; }
                 }
+                if bitsize % 8 > 0 {
+                    data[bitsize / 8] = suffix_mask; }
 
                 return Ok(());
             }
@@ -512,6 +506,7 @@ macro_rules! num_pdudata {
                 //Test input parameters
                 let array_len_bit = src.len() * 8;
                 let field_len_bit = core::mem::size_of::<$t>() * 8;
+                let excluded_bits : u8 = 8 - bitoffset;
                 if bitoffset >= MAX_OFFSET {
                     return Err(PackingError::BadAlignment(bitoffset as usize, "Alignement superior than one byte")); }
                 if bitsize + bitoffset as usize > array_len_bit || bitsize > field_len_bit {
@@ -520,7 +515,7 @@ macro_rules! num_pdudata {
                     return Err(PackingError::InvalidValue("Data slice too short, must equal or greater than sizeof <$t>")); }
 
                 //Extract data and suffix
-                let mut data : $t = <$t>::from_be_bytes(src[0..core::mem::size_of::<$t>()].try_into().unwrap());
+                let mut data : $t = <$t>::from_ne_bytes(src[0..core::mem::size_of::<$t>()].try_into().unwrap());
                 data <<= bitoffset;
                 let suffix : u8 = match src.len() > core::mem::size_of::<$t>() {
                     true => src[core::mem::size_of::<$t>()],
@@ -529,15 +524,14 @@ macro_rules! num_pdudata {
 
                 //Concatenate suffix
                 if bitsize + bitoffset as usize > field_len_bit {
-                    let mut shift = suffix << (field_len_bit - bitsize - bitoffset as usize) as u8;
-                    shift >>= (field_len_bit - bitsize - bitoffset as usize) as u8;
+                    let shift = (suffix << excluded_bits ) >> excluded_bits ;
                     data |= shift as $t;
                 }
 
                 //Ordering
                 return Ok(match bitordering {
-                    Endiannes::Big => data,
-                    Endiannes::Little => Self::from_le_bytes(data.to_be_bytes()),
+                    Endiannes::Big => Self::from_be_bytes(data.to_ne_bytes()),
+                    Endiannes::Little => Self::from_le_bytes(data.to_ne_bytes()),
                     _ => return Err(PackingError::BadOrdering(bitordering, "Mixed endian is invalid in this case"))
                 });
             }
@@ -666,7 +660,7 @@ impl<T: PduData> BitField<T> {
     }
 
     pub fn default() -> Self {
-        Self { extracted: PhantomData, offset: 0, len: 0, endian: Endiannes::Big}
+        Self { extracted: PhantomData, offset: 0, len: 0, endian: Endiannes::Little}
     }
 
     /// extract the value pointed by the field in the given byte array
