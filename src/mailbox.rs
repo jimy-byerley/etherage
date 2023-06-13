@@ -25,9 +25,13 @@ const MAILBOX_MAX_SIZE: usize = 1024;
 pub struct Mailbox<'a> {
     master: &'a RawMaster,
 	slave: u16,
-	count: u8,
-	read: Range<u16>,
-	write: Range<u16>,
+	read: Direction,
+	write: Direction,
+}
+struct Direction {
+    count: u8,
+    address: u16,
+    max: usize,
 }
 
 impl<'b> Mailbox<'b> {
@@ -71,13 +75,20 @@ impl<'b> Mailbox<'b> {
         Self {
             master,
             slave,
-            count: 0,
-            read,
-            write,
+            read: Direction{
+                count: 0,
+                address: read.start,
+                max: usize::from(read.end - read.start),
+                },
+            write: Direction{
+                count: 0,
+                address: write.start,
+                max: usize::from(write.end - write.start),
+                },
         }
     }
-    pub async fn poll(&mut self) -> bool {todo!()}
-    pub async fn available(&mut self) -> usize {todo!()}
+    pub async fn poll(&self) -> bool {todo!()}
+    pub async fn available(&self) -> usize {todo!()}
     
 	/** 
         read the frame currently in the mailbox, wait for it if not already present
@@ -90,7 +101,7 @@ impl<'b> Mailbox<'b> {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         
-        self.count = (self.count % 6)+1;
+        self.read.count = (self.read.count % 6)+1;
         
 		// wait for data
 		let mut state = loop {
@@ -101,11 +112,11 @@ impl<'b> Mailbox<'b> {
         // the destination data is expected to be big enough for the data, so we will read only this data size
         let range = .. allocated.len()
                         .min(data.len() + MailboxHeader::packed_size())
-                        .min((self.read.end - self.read.start) as usize);
+                        .min(self.read.max);
         let buffer = &mut allocated[range];
 		// read the mailbox content
 		loop {
-            if self.master.pdu(PduCommand::FPRD, self.slave, self.read.start, buffer).await == 1 
+            if self.master.pdu(PduCommand::FPRD, self.slave, self.read.address, buffer).await == 1 
                 {break}
             
             // trigger repeat
@@ -123,7 +134,7 @@ impl<'b> Mailbox<'b> {
         let header = frame.unpack::<MailboxHeader>().unwrap();
         assert!(usize::from(header.length()) <= received.remain().len());
         assert_eq!(header.ty(), ty);
-        assert_eq!(u8::from(header.count()), self.count);
+        assert_eq!(u8::from(header.count()), self.read.count);
         received.write(frame.read(header.length() as usize).unwrap()).unwrap();
 		
 		received.finish()
@@ -133,11 +144,10 @@ impl<'b> Mailbox<'b> {
     */
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
 		let mailbox_control = registers::sync_manager::interface.mailbox_write();
-        let mailbox_size = usize::from(self.write.end - self.write.start);
         let mut allocated = [0; MAILBOX_MAX_SIZE];
-        let buffer = &mut allocated[.. mailbox_size];
+        let buffer = &mut allocated[.. self.write.max];
         
-        self.count = (self.count % 6)+1;
+        self.write.count = (self.write.count % 6)+1;
         
         let mut frame = Cursor::new(buffer.as_mut());
         frame.pack(&MailboxHeader::new(
@@ -146,7 +156,7 @@ impl<'b> Mailbox<'b> {
 				u6::new(0),  // this value has no effect and is reserved for future use
 				priority,
 				ty,
-				u3::new(self.count),
+				u3::new(self.write.count),
 			)).unwrap();
         frame.write(data).unwrap();
         let sent = frame.finish();
@@ -164,7 +174,7 @@ impl<'b> Mailbox<'b> {
 //             loop {
 //                 // write beginning of buffer and last byte for slave triggering
 //                 let (writing, end) = futures::join!(
-//                     self.master.pdu(PduCommand::FPWR, self.slave, self.write.start, sent),
+//                     self.master.pdu(PduCommand::FPWR, self.slave, self.write.address, sent),
 //                     // the mailbox processing is done once the last mailbox byte is written, so write the last byte alone
 //                     self.master.fpwr(self.slave, Field::<u8>::simple(usize::from(self.write.end)-1), 0),
 //                     );
@@ -174,7 +184,7 @@ impl<'b> Mailbox<'b> {
 //         }
 //         else {
             // write the full buffer
-            while self.master.pdu(PduCommand::FPWR, self.slave, self.write.start, buffer.as_mut()).await != 1
+            while self.master.pdu(PduCommand::FPWR, self.slave, self.write.address, buffer.as_mut()).await != 1
                 {}
 //         }
 	}

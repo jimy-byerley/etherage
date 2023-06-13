@@ -27,6 +27,10 @@
     - [ ] distributed clock
         + [ ] static drift
         + [ ] dynamic drift
+    - optimization features
+        + [x] multiple PDUs per ethercat frame (speed up and compress transmissions)
+        + [x] tasks for different slaves or for same slave are parallelized whenever possible
+        + [x] no dynamic allocation in transmission and realtime functions
 */
 
 pub mod data;
@@ -40,7 +44,7 @@ pub mod mailbox;
 pub mod sdo;
 pub mod can;
 pub mod master;
-// pub mod slave;
+pub mod slave;
 
 
 pub use crate::data::{PduData, Field, BitField};
@@ -48,4 +52,4 @@ pub use crate::sdo::Sdo;
 pub use crate::socket::*;
 pub use crate::rawmaster::*;
 pub use crate::master::*;
-// pub use crate::slave::*;
+pub use crate::slave::*;

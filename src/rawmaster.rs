@@ -356,6 +356,7 @@ impl RawMaster {
 
 
 /// dynamically specifies a destination address on the ethercat loop
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SlaveAddress {
 	/// every slave will receive and execute
 	Broadcast,
