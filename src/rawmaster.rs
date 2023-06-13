@@ -163,7 +163,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         buffer.as_mut().fill(0);
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.offset as u16, &mut buffer.as_mut()[.. memory.len]).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
     }
@@ -178,7 +178,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         data.pack(buffer.as_mut()).unwrap();
 		PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.offset as u16, &mut buffer.as_mut()[.. memory.len]).await,
 			value: (),
 			}
 	}
@@ -193,7 +193,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         data.pack(buffer.as_mut()).unwrap();
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.offset as u16, &mut buffer.as_mut()[.. memory.len]).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
 	}
