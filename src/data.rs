@@ -12,8 +12,8 @@ pub trait PduData: Sized {
     const ID: TypeId;
     type Packed: Storage;
 
-    fn pack(&self, data: &mut [u8]) -> PackingResult<()> { self.pack_slice(data, 0, 0, Endiannes::Little) }
-    fn unpack(src: &[u8]) -> PackingResult<Self> { Self::unpack_slice(src, 0, 0, Endiannes::Little)}
+    fn pack(&self, data: &mut [u8]) -> PackingResult<()> { self.pack_slice(data, 0, Self::packed_size(), Endiannes::Little) }
+    fn unpack(src: &[u8]) -> PackingResult<Self> { Self::unpack_slice(src, 0, Self::packed_size(), Endiannes::Little)}
     fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<()>;
     fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<Self>;
     fn packed_size() -> usize {Self::Packed::LEN}
@@ -454,7 +454,7 @@ macro_rules! num_pdudata {
                 let array_len_bit : usize = data.len() * 8;
                 let field_len_bit : usize = core::mem::size_of::<$t>() * 8;
                 let excluded_bits : u8 = 8 - bitoffset;
-
+                
                 if bitsize == 0 {
                     return Err(PackingError::InvalidValue("Bit size couldn't be negative")); }
                 if bitoffset >= MAX_OFFSET {
