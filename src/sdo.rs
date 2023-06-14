@@ -4,14 +4,15 @@ Convenient structures to read/write the slave's dictionnary objects (SDO) and co
 
 use crate::{
 // 	slave::Slave,
-	data::{BitField, PduData, Storage},
+	data::{self, BitField, PduData, Storage},
 	};
 use core::fmt;
+use bilge::prelude::*;
 
 
 /// address of an SDO's subitem, not a SDO itself
-#[derive(Clone)]
-pub struct Sdo<T: PduData> {
+#[derive(Clone, Eq, PartialEq)]
+pub struct Sdo<T: PduData=()> {
 	/// index of the item in the slave's dictionnary of objects
 	pub index: u16,
 	/// subindex in the item
@@ -20,7 +21,7 @@ pub struct Sdo<T: PduData> {
 	pub field: BitField<T>,
 }
 /// specifies which par of an SDO is addressed
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SdoPart {
     /// the whole SDO (the complete struct with its eventual paddings)
     /// NOTE: this doesn't strictly follows the ethercat specifications, since for complete SDO request we could choose to include or exclude subitem 0
@@ -64,6 +65,7 @@ impl SdoPart {
             Self::Complete => 0,
             Self::Sub(i) => i,  
     }}
+    /// true if this SDO sdo address refers to a complete SDO, false if it refers to a subitem
     pub fn is_complete(&self) -> bool { match self {
             Self::Complete => true,
             _ => false,
@@ -77,30 +79,62 @@ impl<T: PduData> fmt::Debug for Sdo<T> {
 
 /// description of SDO configuring a PDO
 /// the SDO is assumed to follow the cia402 specifications for PDO SDOs
-#[derive(Clone)]
-pub struct ConfigurablePdo {
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct Pdo {
 	/// index of the SDO that configures the PDO
 	pub index: u16,
 	/// number of entries in the PDO
 	pub num: u8,
 }
-impl fmt::Debug for ConfigurablePdo {
+impl Pdo {
+    /// return a field pointing to the nth entry definition of the PDO
+    pub fn slot(&self, i: u8) -> Sdo<PdoEntry> {
+        Sdo::sub(self.index, i+1, core::mem::size_of::<u8>() + core::mem::size_of::<PdoEntry>()*i)
+    }
+    /// return a field pointing to the number of items set in the PDO
+    pub fn len(&self) -> Sdo<u8> {
+        Sdo::sub(self.index, 0, 0)
+    }
+}
+impl fmt::Debug for Pdo {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "ConfigurablePdo {{index: {:x}, num: {}}}", self.index, self.num)
+		write!(f, "Pdo {{index: {:x}, num: {}}}", self.index, self.num)
 	}
 }
 
+/// content of a subitem in an SDO for PDO mapping
+#[bitsize(32)]
+pub struct PdoEntry {
+    /// mapped sdo index
+    index: u16,
+    /// mapped sdo subindex (it is not possible to map complete sdo, so this field must always be set)
+    sub: u8,
+    /// bit size of the subitem value
+    bitsize: u8,
+}
+data::bilge_pdudata!(PdoEntry, u32);
+
 /// description of SDO configuring a SyncManager
 /// the SDO is assumed to follow the cia402 specifications for syncmanager SDOs
-#[derive(Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SyncManager {
 	/// index of the SDO that configures the SyncManager
 	pub index: u16,
 	/// max number of PDO that can be assigned to the SyncManager
 	pub num: u8,
 }
+impl SyncManager {
+    /// return a field pointing to the nth entry definition of the sync manager channel
+    pub fn slot(&self, i: u8) -> Sdo<u16> {
+        Sdo::sub(self.index, i+1, core::mem::size_of::<u8>() + core::mem::size_of::<u16>()*i)
+    }
+    /// return a field pointing to the number of items set in the sync manager channel
+    pub fn len(&self) -> Sdo<u8> {
+        Sdo::sub(self.index, 0, 0)
+    }
+}
 impl fmt::Debug for SyncManager {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "ConfigurablePdo {{index: {:x}, num: {}}}", self.index, self.num)
+		write!(f, "SyncManager {{index: {:x}, num: {}}}", self.index, self.num)
 	}
 }

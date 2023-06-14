@@ -45,6 +45,7 @@ pub mod sdo;
 pub mod can;
 pub mod master;
 pub mod slave;
+pub mod mapping;
 
 
 pub use crate::data::{PduData, Field, BitField};
@@ -53,6 +54,7 @@ pub use crate::socket::*;
 pub use crate::rawmaster::*;
 pub use crate::master::*;
 pub use crate::slave::*;
+pub use crate::mapping::{Mapping, Group};
 
 
 use std::sync::Arc;

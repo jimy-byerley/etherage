@@ -54,7 +54,7 @@ impl<const N: usize> Storage for [u8; N] {
 pub enum TypeId {
 	/// default value of the enum, used in case the matching [PduData] does not fit in any of these integers
 	CUSTOM,
-	BOOL,
+	VOID, BOOL, 
 	I8, I16, I32, I64,
 	U8, U16, U32, U64,
 	F32, F64,
@@ -73,6 +73,14 @@ impl<const N: usize> PduData for [u8; N] {
             {return Err(PackingError::BadSize(src.len(), "not enough bytes for desired slice"))}
 		Ok(Self::try_from(&src[.. Self::Packed::LEN]).unwrap().clone())
 	}
+}
+
+impl PduData for () {
+	const ID: TypeId = TypeId::VOID;
+	type Packed = [u8; 0];
+	
+	fn pack(&self, dst: &mut [u8]) -> PackingResult<()>  {Ok(())}
+	fn unpack(src: &[u8]) -> PackingResult<Self>  {Ok(())}
 }
 
 impl PduData for bool {

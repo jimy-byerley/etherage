@@ -642,7 +642,7 @@ pub struct FMMU {
 
 impl FMMU {
     /// return an entry of the FMMU
-    pub fn entry(&self, index: u8) -> Field<FMMUEntry>  {
+    pub fn entry(&self, index: u8) -> Field<FmmuEntry>  {
         assert!(index < self.num, "index out of range");
         Field::simple(usize::from(self.address + u16::from(index)*0x10))
     }
@@ -657,7 +657,7 @@ impl FMMU {
 */
 #[bitsize(128)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-pub struct FMMUEntry {
+pub struct FmmuEntry {
 	/// start byte in the logical memory
 	pub logical_start_byte: u32,
 	/// byte size of the data (rounded to lower value in case of bit-sized data ?)
@@ -686,7 +686,7 @@ pub struct FMMUEntry {
 	reserved: u7,
 	reserved: u24,
 }
-data::bilge_pdudata!(FMMUEntry, u128);
+data::bilge_pdudata!(FmmuEntry, u128);
 
 /// this is not a PduData but a convenience struct transporting the addresses of a sync manager
 /// ETG.1000.4 table 59
