@@ -32,19 +32,20 @@ const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100}
 
 /**
 	This struct exposes the ethercat master functions addressing one slave.
-	
+
 	Its lifetime refers to the [Master] the slave answers to.
-	
+
 	## Note:
-	
+
 	At contrary to [RawMaster], it is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
 	The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
 */
+#[derive(Debug, PartialEq)]
 pub struct Slave<'a> {
     master: &'a RawMaster,
     address: SlaveAddress,
     state: CommunicationState,
-    
+
     // internal structures are inter-referencing, thus must be stored in Rc to ensure the references to it will not void because of deallocation or data move
 //     sii: Mutex<Sii>,
     mailbox: Option<Arc<Mutex<Mailbox<'a>>>>,
@@ -57,14 +58,14 @@ impl<'a> Slave<'a> {
             master,
             address,
             state: Init,
-            
+
             mailbox: None,
             coe: None,
         }
     }
     /// retreive the slave's identification informations
     pub fn informations(&self)  {todo!()}
-    
+
     /// return the current state of the slave
     pub async fn state(&self) -> CommunicationState {
 		self.master.read(self.address, registers::al::status).await.one().state()
@@ -78,7 +79,7 @@ impl<'a> Slave<'a> {
 			config.set_ack(true);
 			config
 		}).await.one();
-		
+
 		loop {
 			let received = self.master.read(self.address, registers::al::response).await;
 			assert_eq!(received.answers, 1);
@@ -90,7 +91,7 @@ impl<'a> Slave<'a> {
 			if received.value.state() == target  {break}
 		}
     }
-    
+
     pub async fn set_address(&mut self, fixed: u16) {
         assert_eq!(self.state, Init);
 //         {
@@ -102,7 +103,7 @@ impl<'a> Slave<'a> {
         self.master.write(self.address, registers::address::fixed, fixed).await;
         self.address = SlaveAddress::Fixed(fixed);
     }
-    
+
 //     pub async fn auto_address(&mut self) {
 //         let fixed = {
 //             let book = self.master.slaves.lock();
@@ -114,8 +115,6 @@ impl<'a> Slave<'a> {
 //             };
 //         self.master.write(self.address, registers::address::fixed, fixed).await;
 //     }
-    
-    pub async fn init_clock(&mut self)  {todo!()}
 
     pub async fn init_mailbox(&mut self) {
         assert_eq!(self.state, Init);
@@ -136,27 +135,33 @@ impl<'a> Slave<'a> {
 			config.set_owner(registers::SiiOwner::Pdi);
 			config
             }).await.one();
-		
+
 		self.coe = None;
         self.mailbox = Some(Arc::new(Mutex::new(mailbox)));
     }
-    
+
     pub async fn init_coe(&mut self) {
         // override the mailbox reference lifetime, we will have to make sure we free any stored object using it before destroying the mailbox
         let mailbox = self.mailbox.clone().expect("mailbox not initialized");
         self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
     }
-    
-    pub async fn clock(&'a self) {todo!()}
-    
+
+    pub fn get_state(&self) -> Init{
+        return self.state;
+    }
+
+    pub fn get_address(&self) -> SlaveAddress {
+        return self.address;
+    }
+
     pub async fn coe(&self) -> MutexGuard<'_, Can<'a>>    {
         self.coe
             .as_ref().expect("coe not initialized")
             .lock().await
     }
-    
+
     pub fn eoe(&'a self) {todo!()}
-    
+
     pub fn physical_read<T: PduData>(&self, field: Field<T>) -> T  {todo!()}
 //     pub fn physical_write<T: PduData>(&self, field: Field<T>, value: T)  {todo!()}
 

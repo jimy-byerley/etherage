@@ -1,6 +1,6 @@
 /*!
 	low level ethercat communication functions.
-	
+
 	It wraps an ethercat socket to schedule, send and receive ethercat frames containing data or commands.
 */
 
@@ -27,35 +27,35 @@ const MAX_ETHERCAT_FRAME: usize = 2050;
 
 /**
     low level ethercat communication functions, with no notion of slave.
-    
-    genericity allows to use a UDP socket or raw ethernet socket, see [crate::socket] for more details.    
-    
+
+    genericity allows to use a UDP socket or raw ethernet socket, see [crate::socket] for more details.
+
     This struct does not do any compile-time checking of the communication states on the slaves, and has no notion of slave, it is just executing the basic commands.
-    
+
     The ethercat low level is all about PDUs: an ethercat frame intended for slaves is a PDU frame and PDU frames contain any number of PDU (Process Data Unit), each PDU is a command, acting on one of the 2 memories types:
-   
+
    - **Physical Memory** (aka. registers)
-    
+
 		each slave has its own physical memory, commands for physical memory (`*P*`, `B*`) are addressing a specific slave, or combining the memory reads from all slaves
-		
+
 		The physical memory is divided into registers declared in [crate::registers]
-	
+
 	- **Logical Memory** (aka. fieldbus memory)
-	
+
 		this memory doesn't physically exist anywhere, but can be read/write using `L*`  commands with each slave contributing to the record according to the configuration set before.
-		
+
 		The logical memory is organized by the mapping set in the FMMU (Fieldbust Memory Management Unit)
-		
+
 	See variants of [PduCommand] for more details.
-	
+
 	The following scheme shows an overview of the features and memory areas of every ethercat slave. Memory copy operations are represented as plain arrows regardless of the real sequence of commands needed to perform the operation. *RT* flag marks what can be acheived in realtime, and what can not.
-	
+
 	![ethercat sub protocols](/etherage/schemes/ethercat-protocols.svg)
 */
 pub struct RawMaster {
 	/// (µs) acceptable delay time before sending buffered PDUs
 	pdu_merge_time: Duration,
-	
+
 	// socket implementation
 	socket: Box<dyn EthercatSocket + Send + Sync>,
 	// synchronization signal for multitask reception
@@ -63,11 +63,11 @@ pub struct RawMaster {
 	sendable: Condvar,
 	send: Condvar,
 	sent: Condvar,
-	
+
 	// communication state
     // states are locked using [std::sync::Mutex] since it is recommended by async-io
     // they should not be held for too long (and never during blocking operations) so they shouldn't disturb the async runtime too much
-    
+
 	pdu_state: Mutex<PduState>,
 	ethercat_receive: Mutex<[u8; MAX_ETHERCAT_FRAME]>,
 }
@@ -86,16 +86,16 @@ struct PduStorage {
     answers: u16,
 }
 impl RawMaster {
-	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {        
+	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {
         Self {
             pdu_merge_time: std::time::Duration::from_micros(100), // microseconds
-            
+
             socket: Box::new(socket),
             received: Notify::new(),
             sendable: Condvar::new(),
             send: Condvar::new(),
             sent: Condvar::new(),
-            
+
             pdu_state: Mutex::new(PduState {
                 token: 0,
                 last_start: EthercatHeader::packed_size(),
@@ -107,7 +107,7 @@ impl RawMaster {
             ethercat_receive: Mutex::new([0; MAX_ETHERCAT_FRAME]),
         }
 	}
-	
+
 	// shorthands to PDU commands
 	// the slave address is actually packed and unpacked to actual commands again, but this is greatly shortening the code and the compiler should optimize that
 	pub async fn brd<T: PduData>(&self, address: Field<T>) -> PduAnswer<T> {
@@ -119,7 +119,7 @@ impl RawMaster {
 	pub async fn brw<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Broadcast, address, data).await
 	}
-	
+
 	pub async fn aprd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::AutoIncremented(slave), address).await
 	}
@@ -130,7 +130,7 @@ impl RawMaster {
         self.exchange(SlaveAddress::AutoIncremented(slave), address, data).await
 	}
 	pub async fn armw(&self) {todo!()}
-	
+
 	pub async fn fprd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Fixed(slave), address).await
 	}
@@ -141,7 +141,7 @@ impl RawMaster {
         self.exchange(SlaveAddress::Fixed(slave), address, data).await
 	}
 	pub async fn frmw(&self) {todo!()}
-	
+
 	pub async fn lrd<T: PduData>(&self, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Logical, address).await
 	}
@@ -151,7 +151,7 @@ impl RawMaster {
 	pub async fn lrw<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Logical, address, data).await
 	}
-	
+
 	/// maps to a *rd command
 	pub async fn read<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>) -> PduAnswer<T> {
         let (command, slave) = match slave {
@@ -197,7 +197,7 @@ impl RawMaster {
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
 	}
-	
+
 	/// send a PDU on the ethercat bus
 	/// the PDU is buffered with more PDUs if possible
 	/// returns the number of slaves who processed the command
@@ -206,14 +206,14 @@ impl RawMaster {
         let (ready, _finisher) = {
             // buffering the pdu sending
             let mut state = self.pdu_state.lock().unwrap();
-            
+
             // sending the buffer if necessary
             while MAX_ETHERCAT_FRAME < state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size() {
                 println!("no more space, waiting");
                 self.send.notify_one();
                 state = self.sent.wait(state).unwrap();
             }
-            
+
             // reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
             token = state.token;
             (state.token, _) = state.token.overflowing_add(1);
@@ -226,7 +226,7 @@ impl RawMaster {
                 ready: false,
                 answers: 0,
                 });
-            
+
             // change last value's PduHeader.next
             if state.last_start <= state.last_end {
                 let range = state.last_start .. state.last_end;
@@ -239,7 +239,7 @@ impl RawMaster {
                 state.last_time = Instant::now();
                 state.last_end = state.last_start;
             }
-            
+
             // stacking the PDU in self.pdu_receive
             let advance = {
                 let range = state.last_end ..;
@@ -260,9 +260,9 @@ impl RawMaster {
             };
             state.last_start = state.last_end;
             state.last_end = state.last_start + advance;
-            
+
             self.sendable.notify_one();
-        
+
             // memory safety: this item in the hashmap can be removed only by this function
             let ready = unsafe {&*(&state.receive[&token].ready as *const bool)};
             // clean up the receive table in case the async runtime cancels this task
@@ -272,14 +272,14 @@ impl RawMaster {
             });
             (ready, finisher)
         };
-        
+
         // waiting for the answer
         while ! *ready { self.received.notified().await; }
-        
+
 		let state = self.pdu_state.lock().unwrap();
 		state.receive[&token].answers
 	}
-	
+
 	/// extract a received frame of PDUs and buffer each for reception by an eventual `self.pdu()` future waiting for it.
 	fn pdu_receive(&self, state: &mut PduState, frame: &[u8]) {
         let mut frame = Cursor::new(frame);
@@ -287,7 +287,7 @@ impl RawMaster {
             let header = frame.unpack::<PduHeader>().unwrap();
             if let Some(storage) = state.receive.get(&header.token()) {
                 let content = frame.read(usize::from(u16::from(header.len()))).unwrap();
-                
+
                 // copy the PDU content in the reception buffer
                 // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
                 unsafe {std::slice::from_raw_parts_mut(
@@ -306,23 +306,23 @@ impl RawMaster {
         // the working count in the footer is useless for the master, mostly used by slaves
         self.received.notify_waiters();
     }
-	
+
 	/// this is the socket reception handler
 	/// it receives and process one datagram, it may be called in loop with no particular timer since the sockets are assumed blocking
 	pub fn receive(&self) {
         let mut receive = self.ethercat_receive.lock().unwrap();
         let size = self.socket.receive(receive.deref_mut()).unwrap();
         let frame = &receive[.. size];
-        
+
         let header = EthercatHeader::unpack(frame).unwrap();
         let content = &frame[EthercatHeader::packed_size() ..];
         let content = &content[.. header.len().value() as usize];
-        
+
         assert!(header.len().value() as usize <= content.len());
         // TODO check working count to detect possible refused requests
         match header.ty() {
             EthercatType::PDU => self.pdu_receive(
-                                    self.pdu_state.lock().unwrap().deref_mut(), 
+                                    self.pdu_state.lock().unwrap().deref_mut(),
                                     content,
                                     ),
             // what is this ?
@@ -336,13 +336,13 @@ impl RawMaster {
         let state = self.pdu_state.lock().unwrap();
         let state = self.sendable.wait(state).unwrap();
         let mut state = self.send.wait_timeout(state, self.pdu_merge_time).unwrap().0;
-        
+
         // check header
         EthercatHeader::new(
             u11::new((state.last_end - EthercatHeader::packed_size()) as u16),
             EthercatType::PDU,
             ).pack(&mut state.send).unwrap();
-        
+
         // send
         // we are blocking the async machine until the send ends
         // we assume it is not a long operation to copy those data into the system buffer
@@ -406,9 +406,9 @@ enum EthercatType {
     ///
     /// See ETG.1000.4
     PDU = 0x1,
-    
+
     NetworkVariable = 0x4,
-    
+
     /// mailbox gateway communication, between the master and non-slave devices, allowing non-slave devices to mailbox with the slaves
     /// this communication betwee, master and non-slave usually takes place in a TCP or UDP socket
     ///
@@ -456,35 +456,35 @@ pub enum PduCommand {
     #[fallback]
     #[default]
     NOP = 0x0,
-    
+
     /// broadcast read
     BRD = 0x07,
     /// broadcast write
     BWR = 0x08,
     /// broadcast read & write
     BRW = 0x09,
-    
+
     /// auto-incremented slave read
     APRD = 0x01,
     /// auto-incremented slave write
     APWR = 0x02,
     /// auto-incremented slave read & write
     APRW = 0x03,
-    
+
     /// fixed slave read
     FPRD = 0x04,
     /// fixed slave write
     FPWR = 0x05,
     /// fixed slave read & write
     FPRW = 0x06,
-    
+
     /// logical memory read
     LRD = 0x0A,
     /// logical memory write
     LWR = 0x0B,
     /// logical memory read & write
     LRW = 0x0C,
-    
+
     /// auto-incremented slave read multiple write
     ARMW = 0x0D,
     /// fixed slave read multiple write
@@ -507,6 +507,3 @@ Drop for Finisher<F>  {
         }
     }
 }
-
-
-

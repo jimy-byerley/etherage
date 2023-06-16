@@ -1,7 +1,24 @@
 use std::vec::*;
 use core::option::Option;
 use core::fmt;
-use crate::{ registers::{ DistributedClock, TimeDifference}, master::Master, SlaveAddress, RawMaster, Field, BitField };
+use chrono;
+use crate::{ registers::{ DistributedClock, TimeDifference, clock_latch}, master::Master,  Slave, SlaveAddress, RawMaster, Field, BitField, PduAnswer };
+
+/// Distribution clock - Physical addr:
+/// - ReceiveTimePort0 :    0x0900
+/// - ReceiveTimePort1 :    0x0904
+/// - ReceiveTimePort2 :    0x0908
+/// - ReceiveTimePort3 :    0x090C
+/// - SystemTime :          0x0910
+/// - ReceivingTimePU :     0x0918
+/// - ReceivingTimeOffset : 0x0920
+/// - ReceivingTimeDelay :  0x0928
+/// - ReceivingTimeDiff :   0x092C
+/// - ReceivingTimeLoop0 :  0x0930
+/// - ReceivingTimeLoop1 :  0x0932
+/// - ReceivingTimeLoop2 :  0x0934
+
+
 
 /// Isochroneous PDI cloking struct
 struct Isochronous {
@@ -31,13 +48,6 @@ struct Isochronous {
     reserved7 : [u8;4],
 }
 
-struct DelayCmd{
-    address : u16,
-    data_area : u16,
-    port0 : u16,
-    port1 : u16,
-}
-
 #[derive(Debug, PartialEq)]
 enum ClockError {
     TimeTooShort,
@@ -60,16 +70,6 @@ enum SyncType {
     DCCSM,
 }
 
-//TODO temp implementation
-#[derive(Default, Debug, PartialEq, Eq)]
-struct Slave<'a> {
-    master : &'a RawMaster
- }
-
-impl<'a> Slave<'a> {
-    fn is_DC_Capable(&self) -> bool { return false; }
-    fn get_address(&self) -> SlaveAddress { return SlaveAddress::Logical; }
-}
 
 #[derive(Debug, PartialEq)]
 struct SyncClock<'a> {
@@ -80,29 +80,37 @@ struct SyncClock<'a> {
     channel : u8,
     slaves : Vec<SlaveInfo<'a>>,
     cycle_time : usize,
-    master : &'a Master
+    master : &'a RawMaster
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 struct SlaveInfo<'a>{
-    slave_ref : &Slave<'a>,
+    slave_ref : &'a Slave<'a>,
     index : usize,
-    delay : usize,
-    distributed_clock : DistributedClock,
+    clock_range : bool,
+    is_dc_supported : bool, // 0: 32 bits, 1 : 64bits
+    clock : DistributedClock
+    // system_time : u64,
+    // system_offset : u64,
+    // system_delay : u32,
+    // system_difference : TimeDifference
 }
 
-
-#[derive(Default, Debug, PartialEq)]
 impl<'a> SlaveInfo<'a> {
     fn new(slv : &Slave<'a>, idx : usize) -> Self{
-        Self { slave_ref: slv, index: idx, delay: 0, distributed_clock: () }
+        Self {
+            slave_ref: slv,
+            index: idx,
+            clock_range :  true,
+            is_dc_supported : true,
+            clock : DistributedClock
+         }
     }
 }
 
-
 impl<'a> SyncClock<'a> {
 
-    fn new(master : &Master) -> Self{
+    fn new(master : &RawMaster) -> Self{
         Self {
             slave_ref: 0,
             command_type: ReferenceClock::ARMW,
@@ -116,8 +124,7 @@ impl<'a> SyncClock<'a> {
     }
 
     fn set_cycle_time(&mut self, time : usize) -> Result<(),ClockError>{
-        if time < 10 { return Err(ClockError::TimeTooShort); }
-        if self.master.s > preo { return Err(ClockError::UnauthorizedCommand); }
+        if time < 20 { return Err(ClockError::TimeTooShort); }
         self.cycle_time = time;
         return Ok(());
     }
@@ -131,11 +138,43 @@ impl<'a> SyncClock<'a> {
         self.slaves.sort_by(|a, b| { a.index < b.index });
     }
 
-    async fn get_delay(&mut self)
+    async fn compute_delay(&mut self) -> Result<(), Err>
     {
         for slv in self.slaves {
-            let mut data : [u8;60] = [u8;60];
-            let data = self.master.get_raw().brw(clock_latch, data).await?;
+
+            //Brodcast delay command
+            let brdw: PduAnswer<u32> = unsafe { self.master.brw(crate::registers::clock_latch,
+                chrono::offset::Local::now().timestamp() as u32)}.await;
+
+            //For each engine read rcv time
+            for slv in self.slaves {
+                let dc: PduAnswer<DistributedClock> = unsafe { self.master.read(slv.slave_ref.get_address(), crate::registers::clock)}.await;
+                if dc.answers == 1 {
+                    slv.clock = dc.value;
+                }
+            }
+
+            //Compute delay
+            let prv_slave : Option<&SlaveInfo<'a>> = Option::None;
+            for slv in self.slaves.iter().rev()
+            {
+                if prv_slave != Option::None {
+                    slv.clock.system_delay = (slv.clock.received_time.port1 as u64 - slv.clock.received_time.port0 as u64 -
+                        prv_slave.unwrap().clock.received_time.port1 as u64  - prv_slave.unwrap().clock.received_time.port0 as u64  -
+                        prv_slave.unwrap().clock.system_offset - prv_slave.unwrap().clock.system_delay  as u64 ) / 2 as u32 ;
+                }
+                prv_slave = Some(slv);
+            }
+
+            //Send delay
+            for slv in self.slaves {
+                let answer = self.master.write(slv.slave_ref.get_address(),crate::registers::clock_delay, slv.clock.system_delay).await;
+                if answer.answers != 1 {
+                    return Err(crate::EthercatError::Slave((slv.slave_ref, "Error on distributed clock delay synchronisation"));
+                }
+            }
+
+            return Ok(());
         }
     }
 

@@ -95,6 +95,7 @@ pub mod sii {
 pub const fmmu: FMMU = FMMU {address: 0x0600, num: 16};
 pub const clock: Field<DistributedClock> = Field::simple(0x0900);
 pub const clock_latch: Field<u32> = Field::simple(0x0900);
+pub const clock_delay: Field<u32> = Field::simple(0x0928);
 
 /// AL (Application Layer) registers are controling the communication state of a slave
 pub mod al {
@@ -789,16 +790,13 @@ pub enum SyncDirection {
 
 /// ETG.1000.4 table 60
 #[repr(packed)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DistributedClock {
     /**
         A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
         This array contains the latched receival time on each port.
     */
-    pub received_time_port_0: u32,
-    pub received_time_port_1: u32,
-    pub received_time_port_2: u32,
-    pub received_time_port_3: u32,
+    pub received_time: ReceiveTimePort,
     /**
         A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
     */
@@ -815,6 +813,15 @@ pub struct DistributedClock {
     reserved: [u32; 3],
 }
 data::packed_pdudata!(DistributedClock);
+
+#[repr(packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct ReceiveTimePort{
+    pub port0 : u32,
+    pub port1 : u32,
+    pub port2 : u32,
+    pub port3 : u32,
+}
 
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
