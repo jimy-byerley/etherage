@@ -1,7 +1,7 @@
 /*!
     This module provide helper structs to configure and use the memory mappings of an arbitrary bunch of slaves.
     
-    Mapping of slave's physical memories to the logical memory is not mendatory but is recommended for saving bandwidth and avoid latencies in realtime operations.
+    Mapping of slave's physical memories to the logical memory is not mendatory but is recommended for saving bandwidth and avoid latencies in realtime operations. The only other way to perform realtime operations is to directly read/write the slave's physical memories.
     
     It highlights
     - [Mapping] to create a mapping configuration of contiguous logical memory for multiple slaves, and compute each inserted value's offsets
@@ -30,6 +30,10 @@
         group = Group::new(mapping)
         group.exchange()
         group.set(position, group.get(position)+velocity)
+        
+    The following scheme shows an example mapping of sdos and registers. On the right side shows the range of PDOs and channels that can be mapped, however the vendor-specific constraints makes them much smaller in practice.
+    
+    ![mapping details](/etherage/schemes/mapping-details.svg)
 */
 
 use crate::{
@@ -66,6 +70,11 @@ pub struct Allocator<'a> {
     free: BTreeMap<usize, usize>,
 }
 impl<'a> Allocator<'a> {
+    pub fn new(master: &'a RawMaster) -> Self { Self {
+        master,
+        config: HashMap::new(),
+        free: BTreeMap::new(),
+    }}
     pub fn group(&self, mapping: Mapping<'_>) -> Group<'a> {todo!()}
 }
 
@@ -89,6 +98,11 @@ pub struct Group<'a> {
     write: Vec<u8>,
 }
 impl Group<'_> {
+    /**
+        write on the given slave the matching configuration from the mapping
+    
+        the slave is assumed to be in state [CommunicationState::PreOperational], and can be switched to [CommunicationState::SafeOperational] after this step.
+    */
     pub async fn configure(&self, slave: &Slave<'_>)  {
         let master = unsafe{ slave.raw_master() };
         let address = match slave.address() {
@@ -190,26 +204,33 @@ impl Group<'_> {
 
 
 /// struct holding configuration informations for multiple slaves, that can be shared between multiple mappings
+#[derive(Clone, Default, Debug)]
 pub struct Config {
-    slaves: RefCell<HashMap<u16, Rc<ConfigSlave>>>,
+    // slave configs are boxed so that they won't move even while inserting in the hashmap
+    slaves: RefCell<HashMap<u16, Box<ConfigSlave>>>,
 }
 /// configuration for one slave
+#[derive(Clone, Default, Debug)]
 struct ConfigSlave {
     pdos: HashMap<u16, ConfigPdo>,
     channels: HashMap<u8, ConfigChannel>,
     fmmu: Vec<ConfigFmmu>,
 }
+/// configuration for a slave PDO
+#[derive(Clone, Debug)]
 struct ConfigPdo {
     config: sdo::Pdo,
     sdos: Vec<Sdo>,
 }
 /// configuration for a slave sync manager channel
+#[derive(Clone, Debug)]
 struct ConfigChannel {
     direction: SyncDirection,
     config: sdo::SyncChannel,
     pdos: Vec<u16>,
 }
 /// configuration for a slave FMMU
+#[derive(Clone, Debug)]
 struct ConfigFmmu {
     length: u16,
     physical: u16,
@@ -243,14 +264,15 @@ impl<'a> Mapping<'a> {
         let mut slaves = self.config.slaves.borrow_mut();
         slaves
             .entry(address)
-            .or_insert_with(|| Rc::new(ConfigSlave {
+            .or_insert_with(|| Box::new(ConfigSlave {
                 pdos: HashMap::new(),
                 channels: HashMap::new(),
                 fmmu: Vec::new(),
                 }));
+        let slave = slaves.get(&address).unwrap().as_ref();
         MappingSlave {
-            mapping: self,
-            config: slaves.get(&address).unwrap().clone(),
+            config: unsafe {&mut *(slave as *const _ as *mut _)},
+            mapping: unsafe {& *self},
         }
     }
 }
@@ -259,26 +281,31 @@ impl<'a> Mapping<'a> {
 /// data coming from one's slave physical memory shall not interlace (this is a limitation due to this library, not ethercat) so any mapping methods in here are preventing multiple mapping instances
 pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
-    config: Rc<ConfigSlave>,
+    config: &'a mut ConfigSlave,
 }
 impl<'a> MappingSlave<'a> {
-    fn config(&self) -> &mut ConfigSlave {
-        unsafe {&mut *(Rc::as_ptr(&self.config) as *mut _)}
-    }
     /// internal method to increment the logical and physical offsets with the given data length
     /// if the logical offset was changed since the last call to this slave's method (ie. the logical memory contiguity is broken), a new FMMU is automatically configured
     fn insert(&mut self, length: usize) -> usize {
         let mut offset = self.mapping.offset.borrow_mut();
-        let current = self.config().fmmu.last().unwrap();
-        if (current.logical + current.length as u32) != *offset as u32 {
-            let new = ConfigFmmu {
-                length: 0, 
-                logical: *offset as u32, 
-                physical: current.physical,
-                };
-            self.config().fmmu.push(new);
+        if let Some(current) = self.config.fmmu.last() {
+            if (current.logical + current.length as u32) != *offset as u32 {
+                let new = ConfigFmmu {
+                    length: 0, 
+                    logical: *offset as u32, 
+                    physical: current.physical,
+                    };
+                self.config.fmmu.push(new);
+            }
         }
-        let current = self.config().fmmu.last_mut().unwrap();
+        else {
+            self.config.fmmu.push(ConfigFmmu {
+                length: 0,
+                logical: *offset as u32,
+                physical: 0x1000,
+            });
+        }
+        let current = self.config.fmmu.last_mut().unwrap();
         current.length += length as u16;
         *offset += length;
         offset.clone()
@@ -295,16 +322,18 @@ impl<'a> MappingSlave<'a> {
     }
     /// map a sync manager channel
     pub fn channel(&'a mut self, index: u8, direction: SyncDirection, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
-        self.config().channels.insert(index, ConfigChannel {
+        self.config.channels.insert(index, ConfigChannel {
             direction,
             config: sdo,
             pdos: Vec::new(),
             });
-        let entries = &self.config().channels.get(&index).unwrap().pdos;
+        let entries = &self.config.channels.get(&index).unwrap().pdos;
         MappingChannel {
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
-            slave: unsafe {&mut *(&self as *const _ as *mut _)},
+            slave: unsafe {&mut *(self as *const _ as *mut _)},
         }
+        
+        // TODO: make possible to push an alread existing channel as long as its content is the same
     }
 }
 pub struct MappingChannel<'a> {
@@ -315,15 +344,18 @@ impl<'a> MappingChannel<'a> {
     /// add a pdo to this channel, and return an object to map it
     pub fn push(&'a mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
         self.entries.push(pdo.index);
-        self.slave.config.pdos.insert(pdo.index, ConfigPdo {
+        let c = ConfigPdo {
             config: pdo,
             sdos: Vec::new(),
-            });
+            };
+        self.slave.config.pdos.insert(pdo.index, c);
         let entries = &self.slave.config.pdos.get(&pdo.index).unwrap().sdos;
         MappingPdo {
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: self.slave,
         }
+        
+        // TODO: make possible to push an alread existing PDO as long as its content is the same
     }
 }
 pub struct MappingPdo<'a> {
@@ -332,7 +364,7 @@ pub struct MappingPdo<'a> {
 }
 impl<'a> MappingPdo<'a> {
     /// add an sdo to this channel, and return its matching field in the logical memory
-    pub fn push<T: PduData>(&'a mut self, sdo: Sdo<T>) -> Field<T> {
+    pub fn push<T: PduData>(&mut self, sdo: Sdo<T>) -> Field<T> {
         self.entries.push(sdo.clone().downcast());
         Field::new(self.slave.insert(sdo.field.len), sdo.field.len)
     }

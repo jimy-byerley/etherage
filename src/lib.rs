@@ -22,6 +22,7 @@
             - [x] SDO read/write
             - [ ] PDO read/write
             - [ ] informations
+            - [ ] tools for mapping
         + [ ] EOE
         + [ ] FOE
     - [ ] distributed clock
