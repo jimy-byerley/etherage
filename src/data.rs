@@ -3,8 +3,6 @@
 use core::{
 	marker::PhantomData,
 	fmt,
-	ops::{Index, IndexMut, Range},
-	slice::SliceIndex,
 	};
 
 /**
@@ -176,31 +174,6 @@ num_pdudata!(f32, F32);
 num_pdudata!(f64, F64);
 
 
-// /// much like PduData but works with variable size types, and allows partial decoding of data.
-// /// [Self::unpack] however returns data limited to the lifetime of the unpacked buffer.
-// pub trait FrameData<'a>: Sized {
-//     fn packed_size(&self) -> usize;
-//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()>;
-//     fn unpack(src: &'a [u8]) -> PackingResult<Self>;
-// }
-// 
-// impl<'a> FrameData<'a> for &'a [u8] {
-//     fn packed_size(&self) -> usize {self.len()}
-//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {Ok(dst.copy_from_slice(self))}
-//     fn unpack(src: &'a [u8]) -> PackingResult<Self> {Ok(src)}
-// }
-
-// impl<T: PduData> FrameData<'a> for T {
-//     fn packed_size(&self) -> usize {<Self as PduData>::packed_size()}
-//     fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {
-//         dst[.. self.packed_size()].copy_from_slice(<Self as PduData>::pack(self).as_bytes_slice());
-//         Ok(())
-//     }
-//     fn unpack(src: &'a [u8]) -> PackingResult<Self> {
-//         <Self as PduData>::unpack(src)
-//     }
-// }
-
 
 /** 
 	locate some data in a datagram by its byte position and length, which must be extracted to type `T` to be processed in rust
@@ -225,6 +198,7 @@ impl<T: PduData> Field<T>
 	pub const fn simple(byte: usize) -> Self {
         Self{extracted: PhantomData, byte, len: T::Packed::LEN}
 	}
+	
 	/// extract the value pointed by the field in the given byte array
 	pub fn get(&self, data: &[u8]) -> T       {
 		T::unpack(&data[self.byte..][..self.len])
@@ -238,7 +212,7 @@ impl<T: PduData> Field<T>
 }
 impl<T: PduData> fmt::Debug for Field<T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "Field{{{}, {}}}", self.byte, self.len)
+		write!(f, "Field{{0x{:x}, {}}}", self.byte, self.len)
 	}
 }
 /** 
@@ -305,7 +279,7 @@ impl<'a> Cursor<&'a [u8]> {
         Ok(&self.data[start .. self.position])
     }
     /// return all the remaining bytes after current position, but does not advance the cursor
-    pub fn remain(&self) -> &'_ [u8] {
+    pub fn remain(&self) -> &'a [u8] {
         &self.data[self.position ..]
     }
     /// consume self and return a slice until current position
@@ -340,7 +314,7 @@ impl<'a> Cursor<&'a mut [u8]> {
         Ok(())
     }
     /// return all the remaining bytes after current position, but does not advance the cursor
-    pub fn remain<'b>(&'b mut self) -> &'_ mut [u8] {
+    pub fn remain(&mut self) -> &'_ mut [u8] {
         &mut self.data[self.position ..]
     }
     /// consume self and return a slice until current position

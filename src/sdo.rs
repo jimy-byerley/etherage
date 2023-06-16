@@ -1,25 +1,5 @@
 /*! 
-Convenient structures to read/write the slave's dictionnary objects (SDO) and configure mappings.
-
-# Example of PDO mapping
-
-	// typical mapping
-	// the SDOs are declared first somewhere
-	let rx = SyncManager {index: 0x1c12, num: 3};
-	let pdo = ConfigurablePdo {index: 0x1600, num: 3};
-	let target_controlword = SubItem::<ControlWord> {index: 0x6040, sub: 0, field: Field::new(0, 2)};
-	let target_position = SubItem::<i32> {index: 0x607a, sub: 0, field: Field::new(0, 4)};
-	
-	// the mapping is done at program start
-	let mut sm = SyncMapping::new(slave, &rx).await?;
-	let mut pdo = sm.push(&pdo).await?;
-	let offset_controlword = pdo.push(&target_controlword).await?;
-	let offset_position = pdo.push(&target_position).await?;
-	pdo.finish().await?;
-	sm.finish().await?;
-	
-	// typical use latter in the program
-	offset_controlword.set(slave.outputs(), ...);
+Convenient structures to read/write the slave's dictionnary objects (SDO) and configure mappings...);
 */
 
 use crate::{
@@ -29,7 +9,7 @@ use crate::{
 use core::fmt;
 
 
-/// description of an SDO's subitem, not a SDO itself
+/// address of an SDO's subitem, not a SDO itself
 #[derive(Clone)]
 pub struct Sdo<T: PduData> {
 	/// index of the item in the slave's dictionnary of objects
