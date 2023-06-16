@@ -1,8 +1,8 @@
 /*!
     structs and consts for every registers in a standard slave's RAM. This should be used instead of any hardcoded register value.
-    
+
     The goal of this file is to gather all physical memory registers at one place, so what you see here is exactly what you can expect in a slave, no more, no less.
-    
+
     Some registers are partially redundant, this is because we can use some field pointing to a big struct and other fields pointing to only parts of the same struct.
 */
 
@@ -11,7 +11,7 @@ use crate::data::{self, Field, BitField, Storage};
 
 pub mod address {
     use super::*;
-    
+
     /// register of the station address, aka the fixed slave address
     /// ETG.1000.4 table 32
     pub const fixed: Field<u16> = Field::simple(0x0010);
@@ -26,10 +26,10 @@ pub mod dl {
 	pub const control: Field<DLControl> = Field::simple(0x0100);
 	pub const status: Field<DLStatus> = Field::simple(0x0110);
 }
-	
+
 pub mod dls_user {
     use super::*;
-    
+
     pub const r1: Field<u8> = Field::simple(0x0120);
     pub const r2: Field<u8> = Field::simple(0x0121);
     pub const r3: Field<u8> = Field::simple(0x0130);
@@ -40,22 +40,22 @@ pub mod dls_user {
     pub const copy_r1_r3: BitField<bool> = BitField::new(0x0141*8, 1);
     pub const r9: BitField<u8> = BitField::new(0x0141*8+1, 7);
     pub const r8: Field<u8> = Field::simple(0x0150);
-    
+
     pub const event: Field<DLSUserEvents> = Field::simple(0x0220);
     pub const event_mask: Field<DLSUserEvents> = Field::simple(0x0202);
     pub const watchdog: Field<u16> = Field::simple(0x0410);
 }
-	
+
 pub const external_event: Field<ExternalEvent> = Field::simple(0x0210);
 pub const external_event_mask: Field<ExternalEvent> = Field::simple(0x0200);
-	
+
 pub const ports_errors: Field<PortsErrorCount> = Field::simple(0x0300);
 pub const lost_link_count: Field<LostLinkCount> = Field::simple(0x0310);
 pub const frame_error_count: Field<FrameErrorCount> = Field::simple(0x0308);
 pub const watchdog_divider: Field<u16> = Field::simple(0x0400);
 pub const watchdog_counter: Field<WatchdogCounter> = Field::simple(0x0442);
 
-/** 
+/**
     SM (Sync Managers) are used for configuring and controling two distinct things:
     - mailbox exchanges (CoE, FoE, ...)
     - pdo exchanges (copying PDO data to slave's physical memory)
@@ -80,7 +80,7 @@ pub const mailbox_buffers: [Field<[u8; 0x100]>; 3] = [
 /// SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
 pub mod sii {
     use super::*;
-    
+
 	pub const access: Field<SiiAccess> = Field::simple(0x0500);
 	pub const control: Field<SiiControl> = Field::simple(0x0502);
 	/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
@@ -88,7 +88,7 @@ pub mod sii {
 	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
 	pub const data: Field<[u8;4]> = Field::simple(0x0508);
 }
-	
+
 // TODO: MII (Media Independent Interface)
 
 /// FMMU (Fieldbus Memory Management Unit) is controling the mapping (copy) for a slave's physical memory from/to logical memory
@@ -99,7 +99,7 @@ pub const clock_latch: Field<u32> = Field::simple(0x0900);
 /// AL (Application Layer) registers are controling the communication state of a slave
 pub mod al {
     use super::*;
-    
+
     pub const control: Field<AlControlRequest> = Field::simple(dls_user::r1.byte);
     pub const response: Field<AlControlResponse> = Field::simple(dls_user::r3.byte);
     pub const error: Field<AlError> = Field::simple(dls_user::r6.byte);
@@ -167,109 +167,109 @@ pub enum AlState {
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AlError {
    ///  No error Any Current state
-    NoError = 0x0000, 
+    NoError = 0x0000,
     ///  Unspecified error
-    Unspecified = 0x0001, 
+    Unspecified = 0x0001,
     ///  No Memory
-    NoMemory = 0x0002, 
+    NoMemory = 0x0002,
     ///  Invalid Device Setup
-    InvalidDeviceSetup = 0x0003, 
-//     0x0005 Reserved due to compatibility reasons 
-    ///  Invalid requested state change 
-    InvalidStateRequest = 0x0011, 
+    InvalidDeviceSetup = 0x0003,
+//     0x0005 Reserved due to compatibility reasons
+    ///  Invalid requested state change
+    InvalidStateRequest = 0x0011,
     ///  Unknown requested state
-    UnknownStateRequest = 0x0012, 
-    ///  Bootstrap not supported 
-    BootstrapNotSupported = 0x0013, 
-    ///  No valid firmware 
-    NoValidFirmware = 0x0014, 
+    UnknownStateRequest = 0x0012,
+    ///  Bootstrap not supported
+    BootstrapNotSupported = 0x0013,
+    ///  No valid firmware
+    NoValidFirmware = 0x0014,
     ///  Invalid mailbox configuration for switching to [AlState::Init]
-    InvalidMailboxConfigBoot = 0x0015, 
+    InvalidMailboxConfigBoot = 0x0015,
     ///  Invalid mailbox configuration for switching to [AlState::PreoOperational]
-    InvalidMailboxConfigPreop = 0x0016, 
+    InvalidMailboxConfigPreop = 0x0016,
     ///  Invalid sync manager configuration
-    InvalidSyncConfig = 0x0017, 
+    InvalidSyncConfig = 0x0017,
     ///  No valid inputs available
-    NoInputsAvailable = 0x0018, 
+    NoInputsAvailable = 0x0018,
     ///  No valid outputs
-    NoValidInputs = 0x0019, 
+    NoValidInputs = 0x0019,
     ///  Synchronization error
-    Synchronization = 0x001A, 
+    Synchronization = 0x001A,
     ///  Sync manager watchdog
-    SyncWatchdog = 0x001B, 
+    SyncWatchdog = 0x001B,
     ///  Invalid Sync Manager Types
-    InvalidSyncTypes = 0x001C, 
+    InvalidSyncTypes = 0x001C,
     ///  Invalid Output Configuration
-    InvalidOutputConfig = 0x001D, 
+    InvalidOutputConfig = 0x001D,
     ///  Invalid Input Configuration
-    InvalidInputConfig = 0x001E, 
+    InvalidInputConfig = 0x001E,
     ///  Invalid Watchdog Configuration
-    InvalidWatchdogConfig = 0x001F, 
+    InvalidWatchdogConfig = 0x001F,
     ///  Slave needs cold start
-    NeedColdStart = 0x0020, 
+    NeedColdStart = 0x0020,
     ///  Slave needs INIT
-    NeedInit = 0x0021, 
+    NeedInit = 0x0021,
     ///  Slave needs PREOP
-    NeedPreop = 0x0022, 
+    NeedPreop = 0x0022,
     ///  Slave needs SAFEOP
-    NeedSafeOp = 0x0023, 
+    NeedSafeOp = 0x0023,
     ///  Invalid Input Mapping
-    InvalidInputMapping = 0x0024, 
+    InvalidInputMapping = 0x0024,
     ///  Invalid Output Mapping
-    InvalidOutputMapping = 0x0025, 
+    InvalidOutputMapping = 0x0025,
     ///  Inconsistent Settings
-    InconsistentSettings = 0x0026, 
+    InconsistentSettings = 0x0026,
     ///  FreeRun not supported
-    FreeRunNotSupported = 0x0027, 
+    FreeRunNotSupported = 0x0027,
     ///  SyncMode not supported
-    SyncModeNotSupported = 0x0028, 
+    SyncModeNotSupported = 0x0028,
     ///  FreeRun needs 3Buffer Mode
-    FreeRunNeedsBuffer = 0x0029, 
+    FreeRunNeedsBuffer = 0x0029,
     ///  Background Watchdog
-    BackgroundWatchdog = 0x002A, 
+    BackgroundWatchdog = 0x002A,
     ///  No Valid Inputs and Outputs
-    NoValidIO = 0x002B, 
+    NoValidIO = 0x002B,
     ///  Fatal Sync Error
-    FatalSync = 0x002C, 
-    ///  No Sync Error 
-    NoSync = 0x002D, 
+    FatalSync = 0x002C,
+    ///  No Sync Error
+    NoSync = 0x002D,
     ///  Invalid DC SYNC Configuration
-    InvalidDcConfig = 0x0030, 
+    InvalidDcConfig = 0x0030,
     ///  Invalid DC Latch Configuration
-    InvalidLatchConfig = 0x0031, 
+    InvalidLatchConfig = 0x0031,
     ///  PLL Error
-    PLL = 0x0032, 
+    PLL = 0x0032,
     ///  DC Sync IO Error
-    DCSyncIO = 0x0033, 
+    DCSyncIO = 0x0033,
     ///  DC Sync Timeout Error
-    DCSyncTimeout = 0x0034, 
+    DCSyncTimeout = 0x0034,
     ///  DC Invalid Sync Cycle Time
-    DCInvalidPeriod = 0x0035, 
-// 0x0036 DC Sync0 Cycle Time
-// 0x0037 DC Sync1 Cycle Time
+    DCInvalidPeriod = 0x0035,
+    // 0x0036 DC Sync0 Cycle Time
+    // 0x0037 DC Sync1 Cycle Time
     ///  MBX_AOE
-    MailboxAOE = 0x0041, 
+    MailboxAOE = 0x0041,
     ///  MBX_EOE
-    MailboxEOE = 0x0042, 
+    MailboxEOE = 0x0042,
     ///  MBX_COE
-    MailboxCOE = 0x0043, 
+    MailboxCOE = 0x0043,
     ///  MBX_FOE
-    MailboxFOE = 0x0044, 
+    MailboxFOE = 0x0044,
     ///  MBX_SOE
-    MailboxSOE = 0x0045, 
+    MailboxSOE = 0x0045,
     ///  MBX_VOE
-    MailboxVOE = 0x004F, 
+    MailboxVOE = 0x004F,
     ///  raised when switching to PreOperational but SII access owner has not been switched to PDI
-    EepromNoAccess = 0x0050, 
+    EepromNoAccess = 0x0050,
     ///  EEPROM Error
-    Eeeprom = 0x0051, 
+    Eeeprom = 0x0051,
     ///  Slave restarted locally
-    SlaveRestarted = 0x0060, 
+    SlaveRestarted = 0x0060,
     ///  Device Identification value updated
-    DeviceIdentificationUpdated = 0x0061, 
+    DeviceIdentificationUpdated = 0x0061,
     // 0x0062 …0  reserved
     ///  Application controller available
-    ApplicationAvailable = 0x00F0, 
+    ApplicationAvailable = 0x00F0,
     // 0x00F0 - 0xFFFF:  reserved
     // 0x8000 - 0xFFFF:  vendor specific
     Specific = 0xffff,
@@ -287,24 +287,24 @@ pub struct DLInformation {
     pub revision: u8,
     /// (minor revision) build number of the slave controller
     pub build: u16,
-    
+
     /// Number of supported FMMU entities  (1 to 10)
     pub fmmus: u8,
     /// Number of supported Sync Manager channels (1 to 10)
     pub sync_managers: u8,
-    
+
     /// RAM size in koctet, means 1024 octets (1-60)
     pub ram_size: u8,
     /// tells which port are present on a slave
     pub ports: [PortDescriptor; 4],
-    
+
     /**
         - `false`: bit operation supported
         - `true`: bit operation not supported This feature bit does not affect mappability of SM.WriteEvent flag (MailboxIn)
     */
     pub fmmu_bit_operation_not_supported: bool,
     /**
-        - `true`: shall only be used for legacy reasons. Reserved registers may not be written, reserved registers may not be read when out of register area (refer to documentation of specific slave controller (ESC) 
+        - `true`: shall only be used for legacy reasons. Reserved registers may not be written, reserved registers may not be read when out of register area (refer to documentation of specific slave controller (ESC)
         - `false`: no restriction in register access
     */
     pub reserved_registers_not_supported: bool,
@@ -318,12 +318,12 @@ pub struct DLInformation {
     pub separate_fcs_errors: bool,
     /// true if available. This feature refers to registers 0x981[7:3], 0x0984
     pub dc_sync_activation_enhanced: bool,
-    
+
     /// if true, `LRW` is not supported
     pub logical_exchange_not_supported: bool,
     /// if true, `BRW`, `APRẀ`, `FPRW` is not supported
     pub physicial_exchange_not_supported: bool,
-    
+
     /**
         - 0: not active
         - 1: active, FMMU 0 is used for RxPDO (no bit mapping) FMMU 1 is used for TxPDO (no bit mapping) FMMU 2 is used for Mailbox write event bit of Sync manager 1 Sync manager 0 is used for write mailbox Sync manager 1 is used for read mailbox Sync manager 2 is used as Buffer for incoming data Sync manager 3 is used as Buffer for outgoing data
@@ -402,7 +402,7 @@ data::bilge_pdudata!(DLControl, u32);
 #[derive(TryFromBits, Debug, Copy, Clone)]
 pub enum Forwarding {
 	/// EtherCAT frames are processed, non-EtherCAT frames are forwarded without modification, The source MAC address is not changed for any frame
-	Transmit = 0, 
+	Transmit = 0,
 	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC[1] is set to 1 – locally administered address).
 	Filter = 1,
 }
@@ -412,9 +412,9 @@ data::bilge_pdudata!(Forwarding, u1);
 #[derive(TryFromBits, Debug, Copy, Clone)]
 pub enum LoopControl {
 	/// closed at “link down”, open with “link up”
-	Auto = 0, 
+	Auto = 0,
 	/// loop closed at “link down”, opened with writing 01 after “link up” (or receiving a valid Ethernet frame at the closed port)
-	AutoClose = 1, 
+	AutoClose = 1,
 	AlwaysOpen = 2,
 	AlwaysClosed = 3,
 }
@@ -467,7 +467,7 @@ data::bilge_pdudata!(DLSUserEvents, u32);
 
 /**
 	The external event is mapped to IRQ parameter of all EtherCAT PDUs accessing this slave. If an event is set, and the associated mask is set the corresponding bit in the IRQ parameter of a PDU is set.
-	
+
 	ETG.1000.4 table 38
 */
 #[bitsize(16)]
@@ -531,7 +531,7 @@ data::bilge_pdudata!(FrameErrorCount, u48);
 
 /**
 	A write will reset the watchdog counters
-	
+
 	ETG.1000.4 table 47
 */
 #[bitsize(16)]
@@ -567,7 +567,7 @@ pub enum SiiOwner {
 }
 data::bilge_pdudata!(SiiOwner, u1);
 
-/** 
+/**
     register controling the read/write operations to Slave Information Interface (SII)
 
 	ETG.1000.4 table 49
@@ -587,7 +587,7 @@ pub struct SiiControl {
 	pub read_size: SiiTransaction,
 	/// unit of SII addresses
 	pub address_unit: SiiUnit,
-	
+
 	/**
 		read operation requested (parameter write) or read operation busy (parameter read)
 		To start a new read operation there must be a positive edge on this parameter
@@ -603,7 +603,7 @@ pub struct SiiControl {
 		To start a new reload operation there must be a positive edge on this parameter
 	*/
 	pub reload_operation: bool,
-	
+
 	/// checksum error while reading at startup
 	pub checksum_error: bool,
 	/// error on reading Device Information
@@ -612,7 +612,7 @@ pub struct SiiControl {
 	pub command_error: bool,
 	/// error on last write operation
 	pub write_error: bool,
-	
+
 	/// operation is ongoing
 	pub busy: bool,
 }
@@ -650,9 +650,9 @@ impl FMMU {
 
 /**
 	The fieldbus memory management unit (FMMU) converts logical addresses into physical addresses by the means of internal address. Thus, FMMUs allow one to use logical addressing for data segments that span several slave devices: one DLPDU addresses data within several arbitrarily distributed devices. The FMMUs optionally support bit wise mapping. A DLE may contain several FMMU entities. Each FMMU entity maps one cohesive logical address space to one cohesive physical address space.
-	
+
 	The FMMU consists of up to 16 entities. Each entity describes one memory translation between the logical memory of the EtherCAT communication network and the physical memory of the slave.
-	
+
 	ETG.1000.4 table 56
 */
 #[bitsize(128)]
@@ -668,19 +668,19 @@ pub struct FMMUEntry {
 	/// offset of the end bit in the logical start byte
 	pub logical_end_bit: u3,
 	reserved: u5,
-	
+
 	/// start byte in the physical memory (set by the sync manager)
 	pub physical_start_byte: u16,
 	/// start bit in the physical start byte
 	pub physical_start_bit: u3,
 	reserved: u5,
-	
+
 	/// entity will be used for read service
 	pub read: bool,
 	/// entity will be used for write service
 	pub write: bool,
 	reserved: u6,
-	
+
 	/// enable this FMMU entry, so physical memory will be copied from/to logical memory on read/write
 	pub enable: bool,
 	reserved: u7,
@@ -710,7 +710,7 @@ impl SyncManager {
     pub fn mappable(&self, index: u8) -> Field<SyncManagerChannel>   {self.channel(2+index)}
 }
 
-/** 
+/**
     The Sync manager controls the access to the DL-user memory. Each channel defines a consistent area of the DL-user memory.
 
     There is two ways of data exchange between master and PDI:
@@ -731,7 +731,7 @@ pub struct SyncManagerChannel {
     pub mode: SyncMode,
     /// whether the consistent DL -user memory area is read or written by the master.
     pub direction: SyncDirection,
-    
+
     /// an event is generated if there is new data available in the consistent DL-user memory area which was written by the master (direction write) or if the new data from the DL-user was read by the master (direction read).
     pub ec_event: bool,
     /// an event is generated if there is new data available in the consistent DL-user memory area which was written by DLS-user or if the new data from the Master was read by the DLS-user.
@@ -744,20 +744,20 @@ pub struct SyncManagerChannel {
     /// if the consistent DL -user memory (direction read) has been read by the master and the event enable parameter is set.
     pub read_event: bool,
     reserved: u1,
-    
+
     /// true if there is data waiting to be read (by master or slave) in the buffer
     pub mailbox_full: bool,
     /// state (buffer number, locked) of the consistent DL-user memory if it is of buffered access type.
     pub buffer_state: u2,
     pub read_buffer_open: bool,
     pub write_buffer_open: bool,
-    
+
     /// activate this channel
     pub enable: bool,
     /// A change in this parameter indicates a repeat request. This is primarily used to repeat the last mailbox interactions.
     pub repeat: bool,
     reserved: u4,
-    
+
     /// if the DC 0 Event shall be invoked in case of a EtherCAT write
     pub dc_event_bus: bool,
     /// if the DC 0 Event shall be invoked in case of a local write
@@ -792,10 +792,13 @@ pub enum SyncDirection {
 #[derive(Clone, Debug)]
 pub struct DistributedClock {
     /**
-        A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly). 
+        A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
         This array contains the latched receival time on each port.
     */
-    pub received_time: [u32; 4],
+    pub received_time_port_0: u32,
+    pub received_time_port_1: u32,
+    pub received_time_port_2: u32,
+    pub received_time_port_3: u32,
     /**
         A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
     */
@@ -825,4 +828,64 @@ data::bilge_pdudata!(TimeDifference, u32);
 
 
 
-
+// /** registers in physical memory of a slave
+//
+// 	this struct does not intend to match any structure defined in the ETG specs, it is only sorting fields pointing to the physical memory of a slave. according to the ETG specs, most of these fields shall exist in each slave's physical memory, others might be optional and the user must check for this before using them.
+// */
+// const registers = Registers {
+// 	address: {
+// 		fixed: Field::<u16>::new(0x0010),
+// 		alias: Field::<u16>::new(0x0012),
+// 	},
+// 	dl_control: Field::<DLControl>::new(0x0101),
+// 	dl_status: Field::<DLStatus>::new(0x0110),
+//
+// 	dls_user: {
+// 		r1: Field::<u8>::simple(0x0120),
+// 		r2: Field::<u8>::simple(0x0121),
+// 		r3: Field::<u8>::simple(0x0130),
+// 		r4: Field::<u8>::simple(0x0131),
+// 		r5: Field::<u16>::simple(0x0132),
+// 		r6: Field::<u16>::simple(0x0134),
+// 		r7: Field::<u8>::simple(0x0140),
+// 		copy_r1_r3: BitField::<bool>::new(0x0141*8, 1),
+// 		r9: BitField::<u8>::new(0x0141*8+1, 7),
+// 		r8: Field::<u8>::simple(0x0150),
+//
+// 		event: Field::<DLSUserEvents>::simple(0x0220),
+// 		event_mask: Field::<DLSUserEvents>::simple(0x0202),
+// 		watchdog: Field::<u16>::simple(0x0410),
+// 	},
+//
+// 	external_event: Field::<ExternalEvent>::simple(0x0210),
+// 	external_event_mask: Field::<ExternalEvent>::simple(0x0200),
+//
+// 	ports_errors: Field::<PortsErrorCount>::simple(0x0300),
+// 	lost_link_count: Field::<LostLinkCount>::simple(0x0310),
+// 	frame_error_count: Field::<FrameErrorCount>::simple(0x0308),
+// 	watchdog_divider: Field::<u16>::simple(0x0400),
+// 	watchdog_counter: Field::<WatchdogCounter>::simple(0x0442),
+//
+// 	sync_manager: {
+// 		/// ETG.1000.6 table 45
+// 		watchdog: Field::<u16>::simple(0x0420),
+// 		/// ETG.1000.6 table 46
+// 		watchdog_status: Field::<bool>::simple(0x0440),
+// 	},
+//
+// 	sii: {
+// 		access: Field::<SiiAccess>::simple(0x0500),
+// 		control: Field::<SiiControl>::simple(0x0502),
+// 		/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
+// 		address: Field::<u32>::simple(0x0504),
+// 		/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
+// 		data: Field::<u32>::simple(0x0508),
+// 	},
+//
+// 	// TODO: MII (Media Independent Interface)
+//
+// 	fmmus: FMMU {address: 0x0600, num: 16},
+// 	sync_manager: SyncManager {address: 0x0800, num: 16},
+// 	clock: Field::<DistributedClock>::simple(0x0900),
+// 	clock_latch: Field::<u32>::simple(0x0900),
+// };
