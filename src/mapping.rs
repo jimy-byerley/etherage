@@ -41,12 +41,13 @@ use crate::{
     };
 use core::{
     ops::Range,
-    cell::RefMut,
+    cell::{Ref, RefMut},
     };
 use std::{
     cell::RefCell,
     collections::{HashMap, BTreeMap},
     sync::{Arc, Weak},
+    rc::Rc,
     };
 use bilge::prelude::*;
     
@@ -190,7 +191,7 @@ impl Group<'_> {
 
 /// struct holding configuration informations for multiple slaves, that can be shared between multiple mappings
 pub struct Config {
-    slaves: RefCell<HashMap<u16, RefCell<ConfigSlave>>>,
+    slaves: RefCell<HashMap<u16, Rc<ConfigSlave>>>,
 }
 /// configuration for one slave
 struct ConfigSlave {
@@ -239,16 +240,17 @@ impl<'a> Mapping<'a> {
     ///
     /// data coming for different slaves can interlace, hence multiple slave mapping instances can exist at the same time
     pub fn slave(&self, address: u16) -> MappingSlave<'_>  {
-        self.config.slaves.borrow_mut()
+        let mut slaves = self.config.slaves.borrow_mut();
+        slaves
             .entry(address)
-            .or_insert_with(|| RefCell::new(ConfigSlave {
+            .or_insert_with(|| Rc::new(ConfigSlave {
                 pdos: HashMap::new(),
                 channels: HashMap::new(),
                 fmmu: Vec::new(),
                 }));
         MappingSlave {
             mapping: self,
-            config: self.config.slaves.borrow().get(&address).unwrap().borrow_mut(),
+            config: slaves.get(&address).unwrap().clone(),
         }
     }
 }
@@ -257,23 +259,26 @@ impl<'a> Mapping<'a> {
 /// data coming from one's slave physical memory shall not interlace (this is a limitation due to this library, not ethercat) so any mapping methods in here are preventing multiple mapping instances
 pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
-    config: RefMut<'a, ConfigSlave>,
+    config: Rc<ConfigSlave>,
 }
-impl MappingSlave<'_> {
+impl<'a> MappingSlave<'a> {
+    fn config(&self) -> &mut ConfigSlave {
+        unsafe {&mut *(Rc::as_ptr(&self.config) as *mut _)}
+    }
     /// internal method to increment the logical and physical offsets with the given data length
     /// if the logical offset was changed since the last call to this slave's method (ie. the logical memory contiguity is broken), a new FMMU is automatically configured
     fn insert(&mut self, length: usize) -> usize {
         let mut offset = self.mapping.offset.borrow_mut();
-        let current = self.config.fmmu.last().unwrap();
+        let current = self.config().fmmu.last().unwrap();
         if (current.logical + current.length as u32) != *offset as u32 {
             let new = ConfigFmmu {
                 length: 0, 
                 logical: *offset as u32, 
                 physical: current.physical,
                 };
-            self.config.fmmu.push(new);
+            self.config().fmmu.push(new);
         }
-        let current = self.config.fmmu.last_mut().unwrap();
+        let current = self.config().fmmu.last_mut().unwrap();
         current.length += length as u16;
         *offset += length;
         offset.clone()
@@ -289,16 +294,16 @@ impl MappingSlave<'_> {
         Field::new(self.insert(field.len), field.len)
     }
     /// map a sync manager channel
-    pub fn channel(&mut self, index: u8, direction: SyncDirection, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
-        self.config.channels.insert(index, ConfigChannel {
+    pub fn channel(&'a mut self, index: u8, direction: SyncDirection, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
+        self.config().channels.insert(index, ConfigChannel {
             direction,
             config: sdo,
             pdos: Vec::new(),
             });
-        let entries = &mut self.config.channels.get(&index).unwrap().pdos;
+        let entries = &self.config().channels.get(&index).unwrap().pdos;
         MappingChannel {
-            slave: self,
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
+            slave: unsafe {&mut *(&self as *const _ as *mut _)},
         }
     }
 }
@@ -306,9 +311,9 @@ pub struct MappingChannel<'a> {
     slave: &'a mut MappingSlave<'a>,
     entries: &'a mut Vec<u16>,
 }
-impl MappingChannel<'_> {
+impl<'a> MappingChannel<'a> {
     /// add a pdo to this channel, and return an object to map it
-    pub fn push(&mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
+    pub fn push(&'a mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
         self.entries.push(pdo.index);
         self.slave.config.pdos.insert(pdo.index, ConfigPdo {
             config: pdo,
@@ -316,8 +321,8 @@ impl MappingChannel<'_> {
             });
         let entries = &self.slave.config.pdos.get(&pdo.index).unwrap().sdos;
         MappingPdo {
-            slave: self.slave,
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
+            slave: self.slave,
         }
     }
 }
@@ -325,9 +330,9 @@ pub struct MappingPdo<'a> {
     slave: &'a mut MappingSlave<'a>,
     entries: &'a mut Vec<Sdo>,
 }
-impl MappingPdo<'_> {
+impl<'a> MappingPdo<'a> {
     /// add an sdo to this channel, and return its matching field in the logical memory
-    pub fn push<T: PduData>(&mut self, sdo: Sdo<T>) -> Field<T> {
+    pub fn push<T: PduData>(&'a mut self, sdo: Sdo<T>) -> Field<T> {
         self.entries.push(sdo.clone().downcast());
         Field::new(self.slave.insert(sdo.field.len), sdo.field.len)
     }
