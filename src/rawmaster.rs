@@ -198,6 +198,8 @@ impl RawMaster {
 			}
 	}
 	
+	// TODO  support 32 bit PDU address for logical access, this should be done by grouping slave and memory address
+	
 	/// send a PDU on the ethercat bus
 	/// the PDU is buffered with more PDUs if possible
 	/// returns the number of slaves who processed the command

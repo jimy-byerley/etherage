@@ -62,6 +62,9 @@ impl<'a> Slave<'a> {
             coe: None,
         }
     }
+    pub fn address(&self) -> SlaveAddress  {self.address}
+    pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
+    
     /// retreive the slave's identification informations
     pub fn informations(&self)  {todo!()}
     

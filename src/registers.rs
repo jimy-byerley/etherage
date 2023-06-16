@@ -656,7 +656,7 @@ impl FMMU {
 	ETG.1000.4 table 56
 */
 #[bitsize(128)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
 pub struct FmmuEntry {
 	/// start byte in the logical memory
 	pub logical_start_byte: u32,

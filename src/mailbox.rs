@@ -96,6 +96,8 @@ impl<'b> Mailbox<'b> {
         `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
     
         return the slice of data received.
+        
+        - 0 is lowest priority, 3 is highest
     */
 	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
@@ -145,6 +147,8 @@ impl<'b> Mailbox<'b> {
 	}
 	/**
         write the given frame in the mailbox, wait for it first if already busy
+        
+        - 0 is lowest priority, 3 is highest
     */
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
 		let mailbox_control = registers::sync_manager::interface.mailbox_write();
