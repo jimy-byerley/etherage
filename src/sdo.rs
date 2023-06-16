@@ -11,7 +11,7 @@ use bilge::prelude::*;
 
 
 /// address of an SDO's subitem, not a SDO itself
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Eq, PartialEq)]
 pub struct Sdo<T: PduData=()> {
 	/// index of the item in the slave's dictionnary of objects
 	pub index: u16,
@@ -32,26 +32,32 @@ pub enum SdoPart {
 impl<T: PduData> Sdo<T> {
 	/// address an sdo subitem, deducing its bit size from the `PduData` impl
 	/// offset is the bit offset of the subitem in the complete sdo
-	pub fn sub(index: u16, sub: u8, offset: usize) -> Self { Self{
+	pub const fn sub(index: u16, sub: u8, offset: usize) -> Self { Self{
 		index,
 		sub: SdoPart::Sub(sub),
 		field: BitField::new(offset, T::Packed::LEN*8),
 	}}
-	pub fn sub_with_size(index: u16, sub: u8, offset: usize, size: usize) -> Self { Self{
+	pub const fn sub_with_size(index: u16, sub: u8, offset: usize, size: usize) -> Self { Self{
 		index,
 		sub: SdoPart::Sub(sub),
 		field: BitField::new(offset, size),
 	}}
 	/// address a complete sdo at the given index, with `sub=0` and `byte=0`
-	pub fn complete(index: u16) -> Self { Self{ 
+	pub const fn complete(index: u16) -> Self { Self{ 
 		index, 
 		sub: SdoPart::Complete, 
 		field: BitField::new(0, T::Packed::LEN*8),
 	}}
-	pub fn complete_with_size(index: u16, size: usize) -> Self { Self{ 
+	pub const fn complete_with_size(index: u16, size: usize) -> Self { Self{ 
 		index, 
 		sub: SdoPart::Complete, 
 		field: BitField::new(0, size),
+	}}
+	
+	pub fn downcast(self) -> Sdo { Sdo{
+        index: self.index,
+        sub: self.sub,
+        field: BitField::new(self.field.bit, self.field.len),
 	}}
 	
 // 	/// retreive the current subitem value from the given slave
@@ -76,6 +82,15 @@ impl<T: PduData> fmt::Debug for Sdo<T> {
 		write!(f, "Sdo {{index: {:x}, sub: {:?}, field: {:?}}}", self.index, self.sub, self.field)
 	}
 }
+// [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
+impl<T: PduData> Clone for Sdo<T> {
+    fn clone(&self) -> Self { Self {
+        index: self.index,
+        sub: self.sub,
+        field: BitField::new(self.field.bit, self.field.len)
+    }}
+}
+impl<T: PduData> Copy for Sdo<T> {}
 
 /// description of SDO configuring a PDO
 /// the SDO is assumed to follow the cia402 specifications for PDO SDOs
@@ -89,10 +104,10 @@ pub struct Pdo {
 impl Pdo {
     /// return a field pointing to the nth entry definition of the PDO
     pub fn slot(&self, i: u8) -> Sdo<PdoEntry> {
-        Sdo::sub(self.index, i+1, core::mem::size_of::<u8>() + core::mem::size_of::<PdoEntry>()*i)
+        Sdo::sub(self.index, i+1, core::mem::size_of::<u8>() + core::mem::size_of::<PdoEntry>()*usize::from(i))
     }
     /// return a field pointing to the number of items set in the PDO
-    pub fn len(&self) -> Sdo<u8> {
+    pub const fn len(&self) -> Sdo<u8> {
         Sdo::sub(self.index, 0, 0)
     }
 }
@@ -114,27 +129,54 @@ pub struct PdoEntry {
 }
 data::bilge_pdudata!(PdoEntry, u32);
 
-/// description of SDO configuring a SyncManager
-/// the SDO is assumed to follow the cia402 specifications for syncmanager SDOs
-#[derive(Copy, Clone, Eq, PartialEq)]
+/// ETG.1000.6 table 67
 pub struct SyncManager {
-	/// index of the SDO that configures the SyncManager
-	pub index: u16,
-	/// max number of PDO that can be assigned to the SyncManager
-	pub num: u8,
+    /// index of first SDO configuring a [SyncChannel]
+    pub index: u16,
+    /// number of SDOs configuring SyncChannels
+    pub num: u8,
 }
 impl SyncManager {
+    pub fn channel(&self, i: u8) -> SyncChannel {
+        SyncChannel { index: self.index + u16::from(i), num: 254 }
+    }
+}
+
+/**
+    description of SDO configuring a SyncChannel
+    
+    the SDO is assumed to follow the cia402 specifications for syncmanager SDOs 
+    (ETG.1000.6 table 77)
+*/
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct SyncChannel {
+	/// index of the SDO that configures the SyncChannel
+	pub index: u16,
+	/// max number of PDO that can be assigned to the SyncChannel
+	pub num: u8,
+}
+impl SyncChannel {
     /// return a field pointing to the nth entry definition of the sync manager channel
     pub fn slot(&self, i: u8) -> Sdo<u16> {
-        Sdo::sub(self.index, i+1, core::mem::size_of::<u8>() + core::mem::size_of::<u16>()*i)
+        Sdo::sub(self.index, i+1, core::mem::size_of::<u8>() + core::mem::size_of::<u16>()*usize::from(i))
     }
     /// return a field pointing to the number of items set in the sync manager channel
-    pub fn len(&self) -> Sdo<u8> {
+    pub const fn len(&self) -> Sdo<u8> {
         Sdo::sub(self.index, 0, 0)
     }
 }
-impl fmt::Debug for SyncManager {
+impl fmt::Debug for SyncChannel {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "SyncManager {{index: {:x}, num: {}}}", self.index, self.num)
+		write!(f, "SyncChannel {{index: {:x}, num: {}}}", self.index, self.num)
 	}
 }
+
+const device_type: Sdo<u32> = Sdo::complete(0x0000);
+const error: Sdo<u8> = Sdo::complete(0x0001);
+// const device_name: Sdo<str> = Sdo::complete(0x0008);
+// const hardware_version: Sdo<str> = Sdo::complete(0x0009);
+// const software_version: Sdo<str> = Sdo::complete(0x000a);
+// const identity: Sdo<record> = Sdo::complete(0x0018);
+// const receive_pdos: PdoMappings = PdoMappings {index: 0x1600; num: 512};
+// const transmit_pdos: PdoMappings = PdoMappings {index: 0x1a00; num: 512};
+// const sync_manager: SyncManager = SyncManager {index: 0x1c10, num: 254};
