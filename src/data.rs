@@ -188,8 +188,9 @@ num_pdudata!(f64, F64);
 	
 	It acts like a getter/setter of a value in a byte sequence. One can think of it as an offset to a data location because it does not actually point the data but only its offset in the byte sequence, it also contains its length to dynamically check memory bounds.
 */
-#[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Default, Eq, PartialEq, Hash)]
 pub struct Field<T: PduData> {
+    /// this is only here to mark that T is actually used
 	extracted: PhantomData<T>,
 	/// start byte index of the object
 	pub byte: usize,
@@ -223,13 +224,20 @@ impl<T: PduData> fmt::Debug for Field<T> {
 		write!(f, "Field{{0x{:x}, {}}}", self.byte, self.len)
 	}
 }
+// [Clone] and [Copy] must be implemented manually to allow copying a field pointing to a type which does not implement this operation
+impl<T: PduData> Clone for Field<T> {
+    fn clone(&self) -> Self   {Self::new(self.byte, self.len)}
+}
+impl<T: PduData> Copy for Field<T> {}
+
 /** 
 	locate some data in a datagram by its bit position and length, which must be extracted to type `T` to be processed in rust
 	
 	It acts like a getter/setter of a value in a byte sequence. One can think of it as an offset to a data location because it does not actually point the data but only its offset in the byte sequence, it also contains its length to dynamically check memory bounds.
 */
-#[derive(Default, Clone)]
+#[derive(Default, Eq, PartialEq, Hash)]
 pub struct BitField<T: PduData> {
+    /// this is only here to mark that T is actually used
 	extracted: PhantomData<T>,
 	/// start bit index of the object
 	pub bit: usize,
@@ -251,6 +259,11 @@ impl<T: PduData> fmt::Debug for BitField<T> {
 		write!(f, "BitField{{{}, {}}}", self.bit, self.len)
 	}
 }
+// [Clone] and [Copy] must be implemented manually to allow copying a field pointing to a type which does not implement this operation
+impl<T: PduData> Clone for BitField<T> {
+    fn clone(&self) -> Self   {Self::new(self.bit, self.len)}
+}
+impl<T: PduData> Copy for BitField<T> {}
 
 
 
