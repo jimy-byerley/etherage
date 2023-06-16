@@ -36,7 +36,7 @@ async fn main() -> std::io::Result<()> {
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
                 let position = pdo.push(Sdo::<i32>::complete(0x6064));
-    println!("done");
+    println!("done {:#?}", config);
     
     let mut allocator = mapping::Allocator::new(&master);
     let mut group = allocator.group(mapping);

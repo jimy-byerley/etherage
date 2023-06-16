@@ -79,7 +79,7 @@ impl SdoPart {
 }
 impl<T: PduData> fmt::Debug for Sdo<T> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Sdo {{index: {:x}, sub: {:?}, field: {:?}}}", self.index, self.sub, self.field)
+		write!(f, "Sdo {{index: 0x{:x}, sub: {:?}, field: {:?}}}", self.index, self.sub, self.field)
 	}
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
@@ -113,7 +113,7 @@ impl Pdo {
 }
 impl fmt::Debug for Pdo {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Pdo {{index: {:x}, num: {}}}", self.index, self.num)
+		write!(f, "Pdo {{index: 0x{:x}, num: {}}}", self.index, self.num)
 	}
 }
 
@@ -167,7 +167,7 @@ impl SyncChannel {
 }
 impl fmt::Debug for SyncChannel {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "SyncChannel {{index: {:x}, num: {}}}", self.index, self.num)
+		write!(f, "SyncChannel {{index: 0x{:x}, num: {}}}", self.index, self.num)
 	}
 }
 

@@ -44,12 +44,13 @@ use crate::{
     registers,
     };
 use core::{
+    cmp,
     ops::Range,
     cell::{Ref, RefMut},
     };
 use std::{
     cell::RefCell,
-    collections::{HashMap, BTreeMap},
+    collections::{HashMap, HashSet, BTreeSet},
     sync::{Arc, Weak},
     rc::Rc,
     };
@@ -66,17 +67,66 @@ pub use crate::registers::SyncDirection;
 
 pub struct Allocator<'a> {
     master: &'a RawMaster,
-    config: HashMap<u16, Weak<ConfigSlave>>,
-    free: BTreeMap<usize, usize>,
+    slaves: HashSet<u16>,
+    free: BTreeSet<LogicalSlot>,
+}
+/// allocator slot in logical memory
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
+struct LogicalSlot {
+    position: u32,
+    size: u32,
 }
 impl<'a> Allocator<'a> {
     pub fn new(master: &'a RawMaster) -> Self { Self {
         master,
-        config: HashMap::new(),
-        free: BTreeMap::new(),
+        slaves: HashSet::new(),
+        free: BTreeSet::new(),
     }}
-    pub fn group(&self, mapping: Mapping<'_>) -> Group<'a> {todo!()}
+    pub fn group(&mut self, mapping: Mapping<'_>) -> Group<'_> {
+        todo!()
+//         let config = mapping.config.into_inner();
+//         // check that new mapping has not conflict with current config
+//         for address in config.slaves.keys() {
+//             assert!(! self.slaves.contains(address));
+//         }
+//         // compute mapping size
+//         let size = mapping.offset.into_inner();
+// //         let size = mapping.slaves.values()
+// //                     .filter_map(|slave| slave.fmmus.last())
+// //                     .map(|fmmu|  fmmu.logical)
+// //                     .max();
+//         // reserve
+//         let slot = self.free.range(u32::from(size) ..)
+//                         .next().expect("no more logical memory");
+//         self.free.pop(slot);
+//         if slot.size > size {
+//             self.free.insert(LogicalSlot {
+//                 position: slot.position + size, 
+//                 size: slot.size - size,
+//             });
+//         }
+//         self.slaves.extend(config.keys());
+//         // create
+//         Group {
+//             master: self.master,
+//             allocator: self,
+//             allocated: slot.size,
+//             config: &config,
+//             offset: slot.position,
+//             size,
+//             read: vec![0; size],
+//             write: vec![0; size],
+//         }
+    }
 }
+// impl cmp::Ord for LogicalSlot {
+//     fn cmp(&self, other: &Self) -> cmp::Ordering {
+//         match self.size.cmp(other.size) {
+//             Equal => self.position.cmp(other.position),
+//             o => o,
+//         }
+//     }
+// }
 
 /**
     Allows to use a contiguous slice of logical memory, with appropriate duplex buffering for read/write operations.
@@ -85,13 +135,15 @@ impl<'a> Allocator<'a> {
 */
 pub struct Group<'a> {
     master: &'a RawMaster,
-    config: HashMap<u16, Arc<ConfigSlave>>,
+    allocator: &'a Allocator<'a>,
+    allocated: u32,
+    
+    /// configuration per slave
+    config: HashMap<u16, Box<ConfigSlave>>,
     /// byte offset of this data group in the logical memory
     offset: u32,
     /// byte size of this data group in the logical memory
     size: u32,
-    /// number of slaves in the group
-    slaves: u16,
     /// data duplex: data to read from slave
     read: Vec<u8>,
     /// data duplex: data to write to slave
@@ -182,17 +234,17 @@ impl Group<'_> {
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: offset should be passed as 32 bit address, this requires a modification of RawMaster
-        assert_eq!(self.master.pdu(PduCommand::LRW, 0, self.offset as u16, self.write.as_mut_slice()).await, self.slaves);
+        assert_eq!(self.master.pdu(PduCommand::LRW, 0, self.offset as u16, self.write.as_mut_slice()).await, self.config.len() as u16);
         self.write.as_mut_slice()
     }
     /// read data slice from segment
     pub async fn read(&mut self) -> &'_ mut [u8]  {
-        assert_eq!(self.master.pdu(PduCommand::LRD, 0, self.offset as u16, self.read.as_mut_slice()).await, self.slaves);
+        assert_eq!(self.master.pdu(PduCommand::LRD, 0, self.offset as u16, self.read.as_mut_slice()).await, self.config.len() as u16);
         self.read.as_mut_slice()
     }
     /// write data slice to segment
     pub async fn write(&mut self) -> &'_ mut [u8]  {
-        assert_eq!(self.master.pdu(PduCommand::LWR, 0, self.offset as u16, self.write.as_mut_slice()).await, self.slaves);
+        assert_eq!(self.master.pdu(PduCommand::LWR, 0, self.offset as u16, self.write.as_mut_slice()).await, self.config.len() as u16);
         self.write.as_mut_slice()
     }
     
