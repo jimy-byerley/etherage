@@ -27,6 +27,10 @@
     - [ ] distributed clock
         + [ ] static drift
         + [ ] dynamic drift
+    - optimization features
+        + [x] multiple PDUs per ethercat frame (speed up and compress transmissions)
+        + [x] tasks for different slaves or for same slave are parallelized whenever possible
+        + [x] no dynamic allocation in transmission and realtime functions
 */
 
 pub mod data;
@@ -40,7 +44,7 @@ pub mod mailbox;
 pub mod sdo;
 pub mod can;
 pub mod master;
-// pub mod slave;
+pub mod slave;
 
 
 pub use crate::data::{PduData, Field, BitField};
@@ -48,4 +52,31 @@ pub use crate::sdo::Sdo;
 pub use crate::socket::*;
 pub use crate::rawmaster::*;
 pub use crate::master::*;
-// pub use crate::slave::*;
+pub use crate::slave::*;
+
+
+use std::sync::Arc;
+
+/// general object reporting an unexpected result regarding ethercat communication
+#[derive(Clone, Debug)]
+pub enum EthercatError<T> {
+    /// error caused by communication support
+    ///
+    /// these errors are exterior to this library
+    Io(Arc<std::io::Error>),
+    
+    /// error reported by a slave, its type depend on the operation returning this error
+    ///
+    /// these errors can generally be handled and fixed by retrying the operation or reconfiguring the slave
+    Slave(T),
+    
+    /// error reported by the master
+    ///
+    /// these errors can generally be handled and fixed by retrying the operation or using the master differently
+    Master(&'static str),
+    
+    /// error detected by the master in the ethercat communication
+    ///
+    /// these errors can generally not be fixed and the whole communication has to be restarted
+    Protocol(&'static str),
+}
