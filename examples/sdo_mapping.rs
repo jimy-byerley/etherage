@@ -6,14 +6,13 @@ use etherage::{
     Mapping, Group, 
     registers,
     mapping,
-    sdo,
-    mapping::SyncDirection,
+    sdo::{self, SyncDirection},
     };
 use bilge::prelude::u2;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let master = Arc::new(RawMaster::new(EthernetSocket::new("eno1")?));
+    let master = Arc::new(RawMaster::new(EthernetSocket::new("enp24s0")?));
     {
         let master = master.clone();
         std::thread::spawn(move || loop {
@@ -31,7 +30,7 @@ async fn main() -> std::io::Result<()> {
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
         let status = slave.register(registers::al::status);
-        let mut channel = slave.channel(2, SyncDirection::Read, sdo::SyncChannel{ index: 0x1c12, num: 4 });
+        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Read, num: 4 });
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
@@ -39,7 +38,9 @@ async fn main() -> std::io::Result<()> {
     println!("done {:#?}", config);
     
     let mut allocator = mapping::Allocator::new(&master);
-    let mut group = allocator.group(mapping);
+    let mut group = allocator.group(&mapping);
+    
+    println!("group {:#?}", group);
     
     let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await;
@@ -52,8 +53,12 @@ async fn main() -> std::io::Result<()> {
     slave.switch(CommunicationState::Operational).await;
     
     for _ in 0 .. 20 {
-        group.exchange();
-        println!("received {}  {}  {}", group.get(status), group.get(error), group.get(position));
+        group.exchange().await;
+        println!("received {}  {}  {}", 
+            group.get(status), 
+            group.get(error), 
+            group.get(position),
+            );
     }
     
 //     let sdo = Sdo::<u32>::complete(0x1c12);

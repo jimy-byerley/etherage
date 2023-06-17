@@ -188,7 +188,7 @@ num_pdudata!(f64, F64);
 	
 	It acts like a getter/setter of a value in a byte sequence. One can think of it as an offset to a data location because it does not actually point the data but only its offset in the byte sequence, it also contains its length to dynamically check memory bounds.
 */
-#[derive(Default, Eq, PartialEq, Hash)]
+#[derive(Default, Eq, Hash)]
 pub struct Field<T: PduData> {
     /// this is only here to mark that T is actually used
 	extracted: PhantomData<T>,
@@ -229,6 +229,12 @@ impl<T: PduData> Clone for Field<T> {
     fn clone(&self) -> Self   {Self::new(self.byte, self.len)}
 }
 impl<T: PduData> Copy for Field<T> {}
+impl<T: PduData> PartialEq for Field<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.byte == other.byte && self.len == other.len
+    }
+}
+
 
 /** 
 	locate some data in a datagram by its bit position and length, which must be extracted to type `T` to be processed in rust

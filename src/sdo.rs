@@ -4,10 +4,13 @@ Convenient structures to read/write the slave's dictionnary objects (SDO) and co
 
 use crate::{
 // 	slave::Slave,
-	data::{self, BitField, PduData, Storage},
+	data::{self, Field, BitField, PduData, Storage},
+	registers,
 	};
 use core::fmt;
 use bilge::prelude::*;
+
+pub use crate::registers::SyncDirection;
 
 
 /// address of an SDO's subitem, not a SDO itself
@@ -138,7 +141,15 @@ pub struct SyncManager {
 }
 impl SyncManager {
     pub fn channel(&self, i: u8) -> SyncChannel {
-        SyncChannel { index: self.index + u16::from(i), num: 254 }
+        SyncChannel { 
+            index: self.index + u16::from(i), 
+            direction: match i%2 {
+                0 => SyncDirection::Write,
+                1 => SyncDirection::Read,
+                _ => unreachable!(),
+                }, 
+            num: 254,
+            }
     }
 }
 
@@ -152,6 +163,8 @@ impl SyncManager {
 pub struct SyncChannel {
 	/// index of the SDO that configures the SyncChannel
 	pub index: u16,
+	/// whether this channel is to be read or written by the master, this might be set by the user if the slave supports it.
+	pub direction: SyncDirection,
 	/// max number of PDO that can be assigned to the SyncChannel
 	pub num: u8,
 }
@@ -164,12 +177,17 @@ impl SyncChannel {
     pub const fn len(&self) -> Sdo<u8> {
         Sdo::sub(self.index, 0, 0)
     }
+    pub fn register(&self) -> Field<registers::SyncManagerChannel> {
+        registers::sync_manager::interface.channel((self.index - FIRST_SYNC_CHANNEL).try_into().unwrap())
+    }
 }
 impl fmt::Debug for SyncChannel {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "SyncChannel {{index: 0x{:x}, num: {}}}", self.index, self.num)
 	}
 }
+
+const FIRST_SYNC_CHANNEL: u16 = 0x1c10;
 
 const device_type: Sdo<u32> = Sdo::complete(0x0000);
 const error: Sdo<u8> = Sdo::complete(0x0001);

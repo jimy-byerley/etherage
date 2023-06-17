@@ -3,47 +3,60 @@
     
     Mapping of slave's physical memories to the logical memory is not mendatory but is recommended for saving bandwidth and avoid latencies in realtime operations. The only other way to perform realtime operations is to directly read/write the slave's physical memories.
     
-    It highlights
+    ## Highlights
     - [Mapping] to create a mapping configuration of contiguous logical memory for multiple slaves, and compute each inserted value's offsets
     - [Group] to use exchange such contiguous logical memory with an ethercat segment
     
-    Example
+    ## Example
     
-        // establish mapping, it only concerns one group
-        let mapping = Mapping::new()
-            let slave = mapping.push(42)
-                let syncmanager = slave.push(Input)
-                    let pdo = syncmanager.push(Pdo{index: 0x1600, entries: 10})
-                        let position = pdo.push(Sdo::<i32>::complete(0x1234))
-                        let status = pdo.push(Sdo::<StatusWord>::subitem(0x1234, 1))
-                        pdo.finish()
+        // establish mapping
+        let config = Config::default();
+        let mapping = Mapping::new(&config);
+            let slave = mapping.slave(42);
+                let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Read, num: 4 });
+                    let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
+                        let status = pdo.push(Sdo::<u16>::complete(0x6041));
+                        let error = pdo.push(Sdo::<u16>::complete(0x603f));
                     // possibly other PDOs
-                    syncmanager.finish()
                 // possibly other sync managers
             // possibly other slaves
-        mapping.finish(None)
+        let group = allocator.group(mapping);
         
         // configuration of slaves
-        mapping.apply(slave)
+        group.configure(slave).await;
         
         // realtime exchanges
-        group = Group::new(mapping)
-        group.exchange()
-        group.set(position, group.get(position)+velocity)
+        group.exchange().await;
+        group.set(position, group.get(position)+velocity);
+    
+    ## Principle
         
-    The following scheme shows an example mapping of sdos and registers. On the right side shows the range of PDOs and channels that can be mapped, however the vendor-specific constraints makes them much smaller in practice.
+    The following scheme shows an example mapping of [SDOs](sdo) and [registers]. On the right side shows the range of PDOs and channels that can be mapped each slave, however the vendor-specific constraints makes them much smaller in practice.
     
     ![mapping details](/etherage/schemes/mapping-details.svg)
+    
+    ## Limitations
+    
+    - mapped regions in the logical memory are forced to be in the same order as in the physical memory.
+    
+        This not due to the ethercat specifications, but is needed here to compute the mapped fields offsets on field insertion.
+        
+        Interlacing different slave's memory is however possible.
+        
+    - different instances of [Mapping] cannot request the allocator different configurations for one slave, even if they could be merged into one in the absolute.
+    
+        different mapping has to use the exact same config for one slave in order to share it. This should be acheived using the same instance of [Config]
 */
 
 use crate::{
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     data::{PduData, Field},
-    sdo::{self, Sdo},
+    sdo::{self, Sdo, SyncDirection},
     slave::Slave,
     registers,
     };
 use core::{
+    fmt,
     cmp,
     ops::Range,
     cell::{Ref, RefMut},
@@ -55,8 +68,6 @@ use std::{
     rc::Rc,
     };
 use bilge::prelude::*;
-    
-pub use crate::registers::SyncDirection;
 
 
 
@@ -64,59 +75,106 @@ pub use crate::registers::SyncDirection;
 
 
 
-
+/// convenient object to manage slaves configurations and logical memory
 pub struct Allocator<'a> {
     master: &'a RawMaster,
-    slaves: HashSet<u16>,
+    slaves: HashMap<u16, Weak<ConfigSlave>>,
     free: BTreeSet<LogicalSlot>,
 }
 /// allocator slot in logical memory
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 struct LogicalSlot {
-    position: u32,
     size: u32,
+    position: u32,
 }
 impl<'a> Allocator<'a> {
-    pub fn new(master: &'a RawMaster) -> Self { Self {
-        master,
-        slaves: HashSet::new(),
-        free: BTreeSet::new(),
-    }}
-    pub fn group(&mut self, mapping: Mapping<'_>) -> Group<'_> {
-        todo!()
-//         let config = mapping.config.into_inner();
-//         // check that new mapping has not conflict with current config
-//         for address in config.slaves.keys() {
-//             assert!(! self.slaves.contains(address));
-//         }
-//         // compute mapping size
-//         let size = mapping.offset.into_inner();
-// //         let size = mapping.slaves.values()
-// //                     .filter_map(|slave| slave.fmmus.last())
-// //                     .map(|fmmu|  fmmu.logical)
-// //                     .max();
-//         // reserve
-//         let slot = self.free.range(u32::from(size) ..)
-//                         .next().expect("no more logical memory");
-//         self.free.pop(slot);
-//         if slot.size > size {
-//             self.free.insert(LogicalSlot {
-//                 position: slot.position + size, 
-//                 size: slot.size - size,
-//             });
-//         }
-//         self.slaves.extend(config.keys());
-//         // create
-//         Group {
-//             master: self.master,
-//             allocator: self,
-//             allocated: slot.size,
-//             config: &config,
-//             offset: slot.position,
-//             size,
-//             read: vec![0; size],
-//             write: vec![0; size],
-//         }
+    pub fn new(master: &'a RawMaster) -> Self { 
+        let mut new = Self {
+            master,
+            slaves: HashMap::new(),
+            free: BTreeSet::new(),
+        };
+        new.free.insert(LogicalSlot {size: u32::MAX, position: 0});
+        new
+    }
+    /// allocate the memory area and the slaves for the given mapping.
+    /// returning a [Group] for using that memory and communicate with the slaves
+    pub fn group(&mut self, mapping: &Mapping) -> Group<'_> {
+        // check that new mapping has not conflict with current config
+        assert!(self.compatible(&mapping));
+        // compute mapping size
+        let size = mapping.offset.borrow().clone();
+        // reserve memory
+        let slot = self.free.range(LogicalSlot {size, position: 0} ..)
+                        .next().expect("no more logical memory")
+                        .clone();
+        self.free.remove(&slot);
+        if slot.size > size {
+            self.free.insert(LogicalSlot {
+                position: slot.position + size, 
+                size: slot.size - size,
+            });
+        }
+        // update global config
+        let mut slaves = HashMap::<u16, Arc<ConfigSlave>>::new();
+        for (&k, slave) in mapping.config.slaves.borrow().iter() {
+//             if self.slaves.get(k)
+//                         .map(|v| v.strong_count() == 0)
+//                         .or(true) {
+//                 let new = Arc::new(
+//                 self.slaves.insert(k, Arc::downgrade(new));
+//                 new
+//             }
+//             else {
+//                 self.slaves[k].upgrade().unwrap()
+//             }
+            
+            slaves.insert(k, 
+                if let Some(value) = self.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
+                    // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()` 
+                    {value}
+                else {
+                    let new = Arc::new(slave.as_ref().clone());
+                    self.slaves.insert(k, Arc::downgrade(&new));
+                    new
+                });
+        }
+//         self.slaves.extend(slaves.iter()
+//                         .map(|(k,v)|  (k.clone(), Arc::downgrade(v)) ));
+        // create
+        Group {
+            master: self.master,
+            allocator: self,
+            allocated: slot.size,
+            config: slaves,
+            offset: slot.position,
+            size,
+            read: vec![0; size as usize],
+            write: vec![0; size as usize],
+        }
+    }
+    /// check that a given mapping is compatible with the already configured slaves in the allocator
+    /// if true, a group can be initialized from the mapping
+    pub fn compatible(&self, mapping: &Mapping) -> bool {
+        for (address, slave) in mapping.config.slaves.borrow().iter() {
+            if let Some(alter) = self.slaves.get(address) {
+                if let Some(alter) = alter.upgrade() {
+                    if slave.as_ref() != alter.as_ref()
+                        {return false}
+                }
+            }
+        }
+        true
+    }
+    /// return the amount of allocated memory in the logical memory
+    pub fn allocated(&self) -> u32 {
+        u32::MAX - self.free()
+    }
+    /// return the amount of free (potentially fragmented) memory in the logical memory
+    pub fn free(&self) -> u32 {
+        self.free.iter()
+                .map(|s|  s.size)
+                .sum::<u32>()
     }
 }
 // impl cmp::Ord for LogicalSlot {
@@ -127,6 +185,15 @@ impl<'a> Allocator<'a> {
 //         }
 //     }
 // }
+impl fmt::Debug for Allocator<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<Allocator with {} slaves using {}>", 
+            self.slaves.len(), 
+            self.allocated(),
+            )
+    }
+}
+
 
 /**
     Allows to use a contiguous slice of logical memory, with appropriate duplex buffering for read/write operations.
@@ -139,7 +206,7 @@ pub struct Group<'a> {
     allocated: u32,
     
     /// configuration per slave
-    config: HashMap<u16, Box<ConfigSlave>>,
+    config: HashMap<u16, Arc<ConfigSlave>>,
     /// byte offset of this data group in the logical memory
     offset: u32,
     /// byte size of this data group in the logical memory
@@ -218,12 +285,12 @@ impl Group<'_> {
             }
             coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await;
             // enable sync channel
-            master.fpwr(address, registers::sync_manager::interface.mappable(i), {
+            master.fpwr(address, channel.config.register(), {
                 let mut config = registers::SyncManagerChannel::default();
                 config.set_address(offset);
                 config.set_length(size);
                 config.set_mode(todo!());
-                config.set_direction(channel.direction);
+                config.set_direction(channel.config.direction);
                 config.set_enable(true);
                 config
                 }).await.one();
@@ -253,40 +320,51 @@ impl Group<'_> {
     /// pack a mapped value to the buffer for next data write
     pub fn set<T: PduData>(&mut self, field: Field<T>, value: T)  {field.set(&mut self.write, value)}
 }
+impl fmt::Debug for Group<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<Group at offset: 0x{:x}, size: {}, {} slaves>", 
+            self.offset, self.size, self.config.len())
+    }
+}
 
 
 /// struct holding configuration informations for multiple slaves, that can be shared between multiple mappings
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, Eq, PartialEq)]
 pub struct Config {
     // slave configs are boxed so that they won't move even while inserting in the hashmap
     slaves: RefCell<HashMap<u16, Box<ConfigSlave>>>,
 }
 /// configuration for one slave
-#[derive(Clone, Default, Debug)]
-struct ConfigSlave {
-    pdos: HashMap<u16, ConfigPdo>,
-    channels: HashMap<u8, ConfigChannel>,
-    fmmu: Vec<ConfigFmmu>,
+#[derive(Clone, Default, Debug, Eq, PartialEq)]
+pub struct ConfigSlave {
+    pub pdos: HashMap<u16, ConfigPdo>,
+    pub channels: HashMap<u16, ConfigChannel>,
+    pub fmmu: Vec<ConfigFmmu>,
 }
 /// configuration for a slave PDO
-#[derive(Clone, Debug)]
-struct ConfigPdo {
-    config: sdo::Pdo,
-    sdos: Vec<Sdo>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigPdo {
+    pub config: sdo::Pdo,
+    pub sdos: Vec<Sdo>,
 }
 /// configuration for a slave sync manager channel
-#[derive(Clone, Debug)]
-struct ConfigChannel {
-    direction: SyncDirection,
-    config: sdo::SyncChannel,
-    pdos: Vec<u16>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigChannel {
+    pub config: sdo::SyncChannel,
+    pub pdos: Vec<u16>,
 }
 /// configuration for a slave FMMU
-#[derive(Clone, Debug)]
-struct ConfigFmmu {
-    length: u16,
-    physical: u16,
-    logical: u32,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigFmmu {
+    pub length: u16,
+    pub physical: u16,
+    pub logical: u32,
+}
+
+impl Config {
+    pub fn slaves(&self) -> Ref<'_, HashMap<u16, Box<ConfigSlave>>> {
+        self.slaves.borrow()
+    }
 }
 
 
@@ -303,11 +381,15 @@ struct ConfigFmmu {
 */
 pub struct Mapping<'a> {
     config: &'a Config,
-    offset: RefCell<usize>,
+    offset: RefCell<u32>,
 }
 impl<'a> Mapping<'a> {
     pub fn new(config: &'a Config) -> Self {
         Self { config, offset: RefCell::new(0) }
+    }
+    /// reference to the devices configuration actually worked on by this mapping
+    pub fn config(&self) -> &'a Config {
+        self.config
     }
     /// create an object for mapping data from a given slave
     ///
@@ -327,6 +409,10 @@ impl<'a> Mapping<'a> {
             mapping: unsafe {& *self},
         }
     }
+    /// return the amount of memory currently used by this mapping (will increase if more data is pushed in)
+    pub fn size(&self) -> u32 {
+        self.offset.borrow().clone()
+    }
 }
 /// object allowing to map data from a slave
 ///
@@ -341,10 +427,10 @@ impl<'a> MappingSlave<'a> {
     fn insert(&mut self, length: usize) -> usize {
         let mut offset = self.mapping.offset.borrow_mut();
         if let Some(current) = self.config.fmmu.last() {
-            if (current.logical + current.length as u32) != *offset as u32 {
+            if (current.logical + current.length as u32) != *offset {
                 let new = ConfigFmmu {
                     length: 0, 
-                    logical: *offset as u32, 
+                    logical: *offset, 
                     physical: current.physical,
                     };
                 self.config.fmmu.push(new);
@@ -353,14 +439,14 @@ impl<'a> MappingSlave<'a> {
         else {
             self.config.fmmu.push(ConfigFmmu {
                 length: 0,
-                logical: *offset as u32,
+                logical: *offset,
                 physical: 0x1000,
             });
         }
         let current = self.config.fmmu.last_mut().unwrap();
         current.length += length as u16;
-        *offset += length;
-        offset.clone()
+        *offset += length as u32;
+        offset.clone().try_into().unwrap()
     }
     /// map a range of physical memory, and return its matching range in the logical memory
     pub fn range(&mut self, range: Range<u16>) -> Range<usize> {
@@ -373,13 +459,15 @@ impl<'a> MappingSlave<'a> {
         Field::new(self.insert(field.len), field.len)
     }
     /// map a sync manager channel
-    pub fn channel(&'a mut self, index: u8, direction: SyncDirection, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
-        self.config.channels.insert(index, ConfigChannel {
-            direction,
+    pub fn channel(&'a mut self, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
+        if sdo.register() == registers::sync_manager::interface.mailbox_write()
+        || sdo.register() == registers::sync_manager::interface.mailbox_read()
+            {panic!("mapping on the mailbox channels (0x1c10, 0x1c11) is forbidden");}
+        self.config.channels.insert(sdo.index, ConfigChannel {
             config: sdo,
             pdos: Vec::new(),
             });
-        let entries = &self.config.channels.get(&index).unwrap().pdos;
+        let entries = &self.config.channels.get(&sdo.index).unwrap().pdos;
         MappingChannel {
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: unsafe {&mut *(self as *const _ as *mut _)},

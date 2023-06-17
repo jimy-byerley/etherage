@@ -772,14 +772,14 @@ data::bilge_pdudata!(SyncManagerChannel, u64);
 
 /// ETG.1000.4 table 58
 #[bitsize(2)]
-#[derive(TryFromBits, Debug, Copy, Clone)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SyncMode {
     Buffered = 0,
     Mailbox = 2,
 }
 /// ETG.1000.4 table 58
 #[bitsize(2)]
-#[derive(TryFromBits, Debug, Copy, Clone)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SyncDirection {
     /// sync manager buffer is read by the master
     Read = 0,
