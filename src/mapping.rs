@@ -355,11 +355,13 @@ impl Config {
     
     It is always slave's physical memory that is mapped to the logical memory. [crate::registers] is giving the set of standard values in the physical memory. Any other values must be configured to be present in the physical memory, such as described in [crate::can::Can].
     
-    This struct (and fellows) provide ways to map every possible thing to the logical memory. Each value-insertion method is returning a [Field] pointing to the position of the mapped value in the contiguous slice configured here (its offset is relative to the slice start and not to the logical memory start).
+    ## Principles:
     
-    The pushed values will be mapped in the exact order they will be pushed. Depending on the memory layout desired, push calls must be ordered accordingly.
+    - This struct (and fellows) provide ways to map every possible thing to the logical memory. Each value-insertion method is returning a [Field] pointing to the position of the mapped value in the contiguous slice configured here (its offset is relative to the slice start and not to the logical memory start).
     
-    The FMMU (Fieldbux Memory Mapping Unit) is hidden from the user and is used to adjust variables order.
+    - The pushed values will be mapped in the exact order they will be pushed. Depending on the memory layout desired, push calls must be ordered accordingly.
+    
+    - The FMMU (Fieldbux Memory Mapping Unit) is hidden from the user and is used to adjust variables order.
 */
 pub struct Mapping<'a> {
     config: &'a Config,
@@ -394,7 +396,7 @@ impl<'a> Mapping<'a> {
             mapping: self,
         }
     }
-    /// return the amount of memory currently used by this mapping (will increase if more data is pushed in)
+    /// return the overall data size in this mapping (will increase if more data is pushed in)
     pub fn size(&self) -> u32 {
         self.offset.borrow().clone()
     }
