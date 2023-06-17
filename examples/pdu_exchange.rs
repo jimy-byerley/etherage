@@ -16,7 +16,7 @@ async fn main() -> std::io::Result<()> {
             master.send();
     })};
     std::thread::sleep(Duration::from_millis(500));
-    
+
     let reg = Field::<u16>::simple(0x1234);
     let slave = 0;
             
@@ -37,7 +37,5 @@ async fn main() -> std::io::Result<()> {
             master.apwr(slave, reg, received.value).await;
         },
     );
-    
     Ok(())
 }
-

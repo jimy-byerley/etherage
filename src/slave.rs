@@ -1,4 +1,3 @@
-
 use crate::{
     master::Master,
 	rawmaster::{RawMaster, SlaveAddress},
@@ -12,15 +11,6 @@ use tokio::sync::{Mutex, MutexGuard};
 use core::ops::Range;
 use std::sync::Arc;
 
-// #[repr(u8)]
-// #[derive(Eq, PartialEq, Copy, Clone, Debug)]
-// pub enum CommunicationState {
-//     Init,
-//     PreOperational,
-//     SafeOperational,
-//     Operational,
-// }
-// use CommunicationState::*;
 
 pub type CommunicationState = registers::AlState;
 use registers::AlState::*;

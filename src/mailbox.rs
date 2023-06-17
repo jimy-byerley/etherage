@@ -252,5 +252,3 @@ pub enum MailboxError {
     InvalidSize = 0x8,
     ServiceInWork = 0x9,
 }
-
-

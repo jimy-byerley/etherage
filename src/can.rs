@@ -544,4 +544,3 @@ impl SdoAbortCode {
     pub fn device_related(self) -> bool   {u32::from(self) >> 24 == 0x08}
     pub fn protocol_related(self) -> bool {u32::from(self) >> 24 == 0x05}
 }
-

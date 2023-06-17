@@ -117,12 +117,12 @@ impl EthercatSocket for EthernetSocket {
                  {break Err(io::Error::last_os_error())}
             if len == 0
                 {continue}
-                 
+
             let frame = EthernetFrame::unpack(&packed[.. (len as usize)]);
             if frame.header != self.header
                 {continue}
             data[.. frame.data.len()].copy_from_slice(frame.data);
-            
+
             // extract content
             break {Ok(frame.data.len() as usize)}
         }
@@ -133,7 +133,7 @@ impl EthercatSocket for EthernetSocket {
         let packet = EthernetFrame {header: self.header.clone(), data};
         packet.pack(&mut packed);
         let data = &packed[.. packet.size()];
-        
+
         let len = unsafe {
             libc::write(
                 self.as_raw_fd(),
@@ -141,9 +141,9 @@ impl EthercatSocket for EthernetSocket {
                 data.len(),
             )
         };
-        if len < 0 
-            {Err(io::Error::last_os_error())} 
-        else 
+        if len < 0
+            {Err(io::Error::last_os_error())}
+        else
             {Ok(())}
     }
 }
@@ -218,7 +218,7 @@ impl<'a> EthernetFrame<'a> {
         // extract content
         let data = &src[<EthernetHeader as PackedStruct>::ByteArray::len() ..];
         let data = &data[.. data.len().min(data.len())];
-    
+
         Self{header, data}
     }
 }
@@ -232,7 +232,7 @@ struct EthernetHeader {
     /// source MAC address
     #[packed_field(bytes="2:7")]  src: [u8;6],
     // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
-    //#[packed_field(bytes="2:5")]  vlan: [u8;4],  
+    //#[packed_field(bytes="2:5")]  vlan: [u8;4],
     /// ethernet protocol
     #[packed_field(bytes="0:1")]  protocol: u16,
 }
