@@ -79,8 +79,8 @@ impl PduData for () {
 	const ID: TypeId = TypeId::VOID;
 	type Packed = [u8; 0];
 	
-	fn pack(&self, dst: &mut [u8]) -> PackingResult<()>  {Ok(())}
-	fn unpack(src: &[u8]) -> PackingResult<Self>  {Ok(())}
+	fn pack(&self, _dst: &mut [u8]) -> PackingResult<()>  {Ok(())}
+	fn unpack(_src: &[u8]) -> PackingResult<Self>  {Ok(())}
 }
 
 impl PduData for bool {

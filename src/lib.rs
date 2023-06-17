@@ -38,11 +38,13 @@ pub mod data;
 #[allow(non_upper_case_globals)] 
 #[allow(unused)]
 pub mod registers;
+#[allow(non_upper_case_globals)] 
+#[allow(unused)]
+pub mod sdo;
 
 pub mod socket;
 pub mod rawmaster;
 pub mod mailbox;
-pub mod sdo;
 pub mod can;
 pub mod master;
 pub mod slave;

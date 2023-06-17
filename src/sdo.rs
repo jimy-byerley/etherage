@@ -189,8 +189,8 @@ impl fmt::Debug for SyncChannel {
 
 const FIRST_SYNC_CHANNEL: u16 = 0x1c10;
 
-const device_type: Sdo<u32> = Sdo::complete(0x0000);
-const error: Sdo<u8> = Sdo::complete(0x0001);
+pub const device_type: Sdo<u32> = Sdo::complete(0x0000);
+pub const error: Sdo<u8> = Sdo::complete(0x0001);
 // const device_name: Sdo<str> = Sdo::complete(0x0008);
 // const hardware_version: Sdo<str> = Sdo::complete(0x0009);
 // const software_version: Sdo<str> = Sdo::complete(0x000a);

@@ -1,14 +1,12 @@
 use std::sync::Arc;
 use core::time::Duration;
 use etherage::{
-    PduData, Field, PduAnswer, EthernetSocket, RawMaster, 
-    Sdo, SlaveAddress, Slave, CommunicationState,
-    Mapping, Group, 
+    EthernetSocket, RawMaster, 
+    Slave, SlaveAddress, CommunicationState,
+    sdo::{self, Sdo, SyncDirection},
+    mapping::{self, Mapping},
     registers,
-    mapping,
-    sdo::{self, SyncDirection},
     };
-use bilge::prelude::u2;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -29,7 +27,7 @@ async fn main() -> std::io::Result<()> {
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
-        let status = slave.register(registers::al::status);
+        let restatus = slave.register(registers::al::status);
         let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Read, num: 4 });
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
@@ -54,7 +52,8 @@ async fn main() -> std::io::Result<()> {
     
     for _ in 0 .. 20 {
         group.exchange().await;
-        println!("received {}  {}  {}", 
+        println!("received {:?}  {}  {}  {}", 
+            group.get(restatus),
             group.get(status), 
             group.get(error), 
             group.get(position),

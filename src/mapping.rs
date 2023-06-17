@@ -51,21 +51,19 @@
 use crate::{
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     data::{PduData, Field},
-    sdo::{self, Sdo, SyncDirection},
+    sdo::{self, Sdo},
     slave::Slave,
     registers,
     };
 use core::{
     fmt,
-    cmp,
     ops::Range,
-    cell::{Ref, RefMut},
+    cell::Ref,
     };
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet, BTreeSet},
+    collections::{HashMap, BTreeSet},
     sync::{Arc, Weak},
-    rc::Rc,
     };
 use bilge::prelude::*;
 
@@ -118,17 +116,6 @@ impl<'a> Allocator<'a> {
         // update global config
         let mut slaves = HashMap::<u16, Arc<ConfigSlave>>::new();
         for (&k, slave) in mapping.config.slaves.borrow().iter() {
-//             if self.slaves.get(k)
-//                         .map(|v| v.strong_count() == 0)
-//                         .or(true) {
-//                 let new = Arc::new(
-//                 self.slaves.insert(k, Arc::downgrade(new));
-//                 new
-//             }
-//             else {
-//                 self.slaves[k].upgrade().unwrap()
-//             }
-            
             slaves.insert(k, 
                 if let Some(value) = self.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
                     // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()` 
@@ -139,8 +126,6 @@ impl<'a> Allocator<'a> {
                     new
                 });
         }
-//         self.slaves.extend(slaves.iter()
-//                         .map(|(k,v)|  (k.clone(), Arc::downgrade(v)) ));
         // create
         Group {
             master: self.master,
@@ -177,14 +162,6 @@ impl<'a> Allocator<'a> {
                 .sum::<u32>()
     }
 }
-// impl cmp::Ord for LogicalSlot {
-//     fn cmp(&self, other: &Self) -> cmp::Ordering {
-//         match self.size.cmp(other.size) {
-//             Equal => self.position.cmp(other.position),
-//             o => o,
-//         }
-//     }
-// }
 impl fmt::Debug for Allocator<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "<Allocator with {} slaves using {}>", 
@@ -274,7 +251,7 @@ impl Group<'_> {
             coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await;
         }
         let mut offset = todo!();
-        for (&i, channel) in config.channels.iter() {
+        for channel in config.channels.values() {
             let mut size = 0;
             // sync mapping
             for (j, &pdo) in channel.pdos.iter().enumerate() {
@@ -319,6 +296,11 @@ impl Group<'_> {
     pub fn get<T: PduData>(&mut self, field: Field<T>) -> T  {field.get(&self.read)}
     /// pack a mapped value to the buffer for next data write
     pub fn set<T: PduData>(&mut self, field: Field<T>, value: T)  {field.set(&mut self.write, value)}
+}
+impl Drop for Group<'_> {
+    fn drop(&mut self) {
+//         self.allocator.free.remove(LogicalSlot {size: self.allocated, position: self.offset});
+    }
 }
 impl fmt::Debug for Group<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -405,8 +387,11 @@ impl<'a> Mapping<'a> {
                 }));
         let slave = slaves.get(&address).unwrap().as_ref();
         MappingSlave {
+            // uncontroled reference to self and to configuration
+            // this is safe since the config parts that will be accessed by this new slave shall be accessed only by it
+            // the returned instance holds an immutable reference to self so it cannot be freed
             config: unsafe {&mut *(slave as *const _ as *mut _)},
-            mapping: unsafe {& *self},
+            mapping: self,
         }
     }
     /// return the amount of memory currently used by this mapping (will increase if more data is pushed in)
@@ -469,6 +454,8 @@ impl<'a> MappingSlave<'a> {
             });
         let entries = &self.config.channels.get(&sdo.index).unwrap().pdos;
         MappingChannel {
+            // uncontroled references to self and to configuration
+            // this is safe since the returned object holds a mutable reference to self any way
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: unsafe {&mut *(self as *const _ as *mut _)},
         }
@@ -491,6 +478,8 @@ impl<'a> MappingChannel<'a> {
         self.slave.config.pdos.insert(pdo.index, c);
         let entries = &self.slave.config.pdos.get(&pdo.index).unwrap().sdos;
         MappingPdo {
+            // uncontroled reference to self and to configuration
+            // this is safe since the returned object holds a mutable reference to self any way
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: self.slave,
         }
@@ -509,18 +498,4 @@ impl<'a> MappingPdo<'a> {
         Field::new(self.slave.insert(sdo.field.len), sdo.field.len)
     }
 }
-
-
-
-// let group = mapping.group()
-// group.slave(0).add_pdo(Pdo {...}, [Sdo::sub(...)])
-// group.slave(0).add_channel(direction, [u16])
-// 
-// group.slave(0).pdo(Pdo {...}).push(Sdo::sub(...)) -> Field
-// group.slave(0).pdo(Pdo {...}).push(Sdo::sub(...)) -> Field
-// group.slave(0).sdo(input, Sdo::sub(...)) -> Field
-// group.slave(0).sdo(input, Sdo::sub(...)) -> Field
-// group.slave(0).sdo(output, Sdo::sub(...)) -> Field
-// group.slave(0).register(Field::simple(...)) -> Field
-// group.slave(0).range(Range<u16>) -> Range<usize>
 
