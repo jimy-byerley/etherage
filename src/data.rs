@@ -107,7 +107,7 @@ macro_rules! bilge_pdudata {
             Ok(unsafe{ core::mem::transmute::<[u8; core::mem::size_of::<Self>()], Self>(tmp) })
         }
 
-        fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: crate::data::Endiannes) -> crate::data::PackingResult<()> {
+        fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Endiannes) -> crate::data::PackingResult<()> {
             if bitoffset != 0 {
                 return Err(crate::data::PackingError::BadAlignment(bitoffset as usize, "Bit offset must be at 0 on this implementation")); }
             if bitsize != 0 {
@@ -115,7 +115,7 @@ macro_rules! bilge_pdudata {
             return self.pack(data);
         }
 
-        fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: crate::data::Endiannes) -> crate::data::PackingResult<Self> {
+        fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Endiannes) -> crate::data::PackingResult<Self> {
             if bitoffset != 0 {
                 return Err(crate::data::PackingError::BadAlignment(bitoffset as usize, "Bit offset must be at 0 on this implementation")); }
             if bitsize != 0 {
@@ -133,7 +133,7 @@ macro_rules! packed_pdudata {
         const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
         type Packed = [u8; core::mem::size_of::<$t>()];
 
-        fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: crate::data::Endiannes) -> crate::data::PackingResult<()> {
+        fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Endiannes) -> crate::data::PackingResult<()> {
             if bitoffset != 0 {
                 return Err(crate::data::PackingError::BadAlignment(bitoffset as usize, "Offset not null"))}
             if bitsize > data.len() {
@@ -143,7 +143,7 @@ macro_rules! packed_pdudata {
             data[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
             Ok(())
             }
-        fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: crate::data::Endiannes) -> crate::data::PackingResult<Self> {
+        fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Endiannes) -> crate::data::PackingResult<Self> {
             if bitoffset != 0 {
                 return Err(crate::data::PackingError::BadAlignment(bitoffset as usize, "Offset not null"))}
             if bitsize > src.len() {
@@ -665,11 +665,13 @@ impl<T: PduData> BitField<T> {
 
     /// extract the value pointed by the field in the given byte array
     pub fn get(&self, data: &[u8]) -> T {
-        T::unpack_slice(&data[self.offset / 8 ..], (self.offset % 8) as u8, self.len, self.endian).expect("cannot unpack from data")
+        T::unpack_slice(&data[self.offset / 8 ..], (self.offset % 8) as u8, self.len, self.endian)
+            .expect("cannot unpack data")
     }
     /// dump the given value to the place pointed by the field in the byte array
     pub fn set(&self, data: &mut [u8], value: T) {
-        value.pack_slice(&mut data[self.offset / 8 ..], (self.offset % 8) as u8, self.len, self.endian);
+        value.pack_slice(&mut data[self.offset / 8 ..], (self.offset % 8) as u8, self.len, self.endian)
+            .expect("cannot pack data");
     }
 
     /// Return field size in **bit**
