@@ -63,7 +63,7 @@ use core::{
 use std::{
     cell::RefCell,
     collections::{HashMap, BTreeSet},
-    sync::{Arc, Weak},
+    sync::{Arc, Weak, Mutex},
     };
 use bilge::prelude::*;
 
@@ -77,7 +77,7 @@ use bilge::prelude::*;
 pub struct Allocator<'a> {
     master: &'a RawMaster,
     slaves: HashMap<u16, Weak<ConfigSlave>>,
-    free: BTreeSet<LogicalSlot>,
+    free: Mutex<BTreeSet<LogicalSlot>>,
 }
 /// allocator slot in logical memory
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
@@ -87,13 +87,13 @@ struct LogicalSlot {
 }
 impl<'a> Allocator<'a> {
     pub fn new(master: &'a RawMaster) -> Self { 
-        let mut new = Self {
+        let mut free = BTreeSet::new();
+        free.insert(LogicalSlot {size: u32::MAX, position: 0});
+        Self {
             master,
             slaves: HashMap::new(),
-            free: BTreeSet::new(),
-        };
-        new.free.insert(LogicalSlot {size: u32::MAX, position: 0});
-        new
+            free: Mutex::new(free),
+        }
     }
     /// allocate the memory area and the slaves for the given mapping.
     /// returning a [Group] for using that memory and communicate with the slaves
@@ -103,15 +103,19 @@ impl<'a> Allocator<'a> {
         // compute mapping size
         let size = mapping.offset.borrow().clone();
         // reserve memory
-        let slot = self.free.range(LogicalSlot {size, position: 0} ..)
+        let slot;
+        {
+            let mut free = self.free.lock().unwrap();
+            slot = free.range(LogicalSlot {size, position: 0} ..)
                         .next().expect("no more logical memory")
                         .clone();
-        self.free.remove(&slot);
-        if slot.size > size {
-            self.free.insert(LogicalSlot {
-                position: slot.position + size, 
-                size: slot.size - size,
-            });
+            free.remove(&slot);
+            if slot.size > size {
+                free.insert(LogicalSlot {
+                    position: slot.position + size, 
+                    size: slot.size - size,
+                });
+            }
         }
         // update global config
         let mut slaves = HashMap::<u16, Arc<ConfigSlave>>::new();
@@ -157,7 +161,7 @@ impl<'a> Allocator<'a> {
     }
     /// return the amount of free (potentially fragmented) memory in the logical memory
     pub fn free(&self) -> u32 {
-        self.free.iter()
+        self.free.lock().unwrap().iter()
                 .map(|s|  s.size)
                 .sum::<u32>()
     }
@@ -299,7 +303,7 @@ impl Group<'_> {
 }
 impl Drop for Group<'_> {
     fn drop(&mut self) {
-//         self.allocator.free.remove(LogicalSlot {size: self.allocated, position: self.offset});
+        self.allocator.free.lock().unwrap().remove(&LogicalSlot {size: self.allocated, position: self.offset});
     }
 }
 impl fmt::Debug for Group<'_> {
