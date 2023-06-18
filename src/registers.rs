@@ -814,6 +814,20 @@ pub struct DistributedClock {
 }
 data::packed_pdudata!(DistributedClock);
 
+impl DistributedClock {
+    pub fn new() -> Self{
+        Self{ 
+            received_time : ReceiveTimePort { port0 : 0, port1 : 0, port2: 0, port3 :0 },
+            system_time : 0,
+            receive_time_unit : 0,
+            system_offset : 0,
+            system_delay : 0,
+            system_difference : 0, 
+            reserved : [0;3]
+        }
+    }
+}
+
 #[repr(packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct ReceiveTimePort{
