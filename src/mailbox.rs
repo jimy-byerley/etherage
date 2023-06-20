@@ -103,7 +103,7 @@ impl<'b> Mailbox<'b> {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         
-        self.read.count = (self.read.count % 6)+1;
+        self.read.count = (self.read.count % 7)+1;
         
 		// wait for data
 		let mut state = loop {
@@ -246,14 +246,23 @@ data::bilge_pdudata!(MailboxErrorFrame, u32);
 #[bitsize(16)]
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum MailboxError {
+    /// Syntax of 6 octet Mailbox Header is wrong
     Syntax = 0x1,
+    /// The Mailbox protocol is not supported
     UnsupportedProtocol = 0x2,
+    /// Channel Field contains wrong value (a slave can ignore the channel field)
     InvalidChannel = 0x3,
+    /// the service in the Mailbox protocol is not supported
     ServiceNotSupported = 0x4,
+    /// The mailbox protocol header of the mailbox protocol is wrong (without the 6 octet mailbox header)
     InvalidHeader = 0x5,
+    /// length of received mailbox data is too short for slave's expectations
     SizeTooShort = 0x6,
+    /// Mailbox protocol cannot be processed because of limited ressources
     NoMoreMemory = 0x7,
+    /// the length of data is inconsistent
     InvalidSize = 0x8,
+    /// Mailbox service already in use
     ServiceInWork = 0x9,
 }
 

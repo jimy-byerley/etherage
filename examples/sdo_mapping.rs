@@ -10,7 +10,7 @@ use etherage::{
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let master = Arc::new(RawMaster::new(EthernetSocket::new("enp24s0")?));
+    let master = Arc::new(RawMaster::new(EthernetSocket::new("eno1")?));
     {
         let master = master.clone();
         std::thread::spawn(move || loop {
@@ -28,8 +28,11 @@ async fn main() -> std::io::Result<()> {
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
         let restatus = slave.register(registers::al::status);
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Read, num: 4 });
+        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, num: 10 });
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
+                let control = pdo.push(Sdo::<u16>::complete(0x6040));
+        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, num: 10 });
+            let mut pdo = channel.push(sdo::Pdo{ index: 0x1a00, num: 10 });
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
                 let position = pdo.push(Sdo::<i32>::complete(0x6064));
@@ -39,6 +42,7 @@ async fn main() -> std::io::Result<()> {
     let mut group = allocator.group(&mapping);
     
     println!("group {:#?}", group);
+    println!("fields  {:#?}", [control.downcast(), status.downcast(), error.downcast(), position.downcast()]);
     
     let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await;
@@ -53,7 +57,8 @@ async fn main() -> std::io::Result<()> {
     for _ in 0 .. 20 {
         group.exchange().await;
         println!("received {:?}  {}  {}  {}", 
-            group.get(restatus),
+//             group.get(restatus),
+            0,
             group.get(status), 
             group.get(error), 
             group.get(position),

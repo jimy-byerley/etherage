@@ -40,10 +40,12 @@ pub trait Storage: AsRef<[u8]> + AsMut<[u8]>
 {
     const LEN: usize;
     fn uninit() -> Self;
+//     fn zeroed() -> Self;
 }
 impl<const N: usize> Storage for [u8; N] {
     const LEN: usize = N;
     fn uninit() -> Self {unsafe {core::mem::uninitialized()}}
+//     fn zeroed() -> Self {unsafe {core::mem::zeroed()}}
 }
 
 /** dtype identifiers associated to dtypes allowing to dynamically check the type of a [PduData] implementor
@@ -206,6 +208,9 @@ impl<T: PduData> Field<T>
 	/// build a Field from its byte offset, infering its length from the data nominal size
 	pub const fn simple(byte: usize) -> Self {
         Self{extracted: PhantomData, byte, len: T::Packed::LEN}
+	}
+	pub const fn downcast(&self) -> Field<()> {
+        Field {extracted: PhantomData, byte: self.byte, len: self.len}
 	}
 	
 	/// extract the value pointed by the field in the given byte array

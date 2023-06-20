@@ -123,12 +123,12 @@ impl fmt::Debug for Pdo {
 /// content of a subitem in an SDO for PDO mapping
 #[bitsize(32)]
 pub struct PdoEntry {
-    /// mapped sdo index
-    index: u16,
-    /// mapped sdo subindex (it is not possible to map complete sdo, so this field must always be set)
-    sub: u8,
     /// bit size of the subitem value
     bitsize: u8,
+    /// mapped sdo subindex (it is not possible to map complete sdo, so this field must always be set)
+    sub: u8,
+    /// mapped sdo index
+    index: u16,
 }
 data::bilge_pdudata!(PdoEntry, u32);
 

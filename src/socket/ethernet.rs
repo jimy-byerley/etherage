@@ -47,7 +47,7 @@ impl EthernetSocket {
             lower,
             ifreq: ifreq_for(interface),
             header: EthernetHeader {
-                dst: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10],
+                dst: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
                 src: [0x12, 0x10, 0x10, 0x10, 0x10, 0x10],
                 // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
                 // vlan: [0x81, 0x0, 0, 0],

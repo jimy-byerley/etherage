@@ -237,16 +237,16 @@ pub enum AlError {
     InvalidDcConfig = 0x0030, 
     ///  Invalid DC Latch Configuration
     InvalidLatchConfig = 0x0031, 
-    ///  PLL Error
+    ///  Phase Link Lock Error
     PLL = 0x0032, 
-    ///  DC Sync IO Error
+    ///  Distributed Clock Sync IO Error
     DCSyncIO = 0x0033, 
-    ///  DC Sync Timeout Error
+    ///  Distributed Clock Sync Timeout Error
     DCSyncTimeout = 0x0034, 
-    ///  DC Invalid Sync Cycle Time
+    ///  Distributed Clock Invalid Sync Cycle Time
     DCInvalidPeriod = 0x0035, 
-// 0x0036 DC Sync0 Cycle Time
-// 0x0037 DC Sync1 Cycle Time
+// 0x0036 Distributed Clock Sync0 Cycle Time
+// 0x0037 Distributed Clock Sync1 Cycle Time
     ///  MBX_AOE
     MailboxAOE = 0x0041, 
     ///  MBX_EOE
@@ -700,7 +700,7 @@ pub struct SyncManager {
 impl SyncManager {
     pub fn channel(&self, index: u8) -> Field<SyncManagerChannel> {
         assert!(index < self.num, "index out of range");
-        Field::simple(usize::from(self.address + u16::from(index)*0x8))
+        Field::simple(usize::from(self.address + u16::from(index) * (core::mem::size_of::<SyncManagerChannel>() as u16) ))
     }
     // return the sync manager channel reserved for mailbox in
     pub fn mailbox_write(&self) -> Field<SyncManagerChannel>   {self.channel(0)}

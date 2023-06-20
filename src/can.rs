@@ -155,7 +155,7 @@ impl<'a> Can<'a> {
 	pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)  {
         let mut packed = T::Packed::uninit();
         data.pack(packed.as_mut()).unwrap();
-        self.sdo_write_slice(sdo, priority, &packed.as_ref()).await;
+        self.sdo_write_slice(sdo, priority, packed.as_ref()).await;
 	}
 	pub async fn sdo_write_slice<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: &[u8])  {
         let mut mailbox = self.mailbox.lock().await;		
@@ -176,6 +176,7 @@ impl<'a> Can<'a> {
                             sdo.sub.unwrap(),
                         )).unwrap();
                 frame.write(data).unwrap();
+                frame.write(&[0; 4][data.len() ..]).unwrap();
                 mailbox.write(MailboxType::Can, priority, frame.finish()).await;
             }
             
@@ -337,10 +338,10 @@ impl<'a> Can<'a> {
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct CoeHeader {
     /// present in the Can protocol, but not used in CoE
-    number: u9,
+    pub number: u9,
     reserved: u3,
     /// Can command
-    service: CanService,
+    pub service: CanService,
 }
 data::bilge_pdudata!(CoeHeader, u16);
 
@@ -398,35 +399,35 @@ data::bilge_pdudata!(CanService, u4);
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct SdoHeader {
     /// true if field `size` is used
-    sized: bool,
+    pub sized: bool,
     /// true in case of an expedited transfer (the data size specified by `size`)
-    expedited: bool,
+    pub expedited: bool,
     /// indicate the data size but not as an integer.
-    /// this value shall be `SDO_REQUESTS_SIZES[sizeof]`
-    size: u2,
+    /// this value shall be `4 - data.len()`
+    pub size: u2,
     /// true if a complete SDO is accessed
-    complete: bool,
+    pub complete: bool,
     /// operation to perform with the indexed SDO, this should be a value of [SdoCommandRequest] or [SdoCommandResponse]
-    command: u3,
+    pub command: u3,
     /// SDO index
-    index: u16,
+    pub index: u16,
     /**
     - if subitem is accessed: SDO subindex
     - if complete item is accessed:
         + put 0 to include subindex 0 in transmission
         + put 1 to exclude subindex 0 from transmission
     */
-    sub: u8,
+    pub sub: u8,
 }
 data::bilge_pdudata!(SdoHeader, u32);
 
 #[bitsize(8)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct SdoSegmentHeader {
-    more: bool,
-    size: u3,
-    toggle: bool,
-    command: u3,
+    pub more: bool,
+    pub size: u3,
+    pub toggle: bool,
+    pub command: u3,
 }
 data::bilge_pdudata!(SdoSegmentHeader, u8);
 

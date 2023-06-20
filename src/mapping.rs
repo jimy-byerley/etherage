@@ -168,7 +168,7 @@ impl<'a> Allocator<'a> {
 }
 impl fmt::Debug for Allocator<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<Allocator with {} slaves using {}>", 
+        write!(f, "<Allocator with {} slaves using {} bytes>", 
             self.slaves.len(), 
             self.allocated(),
             )
@@ -211,95 +211,125 @@ impl Group<'_> {
             };
         let config = &self.config[&address];
         
-//         config.fmmu.iter().enumerate().map(|(i, entry)|  async {
-//             master.fpwr(address, registers::fmmu.entry(i as u8), registers::FmmuEntry::new(
-//                 self.offset + entry.logical,
-//                 entry.length,
-//                 0,  // null start bit:  only byte mapping is supported at the moment
-//                 0,  // null end bit:  only byte mapping is supported at the moment
-//                 entry.physical,
-//                 0,  // null start bit
-//                 false, // not used here
-//                 false, // not used here
-//                 true, // enable
-//                 )).await.one();
-//             })
-//             .collect::<heapless::Vec<_, registers::fmmu.num>>()    // TODO: use Iterator::array_chunks()  as soon as stable
-//             .join().await; 
+        // range of physical memory to be mapped
+        let physical = Range {start: 0x1100, end: 0x1300};
         
-        // FMMU mapping
-        for (i, entry) in config.fmmu.iter().enumerate() {
-            master.fpwr(address, registers::fmmu.entry(i as u8), {
-                let mut config = registers::FmmuEntry::default();
-                config.set_logical_start_byte((self.offset as u32) + entry.logical);
-                config.set_logical_len_byte(entry.length);
-                config.set_logical_start_bit(u3::new(0));
-                config.set_logical_end_bit(u3::new(0));
-                config.set_physical_start_byte(entry.physical);
-                config.set_physical_start_bit(u3::new(0));
-                config.set_enable(true);
-                config
-                }).await.one();
-        }
         let mut coe = slave.coe().await;
         // PDO mapping
         for pdo in config.pdos.values() {
+            // pdo size must be set to zero before assigning items
+            coe.sdo_write(&pdo.config.len(), u2::new(0), 0).await;
             for (i, sdo) in pdo.sdos.iter().enumerate() {
                 // PDO mapping
                 coe.sdo_write(&pdo.config.slot(i as u8), u2::new(0), sdo::PdoEntry::new(
-                    sdo.index,
+                    sdo.field.len.try_into().expect("field too big for a subitem"),
                     sdo.sub.unwrap(),
-                    (sdo.field.len * 8).try_into().expect("field too big for a subitem"),
+                    sdo.index,
                     )).await;
             }
             coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await;
         }
-        let mut offset = todo!();
-        for channel in config.channels.values() {
+        let mut offset = physical.start;
+        for (i, channel) in config.channels.iter() {
+//             println!("i {} {}", i, (*i as u16 - 0x1c12));
+//             let offset = (*i as u16 - 0x1c12) * 0x100 + 0x1100;
             let mut size = 0;
             // sync mapping
+            // channel size must be set to zero before assigning items
+            coe.sdo_write(&channel.config.len(), u2::new(0), 0).await;
             for (j, &pdo) in channel.pdos.iter().enumerate() {
                 coe.sdo_write(&channel.config.slot(j as u8), u2::new(0), pdo).await;
                 size += config.pdos[&pdo].sdos.iter()
-                            .map(|sdo| sdo.field.len as u16)
+                            .map(|sdo| (sdo.field.len / 8) as u16)
                             .sum::<u16>();
             }
             coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await;
+            
             // enable sync channel
             master.fpwr(address, channel.config.register(), {
                 let mut config = registers::SyncManagerChannel::default();
                 config.set_address(offset);
                 config.set_length(size);
-                config.set_mode(todo!());
+                config.set_mode(registers::SyncMode::Buffered);
                 config.set_direction(channel.config.direction);
+                config.set_dls_user_event(true);
+                config.set_watchdog(channel.config.direction == registers::SyncDirection::Write);
                 config.set_enable(true);
                 config
                 }).await.one();
             
             offset += size;
+            assert!(offset <= physical.end);
         }
+        
+        // FMMU mapping
+        for (i, entry) in config.fmmu.iter().enumerate() {  
+            assert!(entry.physical + entry.length < physical.end);
+            master.fpwr(address, registers::fmmu.entry(i as u8), {
+                let mut config = registers::FmmuEntry::default();
+                config.set_logical_start_byte(entry.logical + (self.offset as u32));
+                config.set_logical_len_byte(entry.length);
+                config.set_logical_start_bit(u3::new(0));
+                config.set_logical_end_bit(u3::new(7));
+                config.set_physical_start_byte(entry.physical);
+                config.set_physical_start_bit(u3::new(0));
+                config.set_read(true);
+                config.set_write(true);
+                config.set_enable(true);
+                config
+                }).await.one();
+        }
+//         master.fpwr(address, registers::fmmu.entry(0), {
+//                 let mut config = registers::FmmuEntry::default();
+//                 config.set_logical_start_byte(0);
+//                 config.set_logical_len_byte(10);
+//                 config.set_logical_start_bit(u3::new(0));
+//                 config.set_logical_end_bit(u3::new(7));
+//                 config.set_physical_start_byte(0x1100);
+//                 config.set_physical_start_bit(u3::new(0));
+//                 config.set_read(false);
+//                 config.set_write(true);
+//                 config.set_enable(true);
+//                 config
+//                 }).await.one();
+//         master.fpwr(address, registers::fmmu.entry(1), {
+//                 let mut config = registers::FmmuEntry::default();
+//                 config.set_logical_start_byte(10);
+//                 config.set_logical_len_byte(10);
+//                 config.set_logical_start_bit(u3::new(0));
+//                 config.set_logical_end_bit(u3::new(7));
+//                 config.set_physical_start_byte(0x1200);
+//                 config.set_physical_start_bit(u3::new(0));
+//                 config.set_read(true);
+//                 config.set_write(false);
+//                 config.set_enable(true);
+//                 config
+//                 }).await.one();
     }
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: offset should be passed as 32 bit address, this requires a modification of RawMaster
-        assert_eq!(self.master.pdu(PduCommand::LRW, 0, self.offset as u16, self.write.as_mut_slice()).await, self.config.len() as u16);
+        self.master.pdu(PduCommand::LRW, 0, self.offset as u16, self.write.as_mut_slice()).await;
+        self.read.copy_from_slice(&self.write);
         self.write.as_mut_slice()
     }
     /// read data slice from segment
     pub async fn read(&mut self) -> &'_ mut [u8]  {
-        assert_eq!(self.master.pdu(PduCommand::LRD, 0, self.offset as u16, self.read.as_mut_slice()).await, self.config.len() as u16);
+        self.master.pdu(PduCommand::LRD, 0, self.offset as u16, self.read.as_mut_slice()).await;
         self.read.as_mut_slice()
     }
     /// write data slice to segment
     pub async fn write(&mut self) -> &'_ mut [u8]  {
-        assert_eq!(self.master.pdu(PduCommand::LWR, 0, self.offset as u16, self.write.as_mut_slice()).await, self.config.len() as u16);
+        self.master.pdu(PduCommand::LWR, 0, self.offset as u16, self.write.as_mut_slice()).await;
         self.write.as_mut_slice()
     }
     
     /// extract a mapped value from the buffer of last received data
-    pub fn get<T: PduData>(&mut self, field: Field<T>) -> T  {field.get(&self.read)}
+    pub fn get<T: PduData>(&mut self, field: Field<T>) -> T  
+        {field.get(&self.read)}
     /// pack a mapped value to the buffer for next data write
-    pub fn set<T: PduData>(&mut self, field: Field<T>, value: T)  {field.set(&mut self.write, value)}
+    pub fn set<T: PduData>(&mut self, field: Field<T>, value: T)  
+        {field.set(&mut self.write, value)}
 }
 impl Drop for Group<'_> {
     fn drop(&mut self) {
@@ -308,7 +338,7 @@ impl Drop for Group<'_> {
 }
 impl fmt::Debug for Group<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<Group at offset: 0x{:x}, size: {}, {} slaves>", 
+        write!(f, "<Group at offset: 0x{:x}, {} bytes, {} slaves>", 
             self.offset, self.size, self.config.len())
     }
 }
@@ -398,6 +428,7 @@ impl<'a> Mapping<'a> {
             // the returned instance holds an immutable reference to self so it cannot be freed
             config: unsafe {&mut *(slave as *const _ as *mut _)},
             mapping: self,
+            buffer: 0,
         }
     }
     /// return the overall data size in this mapping (will increase if more data is pushed in)
@@ -411,46 +442,55 @@ impl<'a> Mapping<'a> {
 pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
     config: &'a mut ConfigSlave,
+    buffer: u16,
 }
 impl<'a> MappingSlave<'a> {
     /// internal method to increment the logical and physical offsets with the given data length
     /// if the logical offset was changed since the last call to this slave's method (ie. the logical memory contiguity is broken), a new FMMU is automatically configured
-    fn insert(&mut self, length: usize) -> usize {
+    fn insert(&mut self, length: usize, position: Option<u16>) -> usize {
+        let physical = Range {start: 0x1100, end: 0x1300};
         let mut offset = self.mapping.offset.borrow_mut();
-        if let Some(current) = self.config.fmmu.last() {
-            if (current.logical + current.length as u32) != *offset {
-                let new = ConfigFmmu {
-                    length: 0, 
-                    logical: *offset, 
-                    physical: current.physical,
-                    };
-                self.config.fmmu.push(new);
-            }
-        }
-        else {
-            self.config.fmmu.push(ConfigFmmu {
-                length: 0,
-                logical: *offset,
-                physical: 0x1000,
+        
+        // pick a new position in the physical memory buffer, or pick the given position
+        let position = position.unwrap_or_else(|| { 
+                let position = self.buffer + physical.start;
+                self.buffer += length as u16;
+                assert!(self.buffer <= physical.end);
+                position
             });
+        // create a FMMU if not already existing or if inserted value breaks contiguity
+        let change = if let Some(fmmu) = self.config.fmmu.last() {
+                    fmmu.logical + u32::from(fmmu.length) != *offset 
+                ||  fmmu.physical + fmmu.length != position
+            }
+            else {true};
+        if change {
+            self.config.fmmu.push(ConfigFmmu {
+                    length: 0,
+                    logical: *offset,
+                    physical: position,
+                });
         }
-        let current = self.config.fmmu.last_mut().unwrap();
-        current.length += length as u16;
+        // increment physical and logical memory offsets
+        let fmmu = self.config.fmmu.last_mut().unwrap();
+        fmmu.length += length as u16;
+        let inserted = offset.clone().try_into().unwrap();
         *offset += length as u32;
-        offset.clone().try_into().unwrap()
+        inserted
     }
     /// map a range of physical memory, and return its matching range in the logical memory
     pub fn range(&mut self, range: Range<u16>) -> Range<usize> {
         let size = usize::from(range.end - range.start);
-        let start = self.insert(size);
+        let start = self.insert(size, Some(range.start));
         Range {start, end: start+size}
     }
     /// map a field in the physical memory (a register), and return its matching field in the logical memory
     pub fn register<T: PduData>(&mut self, field: Field<T>) -> Field<T>  {
-        Field::new(self.insert(field.len), field.len)
+        let o = self.insert(field.len, Some(field.byte as u16));
+        Field::new(o, field.len)
     }
     /// map a sync manager channel
-    pub fn channel(&'a mut self, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
+    pub fn channel(&mut self, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
         if sdo.register() == registers::sync_manager::interface.mailbox_write()
         || sdo.register() == registers::sync_manager::interface.mailbox_read()
             {panic!("mapping on the mailbox channels (0x1c10, 0x1c11) is forbidden");}
@@ -501,7 +541,8 @@ impl<'a> MappingPdo<'a> {
     /// add an sdo to this channel, and return its matching field in the logical memory
     pub fn push<T: PduData>(&mut self, sdo: Sdo<T>) -> Field<T> {
         self.entries.push(sdo.clone().downcast());
-        Field::new(self.slave.insert(sdo.field.len), sdo.field.len)
+        let len = (sdo.field.len + 7) / 8;
+        Field::new(self.slave.insert(len, None), len)
     }
 }
 
