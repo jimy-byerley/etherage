@@ -82,7 +82,7 @@ impl SdoPart {
 }
 impl<T: PduData> fmt::Debug for Sdo<T> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Sdo {{index: 0x{:x}, sub: {:?}, field: {:?}}}", self.index, self.sub, self.field)
+		write!(f, "Sdo<{}> {{index: 0x{:x}, sub: {:?}, field: {{0x{:x}, {}}}}}", core::any::type_name::<T>(), self.index, self.sub, self.field.bit, self.field.len)
 	}
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation

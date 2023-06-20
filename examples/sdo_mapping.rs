@@ -31,18 +31,20 @@ async fn main() -> std::io::Result<()> {
         let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, num: 10 });
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
                 let control = pdo.push(Sdo::<u16>::complete(0x6040));
+        let control = 0;
         let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, num: 10 });
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1a00, num: 10 });
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
                 let position = pdo.push(Sdo::<i32>::complete(0x6064));
+//                 let torque = pdo.push(Sdo::<i16>::complete(0x6077));
     println!("done {:#?}", config);
     
     let mut allocator = mapping::Allocator::new(&master);
     let mut group = allocator.group(&mapping);
     
     println!("group {:#?}", group);
-    println!("fields  {:#?}", [control.downcast(), status.downcast(), error.downcast(), position.downcast()]);
+    println!("fields  {:#?}", (control, status, error, position));
     
     let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await;

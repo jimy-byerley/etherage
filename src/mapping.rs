@@ -229,10 +229,15 @@ impl Group<'_> {
             }
             coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await;
         }
-        let mut offset = physical.start;
-        for (i, channel) in config.channels.iter() {
-//             println!("i {} {}", i, (*i as u16 - 0x1c12));
-//             let offset = (*i as u16 - 0x1c12) * 0x100 + 0x1100;
+//         let mut offset = physical.start;
+//         for channel in config.channels.values() {
+
+        for channel in [&config.channels[&0x1c12], &config.channels[&0x1c13]] {
+        
+            let i = channel.config.index;
+            println!("i {} {}", i, i - 0x1c12);
+            let offset = (i - 0x1c12) * 0x100 + 0x1100;
+            
             let mut size = 0;
             // sync mapping
             // channel size must be set to zero before assigning items
@@ -245,9 +250,12 @@ impl Group<'_> {
             }
             coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await;
             
+//             tokio::time::sleep(core::time::Duration::from_secs_f32(0.01));
+            
             // enable sync channel
             master.fpwr(address, channel.config.register(), {
                 let mut config = registers::SyncManagerChannel::default();
+//                 config.set_address(channel.start);
                 config.set_address(offset);
                 config.set_length(size);
                 config.set_mode(registers::SyncMode::Buffered);
@@ -258,31 +266,61 @@ impl Group<'_> {
                 config
                 }).await.one();
             
-            offset += size;
-            assert!(offset <= physical.end);
+//             offset += size;
+//             assert!(offset <= physical.end);
         }
         
-        // FMMU mapping
-        for (i, entry) in config.fmmu.iter().enumerate() {  
-            assert!(entry.physical + entry.length < physical.end);
-            master.fpwr(address, registers::fmmu.entry(i as u8), {
+//         // FMMU mapping
+//         for (i, entry) in config.fmmu.iter().enumerate() {  
+//             assert!(entry.physical + entry.length < physical.end);
+//             master.fpwr(address, registers::fmmu.entry(i as u8), {
+//                 let mut config = registers::FmmuEntry::default();
+//                 config.set_logical_start_byte(entry.logical + (self.offset as u32));
+//                 config.set_logical_len_byte(entry.length);
+//                 config.set_logical_start_bit(u3::new(0));
+//                 config.set_logical_end_bit(u3::new(7));
+//                 config.set_physical_start_byte(entry.physical);
+//                 config.set_physical_start_bit(u3::new(0));
+//                 config.set_read(true);
+//                 config.set_write(true);
+//                 config.set_enable(true);
+//                 config
+//                 }).await.one();
+//         }
+
+
+        master.fpwr(address, registers::fmmu.entry(0), {
                 let mut config = registers::FmmuEntry::default();
-                config.set_logical_start_byte(entry.logical + (self.offset as u32));
-                config.set_logical_len_byte(entry.length);
+                config.set_logical_start_byte(0x1);
+                config.set_logical_len_byte(2);
                 config.set_logical_start_bit(u3::new(0));
                 config.set_logical_end_bit(u3::new(7));
-                config.set_physical_start_byte(entry.physical);
+                config.set_physical_start_byte(0x1100);
                 config.set_physical_start_bit(u3::new(0));
-                config.set_read(true);
+                config.set_read(false);
                 config.set_write(true);
                 config.set_enable(true);
                 config
                 }).await.one();
-        }
+        master.fpwr(address, registers::fmmu.entry(1), {
+                let mut config = registers::FmmuEntry::default();
+                config.set_logical_start_byte(0x3);
+                config.set_logical_len_byte(8);
+                config.set_logical_start_bit(u3::new(0));
+                config.set_logical_end_bit(u3::new(7));
+                config.set_physical_start_byte(0x1200);
+                config.set_physical_start_bit(u3::new(0));
+                config.set_read(true);
+                config.set_write(false);
+                config.set_enable(true);
+                config
+                }).await.one();
+
+
 //         master.fpwr(address, registers::fmmu.entry(0), {
 //                 let mut config = registers::FmmuEntry::default();
-//                 config.set_logical_start_byte(0);
-//                 config.set_logical_len_byte(10);
+//                 config.set_logical_start_byte(0x1);
+//                 config.set_logical_len_byte(2);
 //                 config.set_logical_start_bit(u3::new(0));
 //                 config.set_logical_end_bit(u3::new(7));
 //                 config.set_physical_start_byte(0x1100);
@@ -294,11 +332,11 @@ impl Group<'_> {
 //                 }).await.one();
 //         master.fpwr(address, registers::fmmu.entry(1), {
 //                 let mut config = registers::FmmuEntry::default();
-//                 config.set_logical_start_byte(10);
-//                 config.set_logical_len_byte(10);
+//                 config.set_logical_start_byte(0x3);
+//                 config.set_logical_len_byte(8);
 //                 config.set_logical_start_bit(u3::new(0));
 //                 config.set_logical_end_bit(u3::new(7));
-//                 config.set_physical_start_byte(0x1200);
+//                 config.set_physical_start_byte(0x1102);
 //                 config.set_physical_start_bit(u3::new(0));
 //                 config.set_read(true);
 //                 config.set_write(false);
@@ -368,6 +406,7 @@ pub struct ConfigPdo {
 pub struct ConfigChannel {
     pub config: sdo::SyncChannel,
     pub pdos: Vec<u16>,
+    pub start: u16,
 }
 /// configuration for a slave FMMU
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -460,8 +499,8 @@ impl<'a> MappingSlave<'a> {
             });
         // create a FMMU if not already existing or if inserted value breaks contiguity
         let change = if let Some(fmmu) = self.config.fmmu.last() {
-                    fmmu.logical + u32::from(fmmu.length) != *offset 
-                ||  fmmu.physical + fmmu.length != position
+                fmmu.logical + u32::from(fmmu.length) != *offset 
+            ||  fmmu.physical + fmmu.length != position
             }
             else {true};
         if change {
@@ -497,6 +536,7 @@ impl<'a> MappingSlave<'a> {
         self.config.channels.insert(sdo.index, ConfigChannel {
             config: sdo,
             pdos: Vec::new(),
+            start: self.buffer + 0x1100,
             });
         let entries = &self.config.channels.get(&sdo.index).unwrap().pdos;
         MappingChannel {

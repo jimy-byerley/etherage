@@ -226,7 +226,7 @@ impl<T: PduData> Field<T>
 }
 impl<T: PduData> fmt::Debug for Field<T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "Field{{0x{:x}, {}}}", self.byte, self.len)
+		write!(f, "Field<{}>{{0x{:x}, {}}}", core::any::type_name::<T>(), self.byte, self.len)
 	}
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a field pointing to a type which does not implement this operation
@@ -267,7 +267,7 @@ impl<T: PduData> BitField<T> {
 }
 impl<T: PduData> fmt::Debug for BitField<T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "BitField{{{}, {}}}", self.bit, self.len)
+		write!(f, "BitField<{}>{{{}, {}}}", core::any::type_name::<T>(), self.bit, self.len)
 	}
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a field pointing to a type which does not implement this operation

@@ -83,14 +83,13 @@ impl<'a> Slave<'a> {
 		}).await.one();
 		
 		loop {
-			let received = self.master.read(self.address, registers::al::response).await;
-			assert_eq!(received.answers, 1);
-			if received.value.error() {
-				let received = self.master.read(self.address, registers::al::error).await;
-				assert_eq!(received.answers, 1);
-				panic!("error on state change: {:?}", received.value);
+			let received = self.master.read(self.address, registers::al::response).await.one();
+			if received.error() {
+				let received = self.master.read(self.address, registers::al::error).await.one();
+				if received == registers::AlError::NoError  {break}
+				panic!("error on state change: {:?}", received);
 			}
-			if received.value.state() == target  {break}
+			if received.state() == target  {break}
 		}
     }
     

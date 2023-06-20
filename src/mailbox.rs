@@ -155,7 +155,7 @@ impl<'b> Mailbox<'b> {
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         let buffer = &mut allocated[.. self.write.max];
         
-        self.write.count = (self.write.count % 6)+1;
+        self.write.count = (self.write.count % 7)+1;
         
         let mut frame = Cursor::new(buffer.as_mut());
         frame.pack(&MailboxHeader::new(
