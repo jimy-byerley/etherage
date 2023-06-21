@@ -12,20 +12,15 @@ use tokio::sync::{Mutex, MutexGuard};
 use core::ops::Range;
 use std::sync::Arc;
 
-// #[repr(u8)]
-// #[derive(Eq, PartialEq, Copy, Clone, Debug)]
-// pub enum CommunicationState {
-//     Init,
-//     PreOperational,
-//     SafeOperational,
-//     Operational,
-// }
-// use CommunicationState::*;
+
 
 pub type CommunicationState = registers::AlState;
 use registers::AlState::*;
 
+
+/// slave physical memory range used for mailbox, to be written by the master
 const MAILBOX_BUFFER_WRITE: Range<u16> = Range {start: 0x1800, end: 0x1800+0x100};
+/// slave physical memory range used for mailbox, to be read by the master
 const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100};
 
 

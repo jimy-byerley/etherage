@@ -46,12 +46,16 @@
     - different instances of [Mapping] cannot request the allocator different configurations for one slave, even if they could be merged into one in the absolute.
     
         different mapping has to use the exact same config for one slave in order to share it. This should be acheived using the same instance of [Config]
+        
+    - the mapping is currently byte aligned, the ethercat specs allows a bit aligned mapping but this is not (yet) implemented.
+    
+    - the memory area reserved for mapping is currently limited to 768 bytes
 */
 
 use crate::{
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     data::{PduData, Field},
-    sdo::{self, Sdo},
+    sdo::{self, Sdo, SyncDirection},
     slave::Slave,
     registers,
     };
@@ -68,9 +72,8 @@ use std::{
 use bilge::prelude::*;
 
 
-
-
-
+/// slave physical memory range used for sync channels mapping
+const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1000, end: 0x1300};
 
 
 /// convenient object to manage slaves configurations and logical memory
@@ -212,9 +215,10 @@ impl Group<'_> {
         let config = &self.config[&address];
         
         // range of physical memory to be mapped
-        let physical = Range {start: 0x1100, end: 0x1300};
+        let physical = SLAVE_PHYSICAL_MAPPABLE;
         
         let mut coe = slave.coe().await;
+        
         // PDO mapping
         for pdo in config.pdos.values() {
             // pdo size must be set to zero before assigning items
@@ -229,17 +233,11 @@ impl Group<'_> {
             }
             coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await;
         }
-//         let mut offset = physical.start;
-//         for channel in config.channels.values() {
 
-        for channel in [&config.channels[&0x1c12], &config.channels[&0x1c13]] {
-        
-            let i = channel.config.index;
-            println!("i {} {}", i, i - 0x1c12);
-            let offset = (i - 0x1c12) * 0x100 + 0x1100;
-            
+        // sync mapping
+        for channel in config.channels.values() {
+
             let mut size = 0;
-            // sync mapping
             // channel size must be set to zero before assigning items
             coe.sdo_write(&channel.config.len(), u2::new(0), 0).await;
             for (j, &pdo) in channel.pdos.iter().enumerate() {
@@ -250,13 +248,10 @@ impl Group<'_> {
             }
             coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await;
             
-//             tokio::time::sleep(core::time::Duration::from_secs_f32(0.01));
-            
             // enable sync channel
             master.fpwr(address, channel.config.register(), {
                 let mut config = registers::SyncManagerChannel::default();
-//                 config.set_address(channel.start);
-                config.set_address(offset);
+                config.set_address(channel.start);
                 config.set_length(size);
                 config.set_mode(registers::SyncMode::Buffered);
                 config.set_direction(channel.config.direction);
@@ -265,84 +260,28 @@ impl Group<'_> {
                 config.set_enable(true);
                 config
                 }).await.one();
-            
-//             offset += size;
-//             assert!(offset <= physical.end);
         }
         
-//         // FMMU mapping
-//         for (i, entry) in config.fmmu.iter().enumerate() {  
-//             assert!(entry.physical + entry.length < physical.end);
-//             master.fpwr(address, registers::fmmu.entry(i as u8), {
-//                 let mut config = registers::FmmuEntry::default();
-//                 config.set_logical_start_byte(entry.logical + (self.offset as u32));
-//                 config.set_logical_len_byte(entry.length);
-//                 config.set_logical_start_bit(u3::new(0));
-//                 config.set_logical_end_bit(u3::new(7));
-//                 config.set_physical_start_byte(entry.physical);
-//                 config.set_physical_start_bit(u3::new(0));
-//                 config.set_read(true);
-//                 config.set_write(true);
-//                 config.set_enable(true);
-//                 config
-//                 }).await.one();
-//         }
-
-
-        master.fpwr(address, registers::fmmu.entry(0), {
+        // FMMU mapping
+        // FMMU entry mode read/write are exclusive, so mapping had to clearly establish which one is used for what
+        // the read direction also prevent the memory content to be written before being read by a LRW command, so it is filtering memory accesses
+        // no bit alignment is supported now, so bit offsets are 0 at start and 7 at end
+        for (i, entry) in config.fmmu.iter().enumerate() {  
+            assert!(entry.physical + entry.length < physical.end);
+            master.fpwr(address, registers::fmmu.entry(i as u8), {
                 let mut config = registers::FmmuEntry::default();
-                config.set_logical_start_byte(0x1);
-                config.set_logical_len_byte(2);
+                config.set_logical_start_byte(entry.logical + (self.offset as u32));
+                config.set_logical_len_byte(entry.length);
                 config.set_logical_start_bit(u3::new(0));
                 config.set_logical_end_bit(u3::new(7));
-                config.set_physical_start_byte(0x1100);
+                config.set_physical_start_byte(entry.physical);
                 config.set_physical_start_bit(u3::new(0));
-                config.set_read(false);
-                config.set_write(true);
+                config.set_read(entry.direction == SyncDirection::Read);
+                config.set_write(entry.direction == SyncDirection::Write);
                 config.set_enable(true);
                 config
                 }).await.one();
-        master.fpwr(address, registers::fmmu.entry(1), {
-                let mut config = registers::FmmuEntry::default();
-                config.set_logical_start_byte(0x3);
-                config.set_logical_len_byte(8);
-                config.set_logical_start_bit(u3::new(0));
-                config.set_logical_end_bit(u3::new(7));
-                config.set_physical_start_byte(0x1200);
-                config.set_physical_start_bit(u3::new(0));
-                config.set_read(true);
-                config.set_write(false);
-                config.set_enable(true);
-                config
-                }).await.one();
-
-
-//         master.fpwr(address, registers::fmmu.entry(0), {
-//                 let mut config = registers::FmmuEntry::default();
-//                 config.set_logical_start_byte(0x1);
-//                 config.set_logical_len_byte(2);
-//                 config.set_logical_start_bit(u3::new(0));
-//                 config.set_logical_end_bit(u3::new(7));
-//                 config.set_physical_start_byte(0x1100);
-//                 config.set_physical_start_bit(u3::new(0));
-//                 config.set_read(false);
-//                 config.set_write(true);
-//                 config.set_enable(true);
-//                 config
-//                 }).await.one();
-//         master.fpwr(address, registers::fmmu.entry(1), {
-//                 let mut config = registers::FmmuEntry::default();
-//                 config.set_logical_start_byte(0x3);
-//                 config.set_logical_len_byte(8);
-//                 config.set_logical_start_bit(u3::new(0));
-//                 config.set_logical_end_bit(u3::new(7));
-//                 config.set_physical_start_byte(0x1102);
-//                 config.set_physical_start_bit(u3::new(0));
-//                 config.set_read(true);
-//                 config.set_write(false);
-//                 config.set_enable(true);
-//                 config
-//                 }).await.one();
+        }
     }
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
@@ -411,6 +350,7 @@ pub struct ConfigChannel {
 /// configuration for a slave FMMU
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigFmmu {
+    pub direction: SyncDirection,
     pub length: u16,
     pub physical: u16,
     pub logical: u32,
@@ -467,7 +407,8 @@ impl<'a> Mapping<'a> {
             // the returned instance holds an immutable reference to self so it cannot be freed
             config: unsafe {&mut *(slave as *const _ as *mut _)},
             mapping: self,
-            buffer: 0,
+            buffer: SLAVE_PHYSICAL_MAPPABLE.start,
+            additional: 0,
         }
     }
     /// return the overall data size in this mapping (will increase if more data is pushed in)
@@ -481,18 +422,22 @@ impl<'a> Mapping<'a> {
 pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
     config: &'a mut ConfigSlave,
+    /// position in the physical memory mapping region
     buffer: u16,
+    /// increment to add to `buffer` once the current mapped channel is done.
+    /// this is handling the memory that must be reserved after sync channels to allow the slave to perform buffer swapping
+    additional: u16,
 }
 impl<'a> MappingSlave<'a> {
     /// internal method to increment the logical and physical offsets with the given data length
     /// if the logical offset was changed since the last call to this slave's method (ie. the logical memory contiguity is broken), a new FMMU is automatically configured
-    fn insert(&mut self, length: usize, position: Option<u16>) -> usize {
-        let physical = Range {start: 0x1100, end: 0x1300};
+    fn insert(&mut self, direction: SyncDirection, length: usize, position: Option<u16>) -> usize {
+        let physical = SLAVE_PHYSICAL_MAPPABLE;
         let mut offset = self.mapping.offset.borrow_mut();
         
         // pick a new position in the physical memory buffer, or pick the given position
         let position = position.unwrap_or_else(|| { 
-                let position = self.buffer + physical.start;
+                let position = self.buffer;
                 self.buffer += length as u16;
                 assert!(self.buffer <= physical.end);
                 position
@@ -501,10 +446,12 @@ impl<'a> MappingSlave<'a> {
         let change = if let Some(fmmu) = self.config.fmmu.last() {
                 fmmu.logical + u32::from(fmmu.length) != *offset 
             ||  fmmu.physical + fmmu.length != position
+            ||  fmmu.direction != direction
             }
             else {true};
         if change {
             self.config.fmmu.push(ConfigFmmu {
+                    direction,
                     length: 0,
                     logical: *offset,
                     physical: position,
@@ -517,26 +464,35 @@ impl<'a> MappingSlave<'a> {
         *offset += length as u32;
         inserted
     }
+    /// increment the value offset with the reserved additional size
+    /// this is typically for counting the reserved size of channels triple buffers
+    fn finish(&mut self) {
+        self.buffer += self.additional;
+        self.additional = 0;
+    }
     /// map a range of physical memory, and return its matching range in the logical memory
-    pub fn range(&mut self, range: Range<u16>) -> Range<usize> {
+    pub fn range(&mut self, direction: SyncDirection, range: Range<u16>) -> Range<usize> {
+        self.finish();
         let size = usize::from(range.end - range.start);
-        let start = self.insert(size, Some(range.start));
+        let start = self.insert(direction, size, Some(range.start));
         Range {start, end: start+size}
     }
     /// map a field in the physical memory (a register), and return its matching field in the logical memory
-    pub fn register<T: PduData>(&mut self, field: Field<T>) -> Field<T>  {
-        let o = self.insert(field.len, Some(field.byte as u16));
+    pub fn register<T: PduData>(&mut self, direction: SyncDirection, field: Field<T>) -> Field<T>  {
+        self.finish();
+        let o = self.insert(direction, field.len, Some(field.byte as u16));
         Field::new(o, field.len)
     }
     /// map a sync manager channel
     pub fn channel(&mut self, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
+        self.finish();
         if sdo.register() == registers::sync_manager::interface.mailbox_write()
         || sdo.register() == registers::sync_manager::interface.mailbox_read()
             {panic!("mapping on the mailbox channels (0x1c10, 0x1c11) is forbidden");}
         self.config.channels.insert(sdo.index, ConfigChannel {
             config: sdo,
             pdos: Vec::new(),
-            start: self.buffer + 0x1100,
+            start: self.buffer,
             });
         let entries = &self.config.channels.get(&sdo.index).unwrap().pdos;
         MappingChannel {
@@ -544,6 +500,8 @@ impl<'a> MappingSlave<'a> {
             // this is safe since the returned object holds a mutable reference to self any way
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: unsafe {&mut *(self as *const _ as *mut _)},
+            direction: sdo.direction,
+            num: sdo.num as usize,
         }
         
         // TODO: make possible to push an alread existing channel as long as its content is the same
@@ -552,10 +510,14 @@ impl<'a> MappingSlave<'a> {
 pub struct MappingChannel<'a> {
     slave: &'a mut MappingSlave<'a>,
     entries: &'a mut Vec<u16>,
+    direction: SyncDirection,
+    num: usize,
 }
 impl<'a> MappingChannel<'a> {
     /// add a pdo to this channel, and return an object to map it
     pub fn push(&'a mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
+        assert!(self.entries.len()+1 < self.num);
+        
         self.entries.push(pdo.index);
         let c = ConfigPdo {
             config: pdo,
@@ -563,11 +525,14 @@ impl<'a> MappingChannel<'a> {
             };
         self.slave.config.pdos.insert(pdo.index, c);
         let entries = &self.slave.config.pdos.get(&pdo.index).unwrap().sdos;
+        
         MappingPdo {
             // uncontroled reference to self and to configuration
             // this is safe since the returned object holds a mutable reference to self any way
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: self.slave,
+            direction: self.direction,
+            num: pdo.num as usize,
         }
         
         // TODO: make possible to push an alread existing PDO as long as its content is the same
@@ -576,13 +541,20 @@ impl<'a> MappingChannel<'a> {
 pub struct MappingPdo<'a> {
     slave: &'a mut MappingSlave<'a>,
     entries: &'a mut Vec<Sdo>,
+    direction: SyncDirection,
+    num: usize,
 }
 impl<'a> MappingPdo<'a> {
     /// add an sdo to this channel, and return its matching field in the logical memory
     pub fn push<T: PduData>(&mut self, sdo: Sdo<T>) -> Field<T> {
+        assert!(self.entries.len()+1 < self.num);
+        
         self.entries.push(sdo.clone().downcast());
         let len = (sdo.field.len + 7) / 8;
-        Field::new(self.slave.insert(len, None), len)
+        // the sync channel must allocate 3 times the channel size to allow the slave to perform buffer swapping (the sync channel 3-buffer mode, which is mendatory for realtime operations)
+        // so the first thier is reserved using `slave.insert`, and the 2 last using `slave.additional`
+        self.slave.additional += (2*len as u16);
+        Field::new(self.slave.insert(self.direction, len, None), len)
     }
 }
 

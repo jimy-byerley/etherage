@@ -27,11 +27,10 @@ async fn main() -> std::io::Result<()> {
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
-        let restatus = slave.register(registers::al::status);
+        let restatus = slave.register(SyncDirection::Read, registers::al::status);
         let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, num: 10 });
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
                 let control = pdo.push(Sdo::<u16>::complete(0x6040));
-        let control = 0;
         let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, num: 10 });
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1a00, num: 10 });
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
@@ -59,8 +58,7 @@ async fn main() -> std::io::Result<()> {
     for _ in 0 .. 20 {
         group.exchange().await;
         println!("received {:?}  {}  {}  {}", 
-//             group.get(restatus),
-            0,
+            group.get(restatus),
             group.get(status), 
             group.get(error), 
             group.get(position),
