@@ -285,6 +285,7 @@ impl Group<'_> {
     }
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
+        // TODO: add a fallback implementation in case the slave does not support *RW commands
         // TODO: offset should be passed as 32 bit address, this requires a modification of RawMaster
         self.master.pdu(PduCommand::LRW, 0, self.offset as u16, self.write.as_mut_slice()).await;
         self.read.copy_from_slice(&self.write);
@@ -302,7 +303,7 @@ impl Group<'_> {
     }
     
     /// extract a mapped value from the buffer of last received data
-    pub fn get<T: PduData>(&mut self, field: Field<T>) -> T  
+    pub fn get<T: PduData>(&self, field: Field<T>) -> T  
         {field.get(&self.read)}
     /// pack a mapped value to the buffer for next data write
     pub fn set<T: PduData>(&mut self, field: Field<T>, value: T)  
@@ -468,6 +469,8 @@ impl<'a> MappingSlave<'a> {
     /// this is typically for counting the reserved size of channels triple buffers
     fn finish(&mut self) {
         self.buffer += self.additional;
+        // the physical memory buffer must be word-aligned (at least on some devices)
+        self.buffer += self.buffer % 2;
         self.additional = 0;
     }
     /// map a range of physical memory, and return its matching range in the logical memory
@@ -553,7 +556,7 @@ impl<'a> MappingPdo<'a> {
         let len = (sdo.field.len + 7) / 8;
         // the sync channel must allocate 3 times the channel size to allow the slave to perform buffer swapping (the sync channel 3-buffer mode, which is mendatory for realtime operations)
         // so the first thier is reserved using `slave.insert`, and the 2 last using `slave.additional`
-        self.slave.additional += (2*len as u16);
+        self.slave.additional += 2*len as u16;
         Field::new(self.slave.insert(self.direction, len, None), len)
     }
 }

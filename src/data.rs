@@ -104,72 +104,78 @@ impl PduData for bool {
 
 /// macro implementing [PduData] for a given struct generated with `bilge`
 /// this is an ugly unsafe code to overcome the lack of traits providing containing ints in [bilge]
+#[macro_export]
 macro_rules! bilge_pdudata {
-    ($t: ty, $id: ident) => { impl crate::data::PduData for $t {
+    ($t: ty, $id: ident) => {  impl $crate::data::PduData for $t {
         // we cannot use Self.value for unknown reason
         // we cannot use $id::from(Self) for unknown reason
         // we cannot use $id::to_le_bytes because it is only implemented for byte exact integers
         
-        const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
+        const ID: $crate::data::TypeId = $crate::data::TypeId::CUSTOM;
         type Packed = [u8; ($id::BITS as usize + 7)/8];
         
-        fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
+        fn pack(&self, dst: &mut [u8]) -> $crate::data::PackingResult<()> {
+            use $crate::data::Storage;
             if dst.len() < Self::Packed::LEN  
-                {return Err(crate::data::PackingError::BadSize(dst.len(), "bilge struct needs exact size"))}
+                {return Err($crate::data::PackingError::BadSize(dst.len(), "bilge struct needs exact size"))}
             dst[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
             Ok(())
         }
-        fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
+        fn unpack(src: &[u8]) -> $crate::data::PackingResult<Self> {
+            use $crate::data::Storage;
             if src.len() < Self::Packed::LEN  
-                {return Err(crate::data::PackingError::BadSize(src.len(), "bilge struct needs exact size"))}
+                {return Err($crate::data::PackingError::BadSize(src.len(), "bilge struct needs exact size"))}
             let mut tmp = [0; core::mem::size_of::<Self>()];
             tmp[.. Self::Packed::LEN].copy_from_slice(&src[.. Self::Packed::LEN]);
             Ok(unsafe{ core::mem::transmute::<[u8; core::mem::size_of::<Self>()], Self>(tmp) })
         }
     }};
 }
-pub(crate) use bilge_pdudata;
+pub use bilge_pdudata;
 
 /// unsafe macro implementing [PduData] for a given struct with `repr(packed)`
+#[macro_export]
 macro_rules! packed_pdudata {
-    ($t: ty) => { impl crate::data::PduData for $t {
-        const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
+    ($t: ty) => { impl $crate::data::PduData for $t {
+        const ID: $crate::data::TypeId = $crate::data::TypeId::CUSTOM;
         type Packed = [u8; core::mem::size_of::<$t>()];
         
-        fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
+        fn pack(&self, dst: &mut [u8]) -> $crate::data::PackingResult<()> {
+            use $crate::data::Storage;
             if dst.len() < Self::Packed::LEN
-                {return Err(crate::data::PackingError::BadSize(dst.len(), "not enough bytes for struct"))}
+                {return Err($crate::data::PackingError::BadSize(dst.len(), "not enough bytes for struct"))}
             dst[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
             Ok(())
         }
-        fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
+        fn unpack(src: &[u8]) -> $crate::data::PackingResult<Self> {
+            use $crate::data::Storage;
             if src.len() < Self::Packed::LEN
-                {return Err(crate::data::PackingError::BadSize(src.len(), "not enough bytes for struct"))}
+                {return Err($crate::data::PackingError::BadSize(src.len(), "not enough bytes for struct"))}
             let src: &Self::Packed = src[.. Self::Packed::LEN].try_into().unwrap();
             Ok(unsafe{ core::mem::transmute::<Self::Packed, Self>(src.clone()) })
         }
     }};
 }
-pub(crate) use packed_pdudata;
+pub use packed_pdudata;
 
 /// macro implementing [PduData] for numeric types
 macro_rules! num_pdudata {
-	($t: ty, $id: ident) => { impl crate::data::PduData for $t {
-			const ID: crate::data::TypeId = crate::data::TypeId::$id;
+	($t: ty, $id: ident) => { impl $crate::data::PduData for $t {
+			const ID: $crate::data::TypeId = $crate::data::TypeId::$id;
             type Packed = [u8; core::mem::size_of::<$t>()];
 			
-            fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
+            fn pack(&self, dst: &mut [u8]) -> $crate::data::PackingResult<()> {
 				dst.copy_from_slice(&self.to_le_bytes());
 				Ok(())
 			}
-			fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
+			fn unpack(src: &[u8]) -> $crate::data::PackingResult<Self> {
 				Ok(Self::from_le_bytes(src
 					.try_into()
-					.map_err(|_|  crate::data::PackingError::BadSize(src.len(), "integger cannot be yet zeroed"))?
+					.map_err(|_|  $crate::data::PackingError::BadSize(src.len(), "integger cannot be yet zeroed"))?
 					))
 			}
 		}};
-	($t: ty) => { num_pdudata!(t, crate::data::TypeId::CUSTOM) };
+	($t: ty) => { num_pdudata!(t, $crate::data::TypeId::CUSTOM) };
 }
 
 num_pdudata!(u8, U8);

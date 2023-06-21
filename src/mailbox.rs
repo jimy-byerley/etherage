@@ -3,7 +3,7 @@
 use crate::{
 	rawmaster::{RawMaster, PduCommand},
 	registers,
-    data::{self, PduData, Field, Storage, Cursor},
+    data::{self, PduData, Cursor},
 	};
 use core::ops::Range;
 use bilge::prelude::*;
