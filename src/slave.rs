@@ -51,6 +51,10 @@ pub struct Slave<'a> {
 //     clock: Option<Dc>,
 }
 impl<'a> Slave<'a> {
+    /**
+        build a slave from a `RawMaster`. As everything constructed with a `RawMaster` this is not protocol-safe: no check is done, in particular nothing prevents to create multiple instances for the same physical slave, or for non-existing slaves.
+        However if the physical slave is used only through one `Slave` instance, all operations will be protocol-safe.
+    */
     pub fn raw(master: &'a RawMaster, address: SlaveAddress) -> Self {
         Self {
             master,
@@ -62,6 +66,9 @@ impl<'a> Slave<'a> {
             coe: None,
         }
     }
+    /**
+        build a slave from a `Master`. exclusive acces to the addressed slave is ensured by `Master`, and the use of this struct will be protocl-safe.
+    */
     pub async fn new(master: &'a Master, address: SlaveAddress) -> Option<Slave<'a>> {
         let mut book = master.slaves.lock().unwrap();
         if book.contains(&address)
@@ -82,19 +89,21 @@ impl<'a> Slave<'a> {
             })
         }
     }
+    
+    /// return a reference to the underlying `RawMaster` used, this method is unsafe since it allows accessing any slave concurrently to what all `Slave` and `Master` instances are doing.
     pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
     
     /// retreive the slave's identification informations
     pub fn informations(&self)  {todo!()}
     
-    /// return the current state of the slave
+    /// return the current state of the slave, it does not the current expected state for this slave
     pub async fn state(&self) -> CommunicationState {
 		self.master.read(self.address, registers::al::status).await.one()
             .state().try_into().unwrap()
 	}
     /// send a state change request to the slave, and return once the slave has switched
-    pub async fn switch(&self, target: CommunicationState)  {
-		// switch to preop
+    pub async fn switch(&mut self, target: CommunicationState)  {
+		// send state switch request
 		self.master.write(self.address, registers::al::control, {
 			let mut config = registers::AlControlRequest::default();
 			config.set_state(target.into());
@@ -102,6 +111,7 @@ impl<'a> Slave<'a> {
 			config
 		}).await.one();
 		
+		// wait for state change, or error
 		loop {
 			let received = self.master.read(self.address, registers::al::response).await.one();
 			if received.error() {
@@ -111,9 +121,20 @@ impl<'a> Slave<'a> {
 			}
 			if received.state() == target.into()  {break}
 		}
+		self.state = target;
+    }
+    /**
+        set the expected state of the slave.
+        
+        this actually does not perform any operation on the slave, but will change the expected behavior and thus error handling of the slave's methods
+    */
+    pub fn expect(&mut self, state: CommunicationState) {
+        self.state = state;
     }
     
+    /// get the current address used to communicate with the slave
     pub fn address(&self) -> SlaveAddress  {self.address}
+    /// set a fixed address for the slave, `0` is forbidden
     pub async fn set_address(&mut self, fixed: u16) {
         assert_eq!(self.state, Init);
         assert!(fixed != 0);
@@ -142,6 +163,7 @@ impl<'a> Slave<'a> {
     
     pub async fn init_clock(&mut self)  {todo!()}
 
+    /// initialize the slave's mailbox (if supported by the slave)
     pub async fn init_mailbox(&mut self) {
         assert_eq!(self.state, Init);
         let address = match self.address {
@@ -166,6 +188,7 @@ impl<'a> Slave<'a> {
         self.mailbox = Some(Arc::new(Mutex::new(mailbox)));
     }
     
+    /// initialize CoE (Canopen over Ethercat) communication (if supported by the slave), this requires the mailbox to be initialized
     pub async fn init_coe(&mut self) {
         // override the mailbox reference lifetime, we will have to make sure we free any stored object using it before destroying the mailbox
         let mailbox = self.mailbox.clone().expect("mailbox not initialized");
@@ -174,19 +197,20 @@ impl<'a> Slave<'a> {
     
     pub async fn clock(&'a self) {todo!()}
     
+    /// locks access to CoE communication and return the underlying instance of [Can] running CoE
     pub async fn coe(&self) -> MutexGuard<'_, Can<'a>>    {
         self.coe
             .as_ref().expect("coe not initialized")
             .lock().await
     }
     
+    /// locks access to EoE communication
     pub fn eoe(&'a self) {todo!()}
     
-    pub fn physical_read<T: PduData>(&self, field: Field<T>) -> T  {todo!()}
-//     pub fn physical_write<T: PduData>(&self, field: Field<T>, value: T)  {todo!()}
-
-//     pub fn sdo_read<T: PduData>(&self, sdo: &Sdo<T>) -> T   {todo!()}
-//     pub fn sdo_write<T: PduData>(&self, sdo: &Sdo<T>, value: T)  {todo!()}
+    /// read a value from the slave's physical memory
+    pub async fn physical_read<T: PduData>(&self, field: Field<T>) -> T  {
+        self.master.read(self.address, field).await.one()
+    }
 }
 
 impl Drop for Slave<'_> {

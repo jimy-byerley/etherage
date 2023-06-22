@@ -189,11 +189,11 @@ impl fmt::Debug for SyncChannel {
 
 const FIRST_SYNC_CHANNEL: u16 = 0x1c10;
 
-pub const device_type: Sdo<u32> = Sdo::complete(0x0000);
-pub const error: Sdo<u8> = Sdo::complete(0x0001);
-// const device_name: Sdo<str> = Sdo::complete(0x0008);
-// const hardware_version: Sdo<str> = Sdo::complete(0x0009);
-// const software_version: Sdo<str> = Sdo::complete(0x000a);
+pub const device_type: Sdo<u32> = Sdo::sub(0x1000, 0, 0);
+pub const error: Sdo<u8> = Sdo::sub(0x1001, 0, 0);
+pub const device_name: Sdo<[u8; 20]> = Sdo::sub(0x1008, 0, 0);
+pub const manufacturer_hardware_version: Sdo<[u8; 20]> = Sdo::sub(0x1009, 0, 0);
+pub const manufacturer_software_version: Sdo<[u8; 20]> = Sdo::sub(0x100a, 0, 0);
 // const identity: Sdo<record> = Sdo::complete(0x0018);
 // const receive_pdos: PdoMappings = PdoMappings {index: 0x1600; num: 512};
 // const transmit_pdos: PdoMappings = PdoMappings {index: 0x1a00; num: 512};

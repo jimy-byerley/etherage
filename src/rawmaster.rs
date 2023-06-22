@@ -44,7 +44,7 @@ const MAX_ETHERCAT_FRAME: usize = 2050;
 	
 		this memory doesn't physically exist anywhere, but can be read/write using `L*`  commands with each slave contributing to the record according to the configuration set before.
 		
-		The logical memory is organized by the mapping set in the FMMU (Fieldbust Memory Management Unit)
+		The logical memory is organized by the mapping set in the FMMU (Fieldbust Memory Management Unit). [crate::mapping] helps on this task.
 		
 	See variants of [PduCommand] for more details.
 	

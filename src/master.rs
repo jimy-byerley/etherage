@@ -47,7 +47,10 @@ impl Master {
     */
     pub fn into_raw(self) -> RawMaster {self.raw}
     
-	/// discover all slaves present in the ethercat segment, in topological order
+	/** discover all available slaves present in the ethercat segment, in topological order
+        
+        slaves already held by a [Slave] instance will be skiped by this iterator
+    */
     pub async fn discover(&self) -> SlaveDiscovery<'_>   {
         SlaveDiscovery::new(self, self.slaves().await)
     }
@@ -94,7 +97,7 @@ impl Master {
 }
 
 
-// /// iterator of slaves in the segment, in topological order
+/// iterator of available slaves in the segment, in topological order
 pub struct SlaveDiscovery<'a> {
     master: &'a Master,
     iter: Range<u16>,
@@ -106,10 +109,12 @@ impl<'a> SlaveDiscovery<'a> {
             iter: 0 .. max,
         }
     }
+    /// next method lile in an iterator, except this method is async
     pub async fn next(&mut self) -> Option<Slave<'a>> {
-        if let Some(address) = self.iter.next() {
-            Slave::new(&self.master, SlaveAddress::AutoIncremented(address)).await
+        while let Some(address) = self.iter.next() {
+            if let Some(slave) = Slave::new(&self.master, SlaveAddress::AutoIncremented(address)).await
+                {return Some(slave)}
         }
-        else {None}
+        None
     }
 }
