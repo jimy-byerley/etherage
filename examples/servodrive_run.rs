@@ -34,8 +34,6 @@ async fn main() -> std::io::Result<()> {
                 let controlword = pdo.push(Sdo::<ControlWord>::complete(0x6040));
                 let target_position = pdo.push(Sdo::<i32>::complete(0x607a));
                 let target_mode = pdo.push(Sdo::<OperationMode>::complete(0x6060));
-//                 let target_mode = Field::simple(0);
-//                 pdo.push(Sdo::<i32>::complete(0x60ff));
                 let target_velocity = pdo.push(Sdo::<i32>::complete(0x60ff));
         let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, num: 10 });
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1a00, num: 10 });
@@ -43,7 +41,6 @@ async fn main() -> std::io::Result<()> {
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
                 let current_position = pdo.push(Sdo::<i32>::complete(0x6064));
                 let current_torque = pdo.push(Sdo::<i16>::complete(0x6077));
-//                 let target_mode = pdo.push(Sdo::<OperationMode>::complete(0x6060));
     println!("done {:#?}", config);
     
     let mut allocator = mapping::Allocator::new(&master);
@@ -52,7 +49,7 @@ async fn main() -> std::io::Result<()> {
     println!("group {:#?}", group);
     println!("fields {:#?}", (statusword, controlword));
     
-    let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0));
+    let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await;
     slave.set_address(1).await;
     slave.init_mailbox().await;

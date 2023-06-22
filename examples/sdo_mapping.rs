@@ -45,7 +45,7 @@ async fn main() -> std::io::Result<()> {
     println!("group {:#?}", group);
     println!("fields  {:#?}", (control, status, error, position));
     
-    let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0));
+    let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await;
     slave.set_address(1).await;
     slave.init_mailbox().await;

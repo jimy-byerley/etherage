@@ -1,9 +1,18 @@
 use crate::{
 	socket::EthercatSocket,
-	rawmaster::RawMaster,
+	rawmaster::{RawMaster, SlaveAddress, PduAnswer},
 	data::{PduData, Field},
+	slave::Slave,
+	registers,
 	};
 use bilge::prelude::*;
+use std::{
+    collections::HashSet,
+    sync::Mutex,
+    };
+use core::ops::Range;
+
+pub type MixedState = registers::AlMixedState;
 
 
 /**
@@ -16,54 +25,91 @@ use bilge::prelude::*;
 	The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
 */
 pub struct Master {
-    raw: RawMaster,
+    pub(crate) raw: RawMaster,
+    pub(crate) slaves: Mutex<HashSet<SlaveAddress>>,
 }
 impl Master {
 	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {     
 		Self {
 			raw: RawMaster::new(socket),
+			slaves: Mutex::new(HashSet::new()),
 		}
 	}
-// 	/// discover all slaves present in the ethercat segment, in topological order
-//     pub async fn discover<'a>(&'a self) -> SlaveDiscovery<'a>   {todo!()}
-	/// retreive a structure representing the state of all slaves in the segment
-	pub fn states(&self) -> MixedState {todo!()}
-	/**
-		send an request for communication state change to all slaves
-		the change will be effective on every slave on this function return, however [Slave::expect] will need to be called in order to convert salve instances to their proper state
-	*/
-	pub fn switch(&self, state: MixedState) {todo!()}
     
     /**
 		return a reference to the low level master control.
 		
 		This method is marked unsafe since letting the user write registers may break the protocol sequences performed by the protocol implementation. Accessing the low level is communication-unsafe.
     */
-    pub unsafe fn get_raw(&self) -> &RawMaster {todo!()}
+    pub unsafe fn get_raw(&self) -> &'_ RawMaster {&self.raw}
     /**
 		this method is safe since it consumes the communication-safe master implementation.
     */
-    pub fn into_raw(self) -> RawMaster {todo!()}
+    pub fn into_raw(self) -> RawMaster {self.raw}
+    
+	/// discover all slaves present in the ethercat segment, in topological order
+    pub async fn discover(&self) -> SlaveDiscovery<'_>   {
+        SlaveDiscovery::new(self, self.slaves().await)
+    }
+    
+    /// reset all slaves fixed addresses in the ethercat segment.
+    /// this function will panic if there is instances of [Slave] alive
+    pub async fn reset_addresses(&self) {
+        assert_eq!(self.slaves.lock().unwrap().len(), 0);
+        self.raw.bwr(registers::address::fixed, 0).await;
+    }
+    
+    /// number of slaves in the ethercat segment (only answering slaves will be accounted for)
+    pub async fn slaves(&self) -> u16 {
+        self.raw.brd(registers::al::status).await.answers
+    }
+    
+	/// retreive a structure representing the state of all slaves in the segment
+	pub async fn states(&self) -> MixedState {
+        self.raw.brd(registers::al::status).await.value.state()
+	}
+	/**
+		send an request for communication state change to all slaves
+		the change will be effective on every slave on this function return, however [Slave::expect] will need to be called in order to convert salve instances to their proper state
+	*/
+	pub async fn switch(&self, target: MixedState) {
+        self.raw.bwr(registers::al::control, {
+			let mut config = registers::AlControlRequest::default();
+			config.set_state(target.into());
+			config.set_ack(true);
+			config
+		}).await;
+        // TODO: wait until all slaves switched ?
+	}
     
     
-    pub fn broadcast_read<T: PduData>(&self, field: Field<T>) -> T  {todo!()}
-    pub fn logical_read<T: PduData>(&self, field: Field<T>) -> T  {todo!()}
-    pub fn logical_write<T: PduData>(&self, field: Field<T>, value: T)   {todo!()}
-    pub fn logical_exchange<T: PduData>(&self, field: Field<T>, value: T) -> T   {todo!()}
+    /// same as [RawMaster::brd]
+    pub async fn broadcast_read<T: PduData>(&self, field: Field<T>) -> PduAnswer<T>  {self.raw.brd(field).await}
+    /// same as [RawMaster::lrd]
+    pub async fn logical_read<T: PduData>(&self, field: Field<T>) -> PduAnswer<T>  {self.raw.lrd(field).await}
+    /// same as [RawMaster::lwr]
+    pub async fn logical_write<T: PduData>(&self, field: Field<T>, value: T) -> PduAnswer<()>   {self.raw.lwr(field, value).await}
+    /// same as [RawMaster::lrw]
+    pub async fn logical_exchange<T: PduData>(&self, field: Field<T>, value: T) -> PduAnswer<T>   {self.raw.lrw(field, value).await}
 }
 
-/**
-	gather the current operation states on several devices
-	this struct does not provide any way to know which slave is in which state
-*/
-#[bitsize(4)]
-#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
-pub struct MixedState {
-	pub init: bool,
-	pub pre_operational: bool,
-	pub safe_operational: bool,
-	pub operational: bool,
-}
 
 // /// iterator of slaves in the segment, in topological order
-// struct SlaveDiscovery<'a> {}
+pub struct SlaveDiscovery<'a> {
+    master: &'a Master,
+    iter: Range<u16>,
+}
+impl<'a> SlaveDiscovery<'a> {
+    fn new(master: &'a Master, max: u16) -> Self {
+        Self {
+            master,
+            iter: 0 .. max,
+        }
+    }
+    pub async fn next(&mut self) -> Option<Slave<'a>> {
+        if let Some(address) = self.iter.next() {
+            Slave::new(&self.master, SlaveAddress::AutoIncremented(address)).await
+        }
+        else {None}
+    }
+}

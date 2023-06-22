@@ -37,8 +37,12 @@ const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100}
 */
 pub struct Slave<'a> {
     master: &'a RawMaster,
+    /// current address in use, fixed or topological
     address: SlaveAddress,
+    /// assumed current state
     state: CommunicationState,
+    /// safe master to report to if existing
+    safemaster: Option<&'a Master>,
     
     // internal structures are inter-referencing, thus must be stored in Rc to ensure the references to it will not void because of deallocation or data move
 //     sii: Mutex<Sii>,
@@ -47,9 +51,10 @@ pub struct Slave<'a> {
 //     clock: Option<Dc>,
 }
 impl<'a> Slave<'a> {
-    pub fn new(master: &'a RawMaster, address: SlaveAddress) -> Self {
+    pub fn raw(master: &'a RawMaster, address: SlaveAddress) -> Self {
         Self {
             master,
+            safemaster: None,
             address,
             state: Init,
             
@@ -57,7 +62,26 @@ impl<'a> Slave<'a> {
             coe: None,
         }
     }
-    pub fn address(&self) -> SlaveAddress  {self.address}
+    pub async fn new(master: &'a Master, address: SlaveAddress) -> Option<Slave<'a>> {
+        let mut book = master.slaves.lock().unwrap();
+        if book.contains(&address)
+        || book.contains(&SlaveAddress::Fixed(
+                master.raw.read(address, registers::address::fixed).await.one()
+                ))
+            {None}
+        else {
+            book.insert(address);
+            Some(Self {
+                master: &master.raw,
+                safemaster: Some(master),
+                address,
+                state: Init,
+                
+                mailbox: None,
+                coe: None,
+            })
+        }
+    }
     pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
     
     /// retreive the slave's identification informations
@@ -65,14 +89,15 @@ impl<'a> Slave<'a> {
     
     /// return the current state of the slave
     pub async fn state(&self) -> CommunicationState {
-		self.master.read(self.address, registers::al::status).await.one().state()
+		self.master.read(self.address, registers::al::status).await.one()
+            .state().try_into().unwrap()
 	}
     /// send a state change request to the slave, and return once the slave has switched
     pub async fn switch(&self, target: CommunicationState)  {
 		// switch to preop
 		self.master.write(self.address, registers::al::control, {
 			let mut config = registers::AlControlRequest::default();
-			config.set_state(target);
+			config.set_state(target.into());
 			config.set_ack(true);
 			config
 		}).await.one();
@@ -84,20 +109,23 @@ impl<'a> Slave<'a> {
 				if received == registers::AlError::NoError  {break}
 				panic!("error on state change: {:?}", received);
 			}
-			if received.state() == target  {break}
+			if received.state() == target.into()  {break}
 		}
     }
     
+    pub fn address(&self) -> SlaveAddress  {self.address}
     pub async fn set_address(&mut self, fixed: u16) {
         assert_eq!(self.state, Init);
-//         {
-//             let book = self.master.slaves.lock();
-//             assert!(! book.contain(&fixed));
-//             book.insert(fixed);
-//         }
         assert!(fixed != 0);
         self.master.write(self.address, registers::address::fixed, fixed).await;
-        self.address = SlaveAddress::Fixed(fixed);
+        let new = SlaveAddress::Fixed(fixed);
+        // report existing address if a safemaster is used
+        if let Some(safe) = self.safemaster {
+            let mut book = safe.slaves.lock().unwrap();
+            book.remove(&self.address);
+            book.insert(new);
+        }
+        self.address = new;
     }
     
 //     pub async fn auto_address(&mut self) {
@@ -159,4 +187,14 @@ impl<'a> Slave<'a> {
 
 //     pub fn sdo_read<T: PduData>(&self, sdo: &Sdo<T>) -> T   {todo!()}
 //     pub fn sdo_write<T: PduData>(&self, sdo: &Sdo<T>, value: T)  {todo!()}
+}
+
+impl Drop for Slave<'_> {
+    fn drop(&mut self) {
+        // deregister from the safemaster if any
+        if let Some(safe) = self.safemaster {
+            let mut book = safe.slaves.lock().unwrap();
+            book.remove(&self.address);
+        }
+    }
 }

@@ -113,7 +113,7 @@ pub mod al {
 #[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
 pub struct AlControlRequest {
     /// requested state of communication
-    pub state: AlState,
+    pub state: AlMixedState,
     /// if true, parameter change of the [AlStatus::changed] will be reset
     pub ack: bool,
     /// request of id instead of error code in [al::error]
@@ -127,7 +127,7 @@ data::bilge_pdudata!(AlControlRequest, u8);
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct AlControlResponse {
     /// formerly requested state of communication
-    pub state: AlState,
+    pub state: AlMixedState,
     /**
     - false: State transition successful
     - true: State transition not successful
@@ -144,14 +144,20 @@ data::bilge_pdudata!(AlControlResponse, u8);
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct AlStatus {
     /// current state of communication
-    pub state: AlState,
+    pub state: AlMixedState,
     /// true if requested by [AlControlRequest::ack]
     pub changed: bool,
     reserved: u3,
 }
 data::bilge_pdudata!(AlStatus, u8);
 
-/// ETG.1000.6 table 9
+/**
+    the current operation states on several devices
+    
+    This is the enum version, useful when communicating with one slave only
+
+    ETG.1000.6 table 9
+*/
 #[bitsize(4)]
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AlState {
@@ -160,6 +166,35 @@ pub enum AlState {
     Bootstrap = 3,
     SafeOperational = 4,
     Operational = 8,
+}
+
+/**
+	gather the current operation states on several devices
+	this struct does not provide any way to know which slave is in which state
+	
+	This is the bitfield version, useful when communicating with multiple slaves (broadcast PDUs)
+	
+    ETG.1000.6 table 9
+*/
+#[bitsize(4)]
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct AlMixedState {
+	pub init: bool,
+	pub pre_operational: bool,
+	pub safe_operational: bool,
+	pub operational: bool,
+}
+
+impl TryFrom<AlMixedState> for AlState {
+    type Error = &'static str;
+    fn try_from(state: AlMixedState) -> Result<Self, Self::Error> {
+        Self::try_from(u4::from(state)).map_err(|e|  "cannot unwrap when not only 1 state in mix")
+    }
+}
+impl From<AlState> for AlMixedState {
+    fn from(state: AlState) -> Self {
+        Self::from(u4::from(state))
+    }
 }
 
 /// ETG.1000.6 table 11
