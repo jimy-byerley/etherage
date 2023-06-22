@@ -19,10 +19,27 @@ pub type MixedState = registers::AlMixedState;
 	This struct exposes the ethercat master functions addressing the whole ethercat segment.
 	Functions addressing a specific slave are exposed in [Slave]
 	
-	## Note:
+	## Note
 	
-	At contrary to [RawMaster], it is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
+	At contrary to [RawMaster], this struct is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
 	The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
+	
+	## Example
+	
+    The following is the typical initialization sequence of a master
+	
+    ```ignore
+    Master::new(EthernetSocket::new("eno1")?)
+    master.reset_addresses().await;
+    
+    let mut iter = master.discover().await;
+    while let Some(mut slave) = iter.next().await {
+        // check the slave
+        slave.switch(CommunicationState::Init).await;
+        // begin configuring the slave
+        // ...
+    }
+    ```
 */
 pub struct Master {
     pub(crate) raw: RawMaster,
@@ -47,7 +64,8 @@ impl Master {
     */
     pub fn into_raw(self) -> RawMaster {self.raw}
     
-	/** discover all available slaves present in the ethercat segment, in topological order
+	/** 
+        discover all available slaves present in the ethercat segment, in topological order
         
         slaves already held by a [Slave] instance will be skiped by this iterator
     */

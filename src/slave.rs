@@ -29,11 +29,28 @@ const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100}
 	This struct exposes the ethercat master functions addressing one slave.
 	
 	Its lifetime refers to the [Master] the slave answers to.
+    
+	## Note
 	
-	## Note:
-	
-	At contrary to [RawMaster], it is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
+	At contrary to [RawMaster], this struct is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
 	The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
+	
+	## Example
+	
+    The following is a typical configuration sequence of a slave
+    
+    ```ignore
+    slave.switch(CommunicationState::Init).await;
+    slave.set_address(1).await;
+    slave.init_mailbox().await;
+    slave.init_coe().await;
+    slave.switch(CommunicationState::PreOperational).await;
+    group.configure(&slave).await;
+    slave.switch(CommunicationState::SafeOperational).await;
+    slave.switch(CommunicationState::Operational).await;
+    ```
+        
+    In this example, `group` is a tool to manage the logical memory and mappings from [crate::mapping].
 */
 pub struct Slave<'a> {
     master: &'a RawMaster,
@@ -161,7 +178,7 @@ impl<'a> Slave<'a> {
 //         self.master.write(self.address, registers::address::fixed, fixed).await;
 //     }
     
-    pub async fn init_clock(&mut self)  {todo!()}
+//     pub async fn init_clock(&mut self)  {todo!()}
 
     /// initialize the slave's mailbox (if supported by the slave)
     pub async fn init_mailbox(&mut self) {
@@ -195,7 +212,7 @@ impl<'a> Slave<'a> {
         self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
     }
     
-    pub async fn clock(&'a self) {todo!()}
+//     pub async fn clock(&'a self) {todo!()}
     
     /// locks access to CoE communication and return the underlying instance of [Can] running CoE
     pub async fn coe(&self) -> MutexGuard<'_, Can<'a>>    {
@@ -204,8 +221,8 @@ impl<'a> Slave<'a> {
             .lock().await
     }
     
-    /// locks access to EoE communication
-    pub fn eoe(&'a self) {todo!()}
+//     /// locks access to EoE communication
+//     pub fn eoe(&'a self) {todo!()}
     
     /// read a value from the slave's physical memory
     pub async fn physical_read<T: PduData>(&self, field: Field<T>) -> T  {

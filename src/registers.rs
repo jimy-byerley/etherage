@@ -220,7 +220,7 @@ pub enum AlError {
     NoValidFirmware = 0x0014, 
     ///  Invalid mailbox configuration for switching to [AlState::Init]
     InvalidMailboxConfigBoot = 0x0015, 
-    ///  Invalid mailbox configuration for switching to [AlState::PreoOperational]
+    ///  Invalid mailbox configuration for switching to [AlState::PreOperational]
     InvalidMailboxConfigPreop = 0x0016, 
     ///  Invalid sync manager configuration
     InvalidSyncConfig = 0x0017, 
@@ -351,7 +351,7 @@ pub struct DLInformation {
     pub mii_enhanced_link_detection: bool,
     /// if true, frames with modified FCS (additional nibble) should be counted separately in RX-Error Previous counter
     pub separate_fcs_errors: bool,
-    /// true if available. This feature refers to registers 0x981[7:3], 0x0984
+    /// true if available. This feature refers to registers 0x981\[7:3\], 0x0984
     pub dc_sync_activation_enhanced: bool,
     
     /// if true, `LRW` is not supported
@@ -438,7 +438,7 @@ data::bilge_pdudata!(DLControl, u32);
 pub enum Forwarding {
 	/// EtherCAT frames are processed, non-EtherCAT frames are forwarded without modification, The source MAC address is not changed for any frame
 	Transmit = 0, 
-	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC[1] is set to 1 – locally administered address).
+	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC\[1\] is set to 1 – locally administered address).
 	Filter = 1,
 }
 data::bilge_pdudata!(Forwarding, u1);

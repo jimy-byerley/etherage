@@ -9,25 +9,27 @@
     
     ## Example
     
-        // establish mapping
-        let config = Config::default();
-        let mapping = Mapping::new(&config);
-            let slave = mapping.slave(42);
-                let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Read, num: 4 });
-                    let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
-                        let status = pdo.push(Sdo::<u16>::complete(0x6041));
-                        let error = pdo.push(Sdo::<u16>::complete(0x603f));
-                    // possibly other PDOs
-                // possibly other sync managers
-            // possibly other slaves
-        let group = allocator.group(mapping);
-        
-        // configuration of slaves
-        group.configure(slave).await;
-        
-        // realtime exchanges
-        group.exchange().await;
-        group.set(position, group.get(position)+velocity);
+    ```ignore
+    // establish mapping
+    let config = Config::default();
+    let mapping = Mapping::new(&config);
+        let slave = mapping.slave(42);
+            let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Read, num: 4 });
+                let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
+                    let status = pdo.push(Sdo::<u16>::complete(0x6041));
+                    let error = pdo.push(Sdo::<u16>::complete(0x603f));
+                // possibly other PDOs
+            // possibly other sync managers
+        // possibly other slaves
+    let group = allocator.group(mapping);
+    
+    // configuration of slaves
+    group.configure(slave).await;
+    
+    // realtime exchanges
+    group.exchange().await;
+    group.set(position, group.get(position)+velocity);
+    ```
     
     ## Principle
         
@@ -56,7 +58,7 @@ use crate::{
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     data::{PduData, Field},
     sdo::{self, Sdo, SyncDirection},
-    slave::Slave,
+    slave::{Slave, CommunicationState},
     registers,
     };
 use core::{

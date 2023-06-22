@@ -19,7 +19,8 @@ pub trait PduData: Sized {
     fn packed_bitsize() -> usize {Self::Packed::LEN*8}
 }
 
-/** Enum to identify and raise adapted error raised by this package
+/** 
+    Enum to identify and raise adapted error raised by this package
 */
 #[derive(Copy, Clone, Debug)]
 pub enum PackingError {
@@ -48,7 +49,8 @@ impl<const N: usize> Storage for [u8; N] {
 //     fn zeroed() -> Self {unsafe {core::mem::zeroed()}}
 }
 
-/** dtype identifiers associated to dtypes allowing to dynamically check the type of a [PduData] implementor
+/** 
+    dtype identifiers associated to dtypes allowing to dynamically check the type of a [PduData] implementor
 	
 	It is only convering the common useful types and not all the possible implementors of [PduData]
 */
@@ -284,7 +286,8 @@ impl<T: PduData> Copy for BitField<T> {}
 
 
 
-/** helper to read/write sequencial data from/to a byte slice
+/** 
+    helper to read/write sequencial data from/to a byte slice
 
     It is close to what [std::io::Cursor] is doing, but this struct allows reading forward without consuming the stream, and returns slices without copying the data. It is also meant to work with [PduData]
     
@@ -297,7 +300,8 @@ pub struct Cursor<T> {
 impl<T> Cursor<T> {
     /// create a new cursor starting at position zero in the given slice
     pub fn new(data: T) -> Self   {Self{position: 0, data}}
-    /** current position in the read/write slice
+    /** 
+        current position in the read/write slice
     
         bytes before this position are considered read or written, and bytes after are coming for use in next read/write calls
     */
