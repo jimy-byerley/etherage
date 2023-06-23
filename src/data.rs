@@ -12,10 +12,12 @@ pub trait PduData: Sized {
     const ID: TypeId;
     type Packed: Storage;
 
-    fn pack(&self, data: &mut [u8]) -> PackingResult<()> { self.pack_slice(data, 0, Self::packed_size(), Endiannes::Little) }
-    fn unpack(src: &[u8]) -> PackingResult<Self> { Self::unpack_slice(src, 0, Self::packed_size(), Endiannes::Little)}
-    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<()>;
-    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<Self>;
+    fn pack(&self, data: &mut [u8]) -> PackingResult<()> { self.pack_slice(data, 0, Self::packed_bitsize(), Ordering::Little) }
+    fn unpack(src: &[u8]) -> PackingResult<Self> { Self::unpack_slice(src, 0, Self::packed_bitsize(), Ordering::Little)}
+    
+    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<()>;
+    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<Self>;
+    
     fn packed_size() -> usize {Self::Packed::LEN}
     fn packed_bitsize() -> usize {Self::Packed::LEN * 8}
 }
@@ -26,7 +28,7 @@ pub trait PduData: Sized {
 pub enum PackingError {
     BadSize(usize, &'static str),
     BadAlignment(usize, &'static str),
-    BadOrdering(Endiannes, &'static str),
+    BadOrdering(Ordering, &'static str),
     InvalidValue(&'static str),
 }
 
@@ -65,17 +67,17 @@ pub enum TypeId {
     @see https://en.wikipedia.org/wiki/Endianness?useskin=vector for more information
 */
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
-pub enum Endiannes {
+pub enum Ordering {
     #[default] Little,
     Big,
     Middle,
 }
 
-impl std::fmt::Display for Endiannes {
+impl std::fmt::Display for Ordering {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         return match &*self {
-            Endiannes::Big => write!(f, "Big"),
-            Endiannes::Little => write!(f, "Little"),
+            Ordering::Big => write!(f, "Big"),
+            Ordering::Little => write!(f, "Little"),
             _ => write!(f, "Mixed"),
         };
     }
@@ -107,7 +109,7 @@ macro_rules! bilge_pdudata {
             Ok(unsafe{ core::mem::transmute::<[u8; core::mem::size_of::<Self>()], Self>(tmp) })
         }
 
-        fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Endiannes) -> crate::data::PackingResult<()> {
+        fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Ordering) -> crate::data::PackingResult<()> {
             if bitoffset != 0 {
                 return Err(crate::data::PackingError::BadAlignment(bitoffset as usize, "Bit offset must be at 0 on this implementation")); }
             if bitsize != 0 {
@@ -115,7 +117,7 @@ macro_rules! bilge_pdudata {
             return self.pack(data);
         }
 
-        fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Endiannes) -> crate::data::PackingResult<Self> {
+        fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Ordering) -> crate::data::PackingResult<Self> {
             if bitoffset != 0 {
                 return Err(crate::data::PackingError::BadAlignment(bitoffset as usize, "Bit offset must be at 0 on this implementation")); }
             if bitsize != 0 {
@@ -133,7 +135,7 @@ macro_rules! packed_pdudata {
         const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
         type Packed = [u8; core::mem::size_of::<$t>()];
 
-        fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Endiannes) -> crate::data::PackingResult<()> {
+        fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Ordering) -> crate::data::PackingResult<()> {
             if bitoffset != 0 {
                 return Err(crate::data::PackingError::BadAlignment(bitoffset as usize, "Offset not null"))}
             if bitsize > data.len() {
@@ -143,7 +145,7 @@ macro_rules! packed_pdudata {
             data[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
             Ok(())
             }
-        fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Endiannes) -> crate::data::PackingResult<Self> {
+        fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, _bitordering: crate::data::Ordering) -> crate::data::PackingResult<Self> {
             if bitoffset != 0 {
                 return Err(crate::data::PackingError::BadAlignment(bitoffset as usize, "Offset not null"))}
             if bitsize > src.len() {
@@ -167,11 +169,11 @@ impl<const N: usize> PduData for [u8; N] {
     - bitsize: Size of the variable type: Integer on 16 bits => 16 or Integer on 3bits => 3 <br>
     - bitordering: Endian ordering for the packed data<br>
     */
-    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, _bitsize: usize, bitordering: Endiannes) -> PackingResult<()> {
+    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, _bitsize: usize, bitordering: Ordering) -> PackingResult<()> {
         if bitoffset >= MAX_OFFSET {
             return Err(PackingError::BadAlignment(0, "Offset greater than 8"));
         }
-        if bitordering == Endiannes::Middle {
+        if bitordering == Ordering::Middle {
             return Err(PackingError::BadOrdering(bitordering, "Value not allowed"));
         }
         if (bitoffset == 0 && data.len() < N) || (data.len() < N + 1) {
@@ -183,12 +185,12 @@ impl<const N: usize> PduData for [u8; N] {
         data.copy_from_slice(self);
 
         #[cfg(target_endian = "big")]
-        if bitordering == Endiannes::Little {
+        if bitordering == Ordering::Little {
             data.reverse()
         };
 
         #[cfg(target_endian = "little")]
-        if bitordering == Endiannes::Big {
+        if bitordering == Ordering::Big {
             data.reverse()
         };
 
@@ -209,7 +211,7 @@ impl<const N: usize> PduData for [u8; N] {
         return Ok(());
     }
 
-    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<Self> {
+    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<Self> {
         //Test input parameters
         let array_len_bit = src.len() * 8;
         let field_len_bit = N * 8;
@@ -240,7 +242,7 @@ impl<const N: usize> PduData for [u8; N] {
             data[i] = src[i] << bitoffset;
         }
 
-        if bitordering == Endiannes::Little {
+        if bitordering == Ordering::Little {
             data.reverse()
         };
 
@@ -252,7 +254,7 @@ impl PduData for f32 {
     const ID: TypeId = TypeId::F32;
     type Packed = [u8;4];
 
-    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<()> {
+    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<()> {
         if bitoffset != 0 {
             return Err(PackingError::BadAlignment(
                 bitoffset as usize,
@@ -272,8 +274,8 @@ impl PduData for f32 {
         }
 
         let cpy: [u8; core::mem::size_of::<f32>()] = match bitordering {
-            Endiannes::Little => self.to_le_bytes(),
-            Endiannes::Big => self.to_be_bytes(),
+            Ordering::Little => self.to_le_bytes(),
+            Ordering::Big => self.to_be_bytes(),
             _ => {
                 return Err(PackingError::BadOrdering(
                     bitordering,
@@ -288,7 +290,7 @@ impl PduData for f32 {
         return Ok(());
     }
 
-    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<Self> {
+    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<Self> {
         if bitoffset != 0 {
             return Err(PackingError::BadAlignment(
                 bitoffset as usize,
@@ -308,8 +310,8 @@ impl PduData for f32 {
         }
 
         return Ok(match bitordering {
-            Endiannes::Little => f32::from_le_bytes(src.try_into().unwrap()),
-            Endiannes::Big => f32::from_be_bytes(src.try_into().unwrap()),
+            Ordering::Little => f32::from_le_bytes(src.try_into().unwrap()),
+            Ordering::Big => f32::from_be_bytes(src.try_into().unwrap()),
             _ => { return Err(PackingError::BadOrdering( bitordering, "Mixed endian is invalid in this case" ))}
         });
     }
@@ -319,7 +321,7 @@ impl PduData for f64 {
     const ID: TypeId = TypeId::F64;
     type Packed = [u8;8];
 
-    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<()> {
+    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<()> {
         if bitoffset != 0 {
             return Err(PackingError::BadAlignment(
                 bitoffset as usize,
@@ -339,8 +341,8 @@ impl PduData for f64 {
         }
 
         let cpy: [u8; core::mem::size_of::<f64>()] = match bitordering {
-            Endiannes::Little => self.to_le_bytes(),
-            Endiannes::Big => self.to_be_bytes(),
+            Ordering::Little => self.to_le_bytes(),
+            Ordering::Big => self.to_be_bytes(),
             _ => {
                 return Err(PackingError::BadOrdering(
                     bitordering,
@@ -355,7 +357,7 @@ impl PduData for f64 {
         return Ok(());
     }
 
-    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize,  bitordering: Endiannes) -> PackingResult<Self> {
+    fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize,  bitordering: Ordering) -> PackingResult<Self> {
         if bitoffset != 0 {
             return Err(PackingError::BadAlignment(
                 bitoffset as usize,
@@ -375,8 +377,8 @@ impl PduData for f64 {
         }
 
         return Ok(match bitordering {
-            Endiannes::Little => f64::from_le_bytes(src.try_into().unwrap()),
-            Endiannes::Big => f64::from_be_bytes(src.try_into().unwrap()),
+            Ordering::Little => f64::from_le_bytes(src.try_into().unwrap()),
+            Ordering::Big => f64::from_be_bytes(src.try_into().unwrap()),
             _ => {
                 return Err(PackingError::BadOrdering(
                     bitordering,
@@ -391,7 +393,7 @@ impl PduData for bool {
     const ID: TypeId = TypeId::BOOL;
     type Packed = [u8;1];
 
-    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, _bitordering: Endiannes) -> PackingResult<()> {
+    fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, _bitordering: Ordering) -> PackingResult<()> {
         if bitoffset >= MAX_OFFSET {
             return Err(PackingError::BadAlignment(
                 bitoffset as usize,
@@ -408,7 +410,7 @@ impl PduData for bool {
         return Ok(());
     }
 
-    fn unpack_slice(src: &[u8],  bitoffset: u8, bitsize: usize,  _bitordering: Endiannes) -> PackingResult<Self> {
+    fn unpack_slice(src: &[u8],  bitoffset: u8, bitsize: usize,  _bitordering: Ordering) -> PackingResult<Self> {
         if bitoffset != 0 {
             return Err(PackingError::BadAlignment(bitoffset as usize, "For this type, offset different than 0 is not supported" )); }
         if bitsize != core::mem::size_of::<bool>() {
@@ -448,12 +450,12 @@ macro_rules! num_pdudata {
             ```
             Caveat overlap the end of slice
             */
-            fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<()>
+            fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<()>
             {
                 //Test input parameters
                 let array_len_bit : usize = data.len() * 8;
                 let field_len_bit : usize = core::mem::size_of::<$t>() * 8;
-                let excluded_bits : u8 = 8 - bitoffset;
+                let excluded_bits : u8 = 8 - ((usize::from(bitoffset) + bitsize)%8) as u8;
 
                 if bitsize == 0 {
                     return Err(PackingError::InvalidValue("Bit size couldn't be negative")); }
@@ -461,34 +463,50 @@ macro_rules! num_pdudata {
                     return Err(PackingError::BadAlignment(bitoffset as usize, "Offset greater than 8")); }
                 if bitsize + bitoffset as usize > array_len_bit {
                     return Err(PackingError::BadSize(bitsize, "Data too large for the given slice")); }
+                    
+                println!("value {:?}:   {} {} {}", self, array_len_bit, field_len_bit, excluded_bits);
 
                 //Get unsed data
                 let prefix_mask : u8 = match bitoffset > 0 {
                     true => ( data[0] >> excluded_bits ) << excluded_bits,
                     false => 0
                 };
+                
+                println!("- {:?}", prefix_mask);
 
                 //Ordering byte
                 let ordering_bits = match bitordering {
-                    Endiannes::Big => self.to_be_bytes(),
-                    Endiannes::Little => self.to_le_bytes(),
+                    Ordering::Big => self.to_be_bytes(),
+                    Ordering::Little => self.to_le_bytes(),
                     _ => return Err(PackingError::BadOrdering(bitordering,"Mixed endian is invalid in this case"))
                 };
+                
+                println!("- {:?}", ordering_bits);
 
                 //Get suffix mask
                 let suffix_mask : u8 = match bitoffset > 0 {
                     true => (ordering_bits[ordering_bits.len() -1] << excluded_bits) >> excluded_bits,
                     _ => 0,
                 };
+                
+                println!("- {:?}", suffix_mask);
 
                 //Clear non used data
                 // Exemple (on 1 byte, with offset = 3 and bitsize = 4 | d d d d * * * * | -> | d d d d 0 0 0 0 | -> | 0 0 0  d d d d 0 |
                 // Exemple (on 1 byte, with offset = 3 and bitsize = 7 | d d d d d d d * | -> | d d d d d d d 0 | -> | 0 0 0  d d d d d |
                 let mut core = <$t>::from_ne_bytes(ordering_bits);
+                println!("- 0  {:?}", core);
                 core >>= (field_len_bit - bitsize) as $t;
+                println!("- 1  {:?}", core);
                 core <<= (field_len_bit - bitsize) as $t;
+                println!("- 2 {:?}", core);
                 core >>= bitoffset;
+                println!("- 3 {:?}", core);
                 let array = core.to_ne_bytes();
+                
+                
+                println!("- core  {:?}", core);
+                println!("- array {:?}", array);
 
                 //Format final data
                 for i in 0..bitsize / 8
@@ -497,16 +515,20 @@ macro_rules! num_pdudata {
                     else { data[i] = array[i] ; }
                 }
                 if bitsize % 8 > 0 {
-                    data[bitsize / 8] = suffix_mask; }
+                    data[bitsize / 8] = suffix_mask; 
+                }
+
+                println!("- {:?}", data);
 
                 return Ok(());
             }
 
-            fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Endiannes) -> PackingResult<Self> {
+            fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<Self> {
                 //Test input parameters
                 let array_len_bit = src.len() * 8;
                 let field_len_bit = core::mem::size_of::<$t>() * 8;
-                let excluded_bits : u8 = 8 - bitoffset;
+                let excluded_bits : u8 = 8 - ((usize::from(bitoffset) + bitsize)%8) as u8;
+                
                 if bitoffset >= MAX_OFFSET {
                     return Err(PackingError::BadAlignment(bitoffset as usize, "Alignement superior than one byte")); }
                 if bitsize + bitoffset as usize > array_len_bit || bitsize > field_len_bit {
@@ -530,8 +552,8 @@ macro_rules! num_pdudata {
 
                 //Ordering
                 return Ok(match bitordering {
-                    Endiannes::Big => Self::from_be_bytes(data.to_ne_bytes()),
-                    Endiannes::Little => Self::from_le_bytes(data.to_ne_bytes()),
+                    Ordering::Big => Self::from_be_bytes(data.to_ne_bytes()),
+                    Ordering::Little => Self::from_le_bytes(data.to_ne_bytes()),
                     _ => return Err(PackingError::BadOrdering(bitordering, "Mixed endian is invalid in this case"))
                 });
             }
@@ -561,18 +583,18 @@ pub struct Field<T: PduData> {
     /// byte length of the object
     pub len: usize,
     /// define byte the alignement used by the field. Can be set only on "Ctor."
-    pub endian: Endiannes,
+    pub endian: Ordering,
 }
 
 impl<T: PduData> Field<T> {
     /// build a Field from its content
-    pub fn new(byte: usize, len: usize, ordering: Endiannes) -> Self {
-        Self {extracted: PhantomData, offset: byte, len, endian: ordering}
+    pub fn new(byte: usize, len: usize) -> Self {
+        Self {extracted: PhantomData, offset: byte, len, endian: Ordering::Little}
     }
 
     /// build a Field from its byte offset, infering its length from the data nominal size
 	pub const fn simple(byte: usize) -> Self {
-        Self {extracted: PhantomData, offset: byte, len: T::Packed::LEN, endian : Endiannes::Little }
+        Self {extracted: PhantomData, offset: byte, len: T::Packed::LEN, endian : Ordering::Little }
 	}
 
     /// Build a field with default value:
@@ -581,7 +603,7 @@ impl<T: PduData> Field<T> {
     /// - Lenght = field type size
     /// - Little endian by ordering
     pub fn default() -> Self {
-        Self {extracted: PhantomData, offset: 0, len: core::mem::size_of::<T>(), endian: Endiannes::Little }
+        Self {extracted: PhantomData, offset: 0, len: core::mem::size_of::<T>(), endian: Ordering::Little }
     }
 
     /// extract the value pointed by the field in the given byte array
@@ -646,21 +668,21 @@ pub struct BitField<T: PduData> {
     /// bit length of the object
     pub len: usize,
     /// define bit the ordering used by the field. Can be set only on "Ctor."
-    pub endian: Endiannes,
+    pub endian: Ordering,
 }
 
 impl<T: PduData> BitField<T> {
     /// build a Field from its content
-    pub fn new_full(offset: usize, len: usize, endian: Endiannes) -> Self {
+    pub fn new_full(offset: usize, len: usize, endian: Ordering) -> Self {
         Self { extracted: PhantomData,  offset, len, endian }
     }
 
     pub const fn new(offset: usize, len: usize) -> Self {
-        Self { extracted: PhantomData,  offset, len, endian : crate::data::Endiannes::Little }
+        Self { extracted: PhantomData,  offset, len, endian : crate::data::Ordering::Little }
     }
 
     pub fn default() -> Self {
-        Self { extracted: PhantomData, offset: 0, len: 0, endian: Endiannes::Little}
+        Self { extracted: PhantomData, offset: 0, len: 0, endian: Ordering::Little}
     }
 
     /// extract the value pointed by the field in the given byte array
@@ -777,3 +799,105 @@ impl<'a> Cursor<&'a mut [u8]> {
         &mut self.data[.. self.position]
     }
 }
+
+
+#[test]
+fn test_aligned() {
+    use core::fmt::Debug;
+    
+    fn test<T: PduData + PartialEq + Debug>(data: T, reference: &[u8]) {
+        let mut buf = T::Packed::uninit();
+        buf.as_mut().fill(0);
+        data.pack(buf.as_mut()).unwrap();
+        
+        assert_eq!(buf.as_ref(), reference);
+        assert_eq!(T::unpack(buf.as_ref()).unwrap(), data);
+    }
+    
+    test(0u8, &[0x00]);
+    test(0u32, &[0x00; 4]);
+    test(1u8, &[0x01]);
+    test(1u16, &[0x01, 0x00]);
+    test(0x1234u16, &[0x34, 0x12]);
+    test(0x123456u32, &[0x56, 0x34, 0x12, 0x00]);
+}
+
+#[test]
+fn test_field() {
+    use core::fmt::Debug;
+    
+    fn test
+        <T: PduData + PartialEq + Debug + Clone, const N: usize>
+        (data: T, field: Field<T>, reference: &[u8; N]) 
+    {
+        let mut buf = [0; N];
+        field.set(&mut buf, data.clone()).unwrap();
+        
+        assert_eq!(buf.as_slice(), reference.as_slice());
+        assert_eq!(field.get(&buf).unwrap(), data);
+    }
+    
+    test(0u8, Field::new(1,1), &[0, 0]);
+    test(0u16, Field::new(1,2), &[0, 0, 0]);
+    test(1u8, Field::new(1,1), &[0, 0x01]);
+    test(1u16, Field::new(1,2), &[0, 0x01, 0]);
+    test(0x1234u16, Field::new(1,2), &[0, 0x34, 0x12, 0]);
+    test(0x123456u32, Field::new(1,2), &[0, 0x56, 0x34, 0]);
+}
+
+#[test]
+fn test_bitfield() {}
+
+#[test]
+fn test_old() {
+    // Pdu field
+    let a : Field::<u16> = Field::default();
+    let mut c: [u8; 6] = [0; 6];
+    a.set(&mut c[0..], 5).expect("Error on setting data");
+
+    let b : Field::<u32> = Field::new(2, 2);
+    b.set(&mut c[0..], 5).expect("Error on setting data");
+    println!("{:#?}",c);
+    println!("{:#?}",a.get(&c));
+
+    c.fill(0);
+    let d : BitField<u16> = BitField::new(2, 11);
+    d.set(&mut c[2..], 5);
+
+    println!("i: c");
+    println!("{:#?}",d);
+    for i in 0..6{ println!("{}: {:b} ",i, c[i]) }
+
+    println!("{:#?}", Field::try_from(d));
+
+    println!("{:#?}", BitField::<u32>::default().try_into() as Result<Field<u32>,PackingError>);
+
+    let gg : BitField<u16> = a.try_into().unwrap();
+    println!("{:#?}", gg );
+
+    //Bilge
+    // let a1: MyStructInt = MyStructInt::new(5);
+    // let b2: u32 = a1.len() as u32;
+    // println!("{:#02x}",a1.value);
+    // println!("{:#?} ",b2);
+
+    let a: Field<u8> = Field::simple(0x6);
+    let b: BitField<u8> = BitField::new(0x4, 8);
+    let mut c : [u8; 0x8] = [0;0x8];
+    let mut d : [u8; 0x8] = [0;0x8];
+    a.set(&mut c[0..], 27);
+    b.set(&mut d[0..], 27);
+    println!("Print c:");
+    for i in 0..c.len(){ println!("{}: {:b} ",i, c[i]) }
+    println!("Print d:");
+    for i in 0..d.len(){ println!("{}: {:b} ",i, d[i]) }
+
+    let e: Field<u8> = Field::simple(0x6);
+    let f: BitField<u8> = BitField::new(0x4, 8);
+
+    let g = e.get(&c[0..]).unwrap();
+    let h = f.get(&d[0..]);
+    println!("{}",g);
+    println!("{}",h);
+}
+
