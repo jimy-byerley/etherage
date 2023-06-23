@@ -17,7 +17,7 @@
             let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Read, num: 4 });
                 let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
                     let status = pdo.push(Sdo::<u16>::complete(0x6041));
-                    let error = pdo.push(Sdo::<u16>::complete(0x603f));
+                    let position = pdo.push(Sdo::<i32>::complete(0x6064));
                 // possibly other PDOs
             // possibly other sync managers
         // possibly other slaves
@@ -28,7 +28,7 @@
     
     // realtime exchanges
     group.exchange().await;
-    group.set(position, group.get(position)+velocity);
+    group.get(position);
     ```
     
     ## Principle

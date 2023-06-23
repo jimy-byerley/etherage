@@ -1,12 +1,14 @@
 [package]
 name = "etherage"
-categories = ["science::robotics", "no-std", "network-programming"]
+categories = ["science::robotics", "network-programming"]
+authors = ["Jimy Byerley <jimy.byerley@gmail.com>", "CendreQuasar540"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 description = "An EtherCAT master in pure-Rust very close to the ethercat nature"
-keywords = ["no-std", "beckhoff", "ethercat", "igh", "soem", "omron"]
+keywords = ["ethercat", "ethernet", "realtime", "robotics", "servodrive"]
+url = "https://github.com/jimy-byerley/etherage"
 resolver = "2"
 
 [dependencies]

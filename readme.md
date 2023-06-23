@@ -78,13 +78,15 @@ This crate aims to bring yet a other implementation of an Ethercat master, The [
 
 - if connecting to an ethercat segment with a direct ethernet connection (the common practice), you need permissions to open a raw-socket (usually *root* access)
 - if connecting to an ethercat segment through a UDP socket, any normal user can proceed.
-- no special OS dependency or configuration is needed, only what is `Cargo.toml`
+- no special OS dependency or configuration is needed, only what is in [`Cargo.toml`](Cargo.toml)
 
 ### take the path
 
 The best way to take a tour of what `etherage` can do is to look at the [examples](examples)
 
-First: check that the example takes the right network interface in the desired example `fn main`: by default it is `eno1`. Then compile and run:
+First: check that the example takes the right network interface (default is `eno1`) in the main of the desired example.
+
+Then compile and run:
 
 ```shell
 cargo build --example slaves_discovery

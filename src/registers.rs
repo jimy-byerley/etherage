@@ -152,19 +152,50 @@ pub struct AlStatus {
 data::bilge_pdudata!(AlStatus, u8);
 
 /**
-    the current operation states on several devices
+    the current operation state on one device.
     
     This is the enum version, useful when communicating with one slave only
+    
+    Except [Self::Bootstrap], changing to any mode can be requested from any upper mode or from the preceding one.
 
     ETG.1000.6 table 9
 */
 #[bitsize(4)]
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AlState {
-    Init = 1,
-    PreOperational = 2,
+    /**
+        Transitional state meaning the slave is booting up and ready for nothing yet. The slave should normally reach the [Self::Init] state within seconds.
+        
+        It cannot be requested, nor changed while it is active.
+    */
     Bootstrap = 3,
+    /**
+        The init mode allows to set many communication registers, like the salve address, the mailbox setup, etc.
+        
+        This mode should be used at the beginning of a communication. Only registers can be used.
+    */
+    Init = 1,
+    /**
+        the pre operational mode allows mailbox communication, which is mendatory to configure some slaves before realtime operations. Most functions are enabled but not realtime.
+        
+        Communication setup via registers is no more allowed in this mode.
+    */
+    PreOperational = 2,
+    /**
+        Mode allowing realtime operations, except that commands sent to the slaves via its mapping will not be executed.
+        
+        This is a kind of read-only temporary mode before [Self::Operational], that can be useful for initializing control loops on the master side while their outputs are ignored.
+        
+        Mapping is no more allowed in this state, nor communication setup via registers.
+    */
     SafeOperational = 4,
+    /**
+        Realtime operations running
+        
+        The master has full access to the slave's effector functions. slaves might expect the master to regularly refresh its commands.
+        
+        Mapping is no more allowed in this state, nor communication setup via registers.
+    */
     Operational = 8,
 }
 
@@ -179,9 +210,13 @@ pub enum AlState {
 #[bitsize(4)]
 #[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
 pub struct AlMixedState {
+    /// one slave at least is in [AlState::Init]
 	pub init: bool,
+	/// one slave at least is in [AlState::PreOperational]
 	pub pre_operational: bool,
+	/// one slave at least is in [AlState::SafeOperational]
 	pub safe_operational: bool,
+	/// one slave at least is in [AlState::Operational]
 	pub operational: bool,
 }
 
