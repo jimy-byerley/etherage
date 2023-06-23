@@ -14,7 +14,7 @@
         + [x] UDP
     - [ ] minimalistic features
         - [x] PDU commands
-        - [x] registers access
+        - [x] access to logical & physical memories
         - [ ] slave information access
     - [x] mailbox
         + generic messaging
@@ -28,10 +28,14 @@
     - [ ] distributed clock
         + [ ] static drift
         + [ ] dynamic drift
+	- convenience
+		+ [x] logical memory & slave group management tools
+		+ [x] mapping tools
     - optimization features
         + [x] multiple PDUs per ethercat frame (speed up and compress transmissions)
         + [x] tasks for different slaves or for same slave are parallelized whenever possible
         + [x] no dynamic allocation in transmission and realtime functions
+        + [x] async API and implementation to avoid threads context switches
 */
 
 pub mod data;
