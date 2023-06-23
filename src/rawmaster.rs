@@ -6,7 +6,6 @@
 
 use std::{
     time::Instant,
-    collections::HashMap,
     sync::{Mutex, Condvar},
     };
 use core::{
@@ -24,6 +23,10 @@ use crate::{
 
 /// maximum frame size, currently limited to the size tolerated by its header (content size coded with 11 bits)
 const MAX_ETHERCAT_FRAME: usize = 2050;
+/// minimum PDU size
+const MIN_PDU: usize = 60;
+/// maximum number of PDU in an ethercat frame
+const MAX_ETHERCAT_PDU: usize = MAX_ETHERCAT_FRAME / MIN_PDU;
 
 /**
     low level ethercat communication functions, with no notion of slave.
@@ -72,16 +75,19 @@ pub struct RawMaster {
 	ethercat_receive: Mutex<[u8; MAX_ETHERCAT_FRAME]>,
 }
 struct PduState {
-	pub token: u8,
-	pub last_start: usize,
-	pub last_end: usize,
-	pub last_time: Instant,
-	pub send: [u8; MAX_ETHERCAT_FRAME],
-	pub receive: HashMap<u8, PduStorage>,
+	last_start: usize,
+	last_end: usize,
+	last_time: Instant,
+	/// send buffer, it contains one ethercat frame
+	send: [u8; MAX_ETHERCAT_FRAME],
+	/// reception destination, each containing a reception buffer and additional infos
+	receive: [Option<PduStorage>; 2*MAX_ETHERCAT_PDU],
+	/// list of free reception storages
+	free: heapless::Vec<usize, {2*MAX_ETHERCAT_PDU}>,
 }
 /// struct for internal use in RawMaster
 struct PduStorage {
-    data: &'static [u8],
+    data: &'static mut [u8],
     ready: bool,
     answers: u16,
 }
@@ -97,12 +103,12 @@ impl RawMaster {
             sent: Condvar::new(),
             
             pdu_state: Mutex::new(PduState {
-                token: 0,
                 last_start: EthercatHeader::packed_size(),
                 last_end: 0,
                 last_time: Instant::now(),
                 send: [0; MAX_ETHERCAT_FRAME],
-                receive: HashMap::new(),
+                receive: [0; 2*MAX_ETHERCAT_PDU].map(|_| None),
+                free: (0 .. 2*MAX_ETHERCAT_PDU).collect(),
                 }),
             ethercat_receive: Mutex::new([0; MAX_ETHERCAT_FRAME]),
         }
@@ -209,6 +215,13 @@ impl RawMaster {
             // buffering the pdu sending
             let mut state = self.pdu_state.lock().unwrap();
             
+            while state.free.is_empty() {
+                println!("no more token, waiting");
+                drop(state);
+                self.received.notified().await;
+                state = self.pdu_state.lock().unwrap();
+            }
+            
             // sending the buffer if necessary
             while MAX_ETHERCAT_FRAME < state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size() {
                 println!("no more space, waiting");
@@ -217,12 +230,12 @@ impl RawMaster {
             }
             
             // reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
-            token = state.token;
-            (state.token, _) = state.token.overflowing_add(1);
-            state.receive.insert(token, PduStorage {
-                // memory safety: this slice is used outside this function, but always before return
-                data: unsafe {std::slice::from_raw_parts(
-                        data.as_ptr() as *const u8,
+            token = state.free.pop().unwrap();
+            state.receive[token] = Some(PduStorage {
+                // cast lifetime as static
+                // memory safety: this slice is pinned by the caller and its access is managed by field `ready`
+                data: unsafe {std::slice::from_raw_parts_mut(
+                        data.as_mut_ptr(),
                         data.len(),
                         )},
                 ready: false,
@@ -248,7 +261,7 @@ impl RawMaster {
                 let mut cursor = Cursor::new(&mut state.send[range]);
                 cursor.pack(&PduHeader::new(
                     u8::from(command),
-                    token,
+                    token as u8,
                     slave_address,
                     memory_address,
                     u11::new(data.len().try_into().unwrap()),
@@ -265,21 +278,25 @@ impl RawMaster {
             
             self.sendable.notify_one();
         
-            // memory safety: this item in the hashmap can be removed only by this function
-            let ready = unsafe {&*(&state.receive[&token].ready as *const bool)};
-            // clean up the receive table in case the async runtime cancels this task
+            // memory safety: this item in the array cannot be moved since self is borrowed, and will only be removed later by the current function
+            // we will access it potentially concurrently, but since we only want to detect a change in the value, that's fine
+            let ready = unsafe {&*(&state.receive[token].as_ref().unwrap().ready as *const bool)};
+            // clean up the receive table at function end, or in case the async runtime cancels this task
             let finisher = Finisher::new(|| {
                 let mut state = self.pdu_state.lock().unwrap();
-                state.receive.remove(&token);
+                state.receive[token] = None;
+                state.free.push(token).unwrap();
             });
             (ready, finisher)
         };
         
         // waiting for the answer
-        while ! *ready { self.received.notified().await; }
+        while ! *ready { 
+            self.received.notified().await; 
+        }
         
 		let state = self.pdu_state.lock().unwrap();
-		state.receive[&token].answers
+		state.receive[token].as_ref().unwrap().answers
 	}
 	
 	/// extract a received frame of PDUs and buffer each for reception by an eventual `self.pdu()` future waiting for it.
@@ -287,20 +304,18 @@ impl RawMaster {
         let mut frame = Cursor::new(frame);
         loop {
             let header = frame.unpack::<PduHeader>().unwrap();
-            if let Some(storage) = state.receive.get(&header.token()) {
+            
+            let token = usize::from(header.token());
+            assert!(token <= state.receive.len());
+            if let Some(mut storage) = state.receive[token].as_mut() {
                 let content = frame.read(usize::from(u16::from(header.len()))).unwrap();
                 
                 // copy the PDU content in the reception buffer
                 // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
-                unsafe {std::slice::from_raw_parts_mut(
-                    storage.data.as_ptr() as *mut u8,
-                    storage.data.len(),
-                    )}
-                    .copy_from_slice(content);
+                storage.data.copy_from_slice(content);
                 let footer = frame.unpack::<PduFooter>().unwrap();
-                let storage = unsafe {&mut *(storage as *const PduStorage as *mut PduStorage)};
-				storage.ready = true;
 				storage.answers = footer.value; //footer.working_count();
+				storage.ready = true;
             }
             if ! header.next() {break}
             if frame.remain().len() == 0 {todo!("raise frame error")}

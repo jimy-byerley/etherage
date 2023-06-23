@@ -42,8 +42,9 @@ impl<'b> Mailbox<'b> {
             panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
         }
         
+        use futures_concurrency::future::Join;
         // configure sync manager
-        futures::join!(
+        (
             async { master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
                 let mut config = registers::SyncManagerChannel::default();
                 config.set_address(write.start);
@@ -67,7 +68,7 @@ impl<'b> Mailbox<'b> {
                 config.set_enable(true);
                 config
             }).await.one() },
-        );
+        ).join().await;
         
         assert!(usize::from(read.end - read.start) < MAILBOX_MAX_SIZE);
         assert!(usize::from(write.end - write.start) < MAILBOX_MAX_SIZE);

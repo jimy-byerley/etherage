@@ -123,7 +123,7 @@ impl<'a> Can<'a> {
                             toggle, 
                             u3::from(SdoCommandRequest::UploadSegment),
                         )).unwrap();
-                    frame.write(&[0; 7]);
+                    frame.write(&[0; 7]).unwrap();
                     mailbox.write(MailboxType::Can, priority, frame.finish()).await;
                 }
             
