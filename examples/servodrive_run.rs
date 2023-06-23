@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use core::time::Duration;
+use futures_concurrency::future::Join;
 use etherage::{
     EthernetSocket, RawMaster, 
     Slave, SlaveAddress, CommunicationState,
@@ -62,7 +63,7 @@ async fn main() -> std::io::Result<()> {
     
     let cycle = tokio::sync::Notify::new();
     
-    futures::join!(
+    (
         async { 
             let mut period = tokio::time::interval(Duration::from_millis(1));
             loop {
@@ -114,7 +115,7 @@ async fn main() -> std::io::Result<()> {
             
             println!("done");
         },
-    );
+    ).join().await;
     
     Ok(())
 }

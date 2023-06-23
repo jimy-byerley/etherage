@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use core::time::Duration;
+use futures_concurrency::future::Join;
 use etherage::{
     PduData, Field, PduAnswer, EthernetSocket, RawMaster, 
     Sdo, SlaveAddress, Slave, CommunicationState,
@@ -37,7 +38,7 @@ async fn main() -> std::io::Result<()> {
     slave.coe().await.sdo_write(&sdo, priority, received).await;
     
     // test concurrent read/write
-    futures::join!(
+    (
         async {
             println!("begin");
             let received = slave.coe().await.sdo_read(&sdo, priority).await;
@@ -52,7 +53,7 @@ async fn main() -> std::io::Result<()> {
             slave.coe().await.sdo_write(&sdo, priority, received).await;
             println!("end");
         },
-    );
+    ).join().await;
     
     Ok(())
 }

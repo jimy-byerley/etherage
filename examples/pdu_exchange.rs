@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use core::time::Duration;
+use futures_concurrency::future::Join;
 use etherage::{PduData, Field, PduAnswer, EthernetSocket, RawMaster};
 
 #[tokio::main]
@@ -25,7 +26,7 @@ async fn main() -> std::io::Result<()> {
     master.apwr(slave, reg, received.value).await;
     
     // test simultaneous read/write
-    futures::join!(
+    (
         async {
             let received = master.aprd(slave, reg).await;
             assert_eq!(received.answers, 1);
@@ -36,7 +37,7 @@ async fn main() -> std::io::Result<()> {
             assert_eq!(received.answers, 1);
             master.apwr(slave, reg, received.value).await;
         },
-    );
+    ).join().await;
     
     Ok(())
 }
