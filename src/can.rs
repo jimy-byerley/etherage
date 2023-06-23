@@ -154,9 +154,9 @@ impl<'a> Can<'a> {
 	pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)  {
         let mut packed = T::Packed::uninit();
         data.pack(packed.as_mut()).unwrap();
-        self.sdo_write_slice(sdo, priority, packed.as_ref()).await;
+        self.sdo_write_slice(&sdo.downcast(), priority, packed.as_ref()).await;
 	}
-	pub async fn sdo_write_slice<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: &[u8])  {
+	pub async fn sdo_write_slice(&mut self, sdo: &Sdo, priority: u2, data: &[u8])  {
         let mut mailbox = self.mailbox.lock().await;		
         let mut buffer = [0; MAILBOX_MAX_SIZE];
 		if data.len() <= EXPEDITED_MAX_SIZE {

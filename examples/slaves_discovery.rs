@@ -15,16 +15,12 @@ async fn main() -> std::io::Result<()> {
     {
         let master = master.clone();
         std::thread::spawn(move || loop {
-//             println!("         wait data to receive");
             unsafe {master.get_raw()}.receive();
-//             println!("         received");
     })};
     {
         let master = master.clone();
         std::thread::spawn(move || loop {
-//             println!("         wait data to send");
             unsafe {master.get_raw()}.send();
-//             println!("         sent");
     })};
     std::thread::sleep(Duration::from_millis(500));
     
@@ -45,15 +41,27 @@ async fn main() -> std::io::Result<()> {
 //         
 //         let mut can = slave.coe().await;
 //         let priority = u2::new(0);
-//         println!("  type {:?}", std::str::from_utf8(
-//                 &can.sdo_read(&sdo::device_name, priority).await
-//                 ).unwrap().trim_end());
-//         println!("  hardware {:?}", std::str::from_utf8(
-//                 &can.sdo_read(&sdo::manufacturer_hardware_version, priority).await
-//                 ).unwrap().trim_end());
-//         println!("  software {:?}", std::str::from_utf8(
-//                 &can.sdo_read(&sdo::manufacturer_software_version, priority).await
-//                 ).unwrap().trim_end());
+//         
+//         let info = slave.physical_read(registers::dl::information).await;
+//         let mut name = [0; 50];
+//         let mut hardware = [0; 50];
+//         let mut software = [0; 50];
+//         
+//         println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}", 
+//                 i,
+//                 std::str::from_utf8(
+//                     &can.sdo_read_slice(&sdo::device_name.downcast(), priority, &mut name).await
+//                     ).unwrap().trim_end(),
+//                 info.ty(),
+//                 info.revision(),
+//                 info.build(),
+//                 std::str::from_utf8(
+//                     &can.sdo_read_slice(&sdo::manufacturer_hardware_version.downcast(), priority, &mut hardware).await
+//                     ).unwrap().trim_end(),
+//                 std::str::from_utf8(
+//                     &can.sdo_read_slice(&sdo::manufacturer_software_version.downcast(), priority, &mut software).await
+//                     ).unwrap().trim_end(),
+//                 );
 //     }
     
     // concurrent version
@@ -74,20 +82,23 @@ async fn main() -> std::io::Result<()> {
             let priority = u2::new(0);
             
             let info = slave.physical_read(registers::dl::information).await;
+            let mut name = [0; 50];
+            let mut hardware = [0; 50];
+            let mut software = [0; 50];
             
             println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}", 
                     i,
                     std::str::from_utf8(
-                        &can.sdo_read(&sdo::device_name, priority).await
+                        &can.sdo_read_slice(&sdo::device_name.downcast(), priority, &mut name).await
                         ).unwrap().trim_end(),
                     info.ty(),
                     info.revision(),
                     info.build(),
                     std::str::from_utf8(
-                        &can.sdo_read(&sdo::manufacturer_hardware_version, priority).await
+                        &can.sdo_read_slice(&sdo::manufacturer_hardware_version.downcast(), priority, &mut hardware).await
                         ).unwrap().trim_end(),
                     std::str::from_utf8(
-                        &can.sdo_read(&sdo::manufacturer_software_version, priority).await
+                        &can.sdo_read_slice(&sdo::manufacturer_software_version.downcast(), priority, &mut software).await
                         ).unwrap().trim_end(),
                     );
         });
