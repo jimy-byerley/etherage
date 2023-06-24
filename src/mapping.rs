@@ -289,18 +289,18 @@ impl Group<'_> {
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: add a fallback implementation in case the slave does not support *RW commands
         // TODO: offset should be passed as 32 bit address, this requires a modification of RawMaster
-        self.master.pdu(PduCommand::LRW, 0, self.offset as u16, self.write.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LRW, SlaveAddress::Logical, self.offset, self.write.as_mut_slice()).await;
         self.read.copy_from_slice(&self.write);
         self.write.as_mut_slice()
     }
     /// read data slice from segment
     pub async fn read(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LRD, 0, self.offset as u16, self.read.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LRD, SlaveAddress::Logical, self.offset, self.read.as_mut_slice()).await;
         self.read.as_mut_slice()
     }
     /// write data slice to segment
     pub async fn write(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LWR, 0, self.offset as u16, self.write.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LWR, SlaveAddress::Logical, self.offset, self.write.as_mut_slice()).await;
         self.write.as_mut_slice()
     }
     
