@@ -251,7 +251,8 @@ impl RawMaster {
             SlaveAddress::Logical => memory,
         };
         
-        let (token, ready, _finisher) = {
+        let token;
+        let (ready, _finisher) = {
             // buffering the pdu sending
             let mut state = self.pdu_state.lock().unwrap();
             
@@ -326,7 +327,7 @@ impl RawMaster {
                 state.receive[token] = None;
                 state.free.push(token).unwrap();
             });
-            (token, ready, finisher)
+            (ready, finisher)
         };
         
         // waiting for the answer
