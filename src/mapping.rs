@@ -35,7 +35,7 @@
         
     The following scheme shows an example mapping of [SDOs](sdo) and [registers]. On the right side shows the range of PDOs and channels that can be mapped each slave, however the vendor-specific constraints makes them much smaller in practice.
     
-    ![mapping details](/etherage/schemes/mapping-details.svg)
+    ![mapping details](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/mapping-details.svg)
     
     ## Limitations
     

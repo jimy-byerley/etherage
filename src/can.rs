@@ -45,7 +45,7 @@ const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
         
     The following shows how the mapping of SDOs to PDOs is done, how it extends to logical memory in the case of CoE, and how the master interacts with each memory area.
     
-    ![CoE mapping](/etherage/schemes/coe-mapping.svg)
+    ![CoE mapping](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/coe-mapping.svg)
     
     This scheme comes in addition to the slave memory areas described in [crate::rawmaster::RawMaster], for slaves supporting CoE.
 */

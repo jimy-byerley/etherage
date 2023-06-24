@@ -53,7 +53,7 @@ const MAX_ETHERCAT_PDU: usize = MAX_ETHERCAT_FRAME / MIN_PDU;
 	
 	The following scheme shows an overview of the features and memory areas of every ethercat slave. Memory copy operations are represented as plain arrows regardless of the real sequence of commands needed to perform the operation. *RT* flag marks what can be acheived in realtime, and what can not.
 	
-	![ethercat sub protocols](/etherage/schemes/ethercat-protocols.svg)
+	![ethercat sub protocols](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/ethercat-protocols.svg)
 */
 pub struct RawMaster {
 	/// (µs) acceptable delay time before sending buffered PDUs
