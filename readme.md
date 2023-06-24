@@ -4,6 +4,9 @@ This crate aims to bring yet a other implementation of an Ethercat master, The [
 
 **NOTE:** At the moment, this crate is in its early development.
 
+[![Crates.io](https://img.shields.io/crates/v/etherage.svg)](https://crates.io/crates/etherage)
+[![Docs.rs](https://docs.rs/etherage/badge.svg)](https://docs.rs/etherage)
+
 ## goals
 
 - feature complete
