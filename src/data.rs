@@ -450,8 +450,62 @@ macro_rules! num_pdudata {
             ```
             Caveat overlap the end of slice
             */
-            fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<()>
-            {
+            // fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<()>
+            // {
+            //     //Test input parameters
+            //     let array_len_bit : usize = data.len() * 8;
+            //     let field_len_bit : usize = core::mem::size_of::<$t>() * 8;
+            //     let excluded_bits : u8 = 8 - ((usize::from(bitoffset) + bitsize) % 8) as u8;
+
+            //     if bitsize == 0 {
+            //         return Err(PackingError::InvalidValue("Bit size couldn't be negative")); }
+            //     if bitoffset >= MAX_OFFSET {
+            //         return Err(PackingError::BadAlignment(bitoffset as usize, "Offset greater than 8")); }
+            //     if bitsize + bitoffset as usize > array_len_bit {
+            //         return Err(PackingError::BadSize(bitsize, "Data too large for the given slice")); }
+                
+            //     //Get unsed data
+            //     let prefix_mask : u8 = match bitoffset > 0 {
+            //         true => ( data[0] >> excluded_bits ) << excluded_bits,
+            //         false => 0
+            //     };
+                
+            //     //Ordering byte
+            //     let ordering_bits = match bitordering {
+            //         Ordering::Big => self.to_be_bytes(),
+            //         Ordering::Little => self.to_le_bytes(),
+            //         _ => return Err(PackingError::BadOrdering(bitordering,"Mixed endian is invalid in this case"))
+            //     };
+                
+            //     //Get suffix mask
+            //     let suffix_mask : u8 = match bitoffset > 0 {
+            //         true => (ordering_bits[ordering_bits.len() -1] << excluded_bits),
+            //         _ => 0,
+            //     };
+                
+            //     //Clear non used data
+            //     // Exemple (on 1 byte, with offset = 3 and bitsize = 4 | d d d d * * * * | -> | d d d d 0 0 0 0 | -> | 0 0 0  d d d d 0 |
+            //     // Exemple (on 1 byte, with offset = 3 and bitsize = 7 | d d d d d d d * | -> | d d d d d d d 0 | -> | 0 0 0  d d d d d |
+            //     let mut core = <$t>::from_be_bytes(ordering_bits);
+            //     core >>= (field_len_bit - bitsize) as $t;
+            //     core <<= (field_len_bit - bitsize) as $t;
+            //     core >>= bitoffset;
+            //     let array = core.to_be_bytes();
+                
+            //     //Format final data
+            //     for i in 0 .. (bitsize + 7) / 8
+            //     {
+            //         if i == 0 { data[i] = array[i] | prefix_mask; }
+            //         else { data[i] = array[i] ; }
+            //     }
+            //     if (bitsize + usize::from(bitoffset)) % 8 > 0 {
+            //         data[(bitsize + usize::from(bitoffset))/ 8] |= suffix_mask; 
+            //     }
+                
+            //     return Ok(());
+            // }
+
+            fn pack_slice(&self, data : &mut [u8], bitoffset: u8, bitsize: usize, bitordering : Ordering) -> PackingResult<()> {
                 //Test input parameters
                 let array_len_bit : usize = data.len() * 8;
                 let field_len_bit : usize = core::mem::size_of::<$t>() * 8;
@@ -464,45 +518,39 @@ macro_rules! num_pdudata {
                 if bitsize + bitoffset as usize > array_len_bit {
                     return Err(PackingError::BadSize(bitsize, "Data too large for the given slice")); }
                 
-                //Get unsed data
-                let prefix_mask : u8 = match bitoffset > 0 {
-                    true => ( data[0] >> excluded_bits ) << excluded_bits,
-                    false => 0
+                //Get prefix
+                let mut beg : u8 = match bitoffset % 8 > 0 {
+                    true => (data[0] >> 8 - bitoffset) << (8 - bitoffset),
+                    false => data[0],
                 };
-                
-                //Ordering byte
-                let ordering_bits = match bitordering {
-                    Ordering::Big => self.to_be_bytes(),
-                    Ordering::Little => self.to_le_bytes(),
-                    _ => return Err(PackingError::BadOrdering(bitordering,"Mixed endian is invalid in this case"))
-                };
-                
-                //Get suffix mask
-                let suffix_mask : u8 = match bitoffset > 0 {
-                    true => (ordering_bits[ordering_bits.len() -1] << excluded_bits),
-                    _ => 0,
-                };
-                
-                //Clear non used data
-                // Exemple (on 1 byte, with offset = 3 and bitsize = 4 | d d d d * * * * | -> | d d d d 0 0 0 0 | -> | 0 0 0  d d d d 0 |
-                // Exemple (on 1 byte, with offset = 3 and bitsize = 7 | d d d d d d d * | -> | d d d d d d d 0 | -> | 0 0 0  d d d d d |
-                let mut core = <$t>::from_be_bytes(ordering_bits);
-                core >>= (field_len_bit - bitsize) as $t;
-                core <<= (field_len_bit - bitsize) as $t;
-                core >>= bitoffset;
-                let array = core.to_be_bytes();
-                
-                //Format final data
-                for i in 0 .. (bitsize + 7) / 8
-                {
-                    if i == 0 { data[i] = array[i] | prefix_mask; }
-                    else { data[i] = array[i] ; }
+
+                //Move data
+                let dataArray = self.to_be_bytes();
+                for i in 0..data.len().min(core::mem::size_of::<$t>()) {
+                    let buff = match (i + 1)  < core::mem::size_of::<$t>() && bitoffset != 0u8 {
+                        true => dataArray[i + 1] >> (8 - bitoffset) % 8,
+                        false => 0,
+                    };
+                    data[i] = dataArray[i] << bitoffset | buff;
                 }
-                if (bitsize + usize::from(bitoffset)) % 8 > 0 {
-                    data[(bitsize + usize::from(bitoffset))/ 8] |= suffix_mask; 
+
+                //Set saved data from slice
+                data[0] |= beg;
+
+                //Ordering
+                #[cfg(target_endian = "little")]
+                if bitordering == Ordering::Little {
+                    let sz : usize = data.len().min(core::mem::size_of::<$t>());
+                    data[0..sz].reverse();
+                }
+
+                #[cfg(target_endian = "big")]
+                if bitordering == Ordering::Little {
+                    data.reverse();
                 }
                 
-                return Ok(());
+                //Switch ordering
+                return Ok(())
             }
 
             fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<Self> {
