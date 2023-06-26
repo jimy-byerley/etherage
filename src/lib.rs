@@ -1,5 +1,11 @@
 /*!
     Etherage is a crate implementing an ethercat master, with an API as close as possible to the concepts of the ethercat protocol.
+	
+	The following scheme shows the ethernet topology of an ethercat bus. It is a ring considering directional arrows (which is the way data transits over the bus). And it is a tree considering bilateral links (which is the way the network is wired).
+    
+	![ethercat network topology](/etherage/schemes/ethercat-network.svg)
+	
+	Each slave only has a very short time and very limited ressources to react & alter the datagrams transiting from one of its port to the next one, resulting in a realtime communcation bus. This library and the ethercat protocol are designed in this spirit. The idea is for the master to send datagrams and for the slaves to react and fill them, few bytes each slave. In order to control a vast amount of slaves concurrently in the same datagram, this library is deeply `async`.
     
     ## It mainly features
     
