@@ -1,7 +1,7 @@
 //! implementation of communication with a slave's mailbox
 
 use crate::{
-	rawmaster::{RawMaster, PduCommand},
+	rawmaster::{RawMaster, PduCommand, SlaveAddress},
 	registers,
     data::{self, PduData, Cursor},
 	};
@@ -119,7 +119,7 @@ impl<'b> Mailbox<'b> {
         let buffer = &mut allocated[range];
 		// read the mailbox content
 		loop {
-            if self.master.pdu(PduCommand::FPRD, self.slave, self.read.address, buffer).await == 1 
+            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer).await == 1 
                 {break}
             
             // trigger repeat
@@ -193,7 +193,7 @@ impl<'b> Mailbox<'b> {
 //         }
 //         else {
             // write the full buffer
-            while self.master.pdu(PduCommand::FPWR, self.slave, self.write.address, buffer.as_mut()).await != 1
+            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut()).await != 1
                 {}
 //         }
 	}

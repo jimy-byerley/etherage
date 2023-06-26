@@ -49,7 +49,7 @@ const MAX_ETHERCAT_PDU: usize = MAX_ETHERCAT_FRAME / MIN_PDU;
 		
 		The logical memory is organized by the mapping set in the FMMU (Fieldbust Memory Management Unit). [crate::mapping] helps on this task.
 		
-	See variants of [PduCommand] for more details.
+	See variants of [PduCommand] and [Self::pdu] for more details.
 	
 	The following scheme shows an overview of the features and memory areas of every ethercat slave. Memory copy operations are represented as plain arrows regardless of the real sequence of commands needed to perform the operation. *RT* flag marks what can be acheived in realtime, and what can not.
 	
@@ -116,100 +116,141 @@ impl RawMaster {
 	
 	// shorthands to PDU commands
 	// the slave address is actually packed and unpacked to actual commands again, but this is greatly shortening the code and the compiler should optimize that
+	
+	/// shorthand for PDU BRD command
 	pub async fn brd<T: PduData>(&self, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Broadcast, address).await
 	}
+	/// shorthand for PDU BWR command
 	pub async fn bwr<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::Broadcast, address, data).await
 	}
+	/// shorthand for PDU BRW command
 	pub async fn brw<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Broadcast, address, data).await
 	}
 	
+	/// shorthand for PDU APRD command
 	pub async fn aprd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::AutoIncremented(slave), address).await
 	}
+	/// shorthand for PDU APWR command
 	pub async fn apwr<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::AutoIncremented(slave), address, data).await
 	}
+	/// shorthand for PDU APRW command
 	pub async fn aprw<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::AutoIncremented(slave), address, data).await
 	}
+	/// shorthand for PDU ARMW command
 	pub async fn armw(&self) {todo!()}
 	
+	/// shorthand for PDU FPRD command
 	pub async fn fprd<T: PduData>(&self, slave: u16, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Fixed(slave), address).await
 	}
+	/// shorthand for PDU FPWR command
 	pub async fn fpwr<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::Fixed(slave), address, data).await
 	}
+	/// shorthand for PDU FPRW command
 	pub async fn fprw<T: PduData>(&self, slave: u16, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Fixed(slave), address, data).await
 	}
+	/// shorthand for PDU FRMW command
 	pub async fn frmw(&self) {todo!()}
 	
+	/// shorthand for PDU LRD command
 	pub async fn lrd<T: PduData>(&self, address: Field<T>) -> PduAnswer<T> {
         self.read(SlaveAddress::Logical, address).await
 	}
+	/// shorthand for PDU LWR command
 	pub async fn lwr<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<()> {
         self.write(SlaveAddress::Logical, address, data).await
 	}
+	/// shorthand for PDU LRW command
 	pub async fn lrw<T: PduData>(&self, address: Field<T>, data: T) -> PduAnswer<T> {
         self.exchange(SlaveAddress::Logical, address, data).await
 	}
 	
-	/// maps to a *rd command
+	/// maps to a PDU *RD command
 	pub async fn read<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>) -> PduAnswer<T> {
-        let (command, slave) = match slave {
-            SlaveAddress::Broadcast => (PduCommand::BRD, 0),
-            SlaveAddress::AutoIncremented(address) => (PduCommand::APRD, 0u16.wrapping_sub(address)),
-            SlaveAddress::Fixed(address) => (PduCommand::FPRD, address),
-            SlaveAddress::Logical => (PduCommand::LRD, 0),
+        let command = match slave {
+            SlaveAddress::Broadcast => PduCommand::BRD,
+            SlaveAddress::AutoIncremented(_) => PduCommand::APRD,
+            SlaveAddress::Fixed(_) => PduCommand::FPRD,
+            SlaveAddress::Logical => PduCommand::LRD,
             };
         let mut buffer = T::Packed::uninit();
         buffer.as_mut().fill(0);
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
     }
-	/// maps to a *wr command
+	/// maps to a PDU *WR command
 	pub async fn write<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<()> {
-        let (command, slave) = match slave {
-            SlaveAddress::Broadcast => (PduCommand::BWR, 0),
-            SlaveAddress::AutoIncremented(address) => (PduCommand::APWR, 0u16.wrapping_sub(address)),
-            SlaveAddress::Fixed(address) => (PduCommand::FPWR, address),
-            SlaveAddress::Logical => (PduCommand::LWR, 0),
+        let command = match slave {
+            SlaveAddress::Broadcast => PduCommand::BWR,
+            SlaveAddress::AutoIncremented(_) => PduCommand::APWR,
+            SlaveAddress::Fixed(_) => PduCommand::FPWR,
+            SlaveAddress::Logical => PduCommand::LWR,
             };
         let mut buffer = T::Packed::uninit();
         data.pack(buffer.as_mut()).unwrap();
 		PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
 			value: (),
 			}
 	}
-	/// maps to a *rw command
+	/// maps to a PDU *RW command
 	pub async fn exchange<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<T> {
-        let (command, slave) = match slave {
-            SlaveAddress::Broadcast => (PduCommand::BRW, 0),
-            SlaveAddress::AutoIncremented(address) => (PduCommand::APRW, 0u16.wrapping_sub(address)),
-            SlaveAddress::Fixed(address) => (PduCommand::FPRW, address),
-            SlaveAddress::Logical => (PduCommand::LRW, 0),
+        let command = match slave {
+            SlaveAddress::Broadcast => PduCommand::BRW,
+            SlaveAddress::AutoIncremented(_) => PduCommand::APRW,
+            SlaveAddress::Fixed(_) => PduCommand::FPRW,
+            SlaveAddress::Logical => PduCommand::LRW,
             };
         let mut buffer = T::Packed::uninit();
         data.pack(buffer.as_mut()).unwrap();
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u16, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
 	}
 	
-	// TODO  support 32 bit PDU address for logical access, this should be done by grouping slave and memory address
+	/**
+        Send a PDU on the ethercat bus.
+        Returns the number of slaves who processed the command
 	
-	/// send a PDU on the ethercat bus
-	/// the PDU is buffered with more PDUs if possible
-	/// returns the number of slaves who processed the command
-	pub async fn pdu(&self, command: PduCommand, slave_address: u16, memory_address: u16, data: &mut [u8]) -> u16 {
+        - the PDU is buffered with more PDUs if possible
+        
+        ### Parameters
+        
+        - `slave`: identifies what memory is accessed by this PDU (might even not be a slave memory, but a memory belonging to the whole segment)
+        - `memory`: address in the selected memory
+            + if slaves physical memory is accessed, it must be a 16bit address
+            + if segment logical memory is accessed, it must be a 32bit address
+        - `data`: buffer of data to send, and to write with the segment's answer, the answer will answer with the same data size as what was sent so the whole buffer will be sent and written back
+    */
+	pub async fn pdu(&self, command: PduCommand, slave: SlaveAddress, memory: u32, data: &mut [u8]) -> u16 {
+        // assemble the address block with slave and memory addresses
+        let address = match slave {
+            SlaveAddress::Broadcast => u32::from(PhysicalAddress::new(
+                0, 
+                memory as u16,
+                )),
+            SlaveAddress::AutoIncremented(slave) => u32::from(PhysicalAddress::new(
+                0u16.wrapping_sub(slave), 
+                memory as u16,
+                )),
+            SlaveAddress::Fixed(slave) => u32::from(PhysicalAddress::new(
+                slave, 
+                memory as u16,
+                )),
+            SlaveAddress::Logical => memory,
+        };
+        
         let token;
         let (ready, _finisher) = {
             // buffering the pdu sending
@@ -262,8 +303,7 @@ impl RawMaster {
                 cursor.pack(&PduHeader::new(
                     u8::from(command),
                     token as u8,
-                    slave_address,
-                    memory_address,
+                    address,
                     u11::new(data.len().try_into().unwrap()),
                     false,
                     false,
@@ -385,14 +425,19 @@ pub enum SlaveAddress {
 	Logical,
 }
 
+/// container for a PDU command's answer
 pub struct PduAnswer<T> {
+    /// number of slaves who executed the command
 	pub answers: u16,
+	/// received value (will be the same as the sent value if no slave executed the command)
 	pub value: T,
 }
 impl<T> PduAnswer<T> {
+    /// extract the value only if exactly one slave answered
     pub fn one(self) -> T {
         self.exact(1)
     }
+    /// extract the value only if the given amount of slaves answered
     pub fn exact(self, n: u16) -> T {
         assert_eq!(self.answers, n);
         self.value
@@ -443,10 +488,8 @@ struct PduHeader {
     command: u8,
     /// PDU task request identifier
     token: u8,
-    /// slave address, its meaning depend on the command
-    slave_address: u16,
-    /// memory address of the data to access, which memory is accessed depend on the command
-    memory_address: u16,
+    /// address on the bus, its content depends on the command: [PhysicalAddress] or [u32]
+    address: u32,
     /// data length following the header, excluding the footer. starting from `memory_address` in the addressed memory
     len: u11,
     reserved: u3,
@@ -456,6 +499,16 @@ struct PduHeader {
     interrupt: u16,
 }
 data::bilge_pdudata!(PduHeader, u80);
+
+/// possible layout for [PduHeader::address]
+#[bitsize(32)]
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq, Hash)]
+struct PhysicalAddress {
+    /// slave address in the ethercat segment
+    slave: u16,
+    /// address accessed in the slave's memory
+    memory: u16,
+}
 
 /// footer for PDU exchange
 #[bitsize(16)]
