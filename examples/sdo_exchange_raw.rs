@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use core::time::Duration;
 use etherage::{
-    PduData, Field, PduAnswer, EthernetSocket, RawMaster, Sdo,
+    EthernetSocket, RawMaster, Sdo,
     mailbox::Mailbox,
     can::Can,
     registers,
@@ -31,7 +31,7 @@ async fn main() -> std::io::Result<()> {
     let slave = 1;
 
     // initialize mailbox
-    let mut mailbox = Arc::new(Mutex::new(Mailbox::new(&master, 1, 0x1000 .. 0x1103, 0x1104 .. 0x1200).await));
+    let mailbox = Arc::new(Mutex::new(Mailbox::new(&master, 1, 0x1000 .. 0x1103, 0x1104 .. 0x1200).await));
     let mut can = Can::new(mailbox);
     
     master.fpwr(slave, registers::sii::access, {

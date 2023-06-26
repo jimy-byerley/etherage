@@ -89,16 +89,16 @@ async fn main() -> std::io::Result<()> {
             println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}", 
                     i,
                     std::str::from_utf8(
-                        &can.sdo_read_slice(&sdo::device_name.downcast(), priority, &mut name).await
+                        &can.sdo_read_slice(&sdo::device::name, priority, &mut name).await
                         ).unwrap().trim_end(),
                     info.ty(),
                     info.revision(),
                     info.build(),
                     std::str::from_utf8(
-                        &can.sdo_read_slice(&sdo::manufacturer_hardware_version.downcast(), priority, &mut hardware).await
+                        &can.sdo_read_slice(&sdo::device::hardware_version, priority, &mut hardware).await
                         ).unwrap().trim_end(),
                     std::str::from_utf8(
-                        &can.sdo_read_slice(&sdo::manufacturer_software_version.downcast(), priority, &mut software).await
+                        &can.sdo_read_slice(&sdo::device::software_version, priority, &mut software).await
                         ).unwrap().trim_end(),
                     );
         });

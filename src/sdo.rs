@@ -1,5 +1,7 @@
 /*! 
-Convenient structures to read/write the slave's dictionnary objects (SDO) and configure mappings...);
+    Convenient structures to address the slave's dictionnary objects (SDO).
+    
+    This module also provides structs and consts for every standard items in the canopen objects dictionnary. The goal is to gather all standard SDOs definitions in one place.
 */
 
 use crate::{
@@ -7,7 +9,11 @@ use crate::{
 	data::{self, Field, BitField, PduData, Storage},
 	registers,
 	};
-use core::fmt;
+use core::{
+    fmt,
+	marker::PhantomData,
+	convert::From,
+	};
 use bilge::prelude::*;
 
 pub use crate::registers::SyncDirection;
@@ -57,19 +63,19 @@ impl<T: PduData> Sdo<T> {
 		field: BitField::new(0, size),
 	}}
 	
-	const pub fn downcast(self) -> Sdo { Sdo{
+	pub const fn downcast(self) -> Sdo { Sdo{
         index: self.index,
         sub: self.sub,
         field: BitField::new(self.field.bit, self.field.len),
 	}}
-	const pub fn into_sub(&self) -> Sdo<T> { 
+	pub fn into_sub(&self) -> Sdo<T> { 
         match self.sub {
             SdoPart::Complete => Sdo{
                 index: self.index,
                 sub: SdoPart::Sub(0),
                 field: self.field,
                 },
-            SdoPart::Sub => self,
+            SdoPart::Sub(_) => self.clone(),
         }
 	}
 }
@@ -103,27 +109,126 @@ impl<T: PduData> Copy for Sdo<T> {}
 
 
 
+/// SDO behaving like a list
+#[derive(Debug, Eq, PartialEq)]
+pub struct SdoList<T> {
+    /// index of the SDO to be considered as a list
+    pub index: u16,
+    /// capacity of the list: max number of elements
+    pub capacity: u8,
+    _data: PhantomData<T>,
+}
+impl<T: PduData> SdoList<T> {
+    pub const fn new(index: u16) -> Self {
+        Self{
+            index,
+            capacity: 254,
+            _data: PhantomData,
+        }
+    }
+    pub const fn with_capacity(index: u16, capacity: u8) -> Self {
+        assert!(capacity <= 254);
+        Self{
+            index,
+            capacity,
+            _data: PhantomData,
+        }
+    }
+    /// sdo subitem giving the current length of the list
+    pub const fn len(&self) -> Sdo<u8>  {Sdo::sub(self.index, 0, 0)}
+    /// sdo subitem of a list item
+    pub fn item(&self, sub: usize) -> Sdo<T>  {
+        assert!(sub < usize::from(self.capacity), "index exceeds list capacity");
+        Sdo::sub(
+            self.index, 
+            (sub+1) as u8, 
+            core::mem::size_of::<u8>() + core::mem::size_of::<T>() * sub,
+            )
+    }
+}
+impl<T: PduData> From<u16> for SdoList<T> {
+    fn from(index: u16) -> Self {Self::new(index)}
+}
+// [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
+impl<T> Clone for SdoList<T> {
+    fn clone(&self) -> Self { Self {
+        index: self.index,
+        capacity: self.capacity,
+        _data: PhantomData,
+    }}
+}
+impl<T> Copy for SdoList<T> {}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct SdoSerie<T> {
+    pub index: u16,
+    pub len: u16,
+    data: PhantomData<T>,
+}
+impl<T: From<u16>> SdoSerie<T> {
+    pub const fn new(index: u16, len: u16) -> Self {Self{
+        index,
+        len,
+        data: PhantomData,
+    }}
+    pub fn slot(&self, i: u16) -> T  {
+        assert!(i < self.len);
+        T::from(self.index + i)
+    }
+}
+// [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
+impl<T> Clone for SdoSerie<T> {
+    fn clone(&self) -> Self { Self {
+        index: self.index,
+        len: self.len,
+        data: PhantomData,
+    }}
+}
+impl<T> Copy for SdoSerie<T> {}
+
+
+
+
 const FIRST_SYNC_CHANNEL: u16 = 0x1c10;
 
 
 
 // standard SDO definitions, that shall exist on all device implementing CoE
 
+/// identify origins of current errors
 pub const error: Sdo<DeviceError> = Sdo::sub(0x1001, 0, 0);
+/// informations about what device the slave is
 pub mod device {
     use super::*;
     
     pub const ty: Sdo<DeviceType> = Sdo::sub(0x1000, 0, 0);
+    /// ETG.1000.6 table 70
     pub const name: Sdo = Sdo::sub(0x1008, 0, 0);
+    /// manufacturer hardware version, this is a non-null terminated string so the slave only knows its length   
+    /// ETG.1000.6 table 71
     pub const hardware_version: Sdo = Sdo::sub(0x1009, 0, 0);
+    /// manufacturer software version, this is a non-null terminated string so the slave only knows its length 
+    /// ETG.1000.6 table 72
     pub const software_version: Sdo = Sdo::sub(0x100a, 0, 0);
 }
+/// ETG.1000.6 table 73
 // const identity: Sdo<record> = Sdo::complete(0x0018);
-const receive_pdos: PdoMappings = PdoMappings {index: 0x1600, num: 512};
-const transmit_pdos: PdoMappings = PdoMappings {index: 0x1a00, num: 512};
-const transmit_pdos_invalid: PdoInvalids = PdoInvalids {index: 0x603e, num: 254};
-const sync_manager: SyncManager = SyncManager {index: 0x1c10, num: 32};
-const synchronization: Synchronization = Synchronization {index: 0x1c30, num: 32};
+/// ETG.1000.6 table 74
+pub const receive_pdos: SdoSerie<Pdo> = SdoSerie::new(0x1600, 512);
+/// ETG.1000.6 table 75
+pub const transmit_pdos: SdoSerie<Pdo> = SdoSerie::new(0x1a00, 512);
+/// ETG.1000.6 table 76
+pub const sync_manager_modes: SdoList<SyncMode> = SdoList::with_capacity(0x1c00, 32);
+/// ETG.1000.6 table 67
+pub const sync_manager: SyncManager = SyncManager {index: 0x1c10, len: 32};
+/// ETG.1000.6 table 78
+pub const synchronization: SdoSerie<Synchronization> = SdoSerie::new(0x1c30, 32);
+/**
+    a SDO containing a boolean for each PDO, read true if the matching PDO has an invalid mapping
+    
+    ETG.6010 table 6
+*/
+pub const transmit_pdos_invalid: SdoList<bool> = SdoList::new(0x603e);
 
 /**
     dictionnary entries defined for devices supporting CIA.402, defined in ETG.6010
@@ -138,6 +243,7 @@ pub mod cia402 {
     
     pub const controlword: Sdo<ControlWord> = Sdo::complete(0x6040);
     pub const statusword: Sdo<StatusWord> = Sdo::complete(0x6041);
+    /// current error in control operations (first error if multiple error actives)
     pub const error: Sdo<u16> = Sdo::complete(0x603f);
     pub const supported_mode: Sdo<SupportedModes> = Sdo::complete(0x6502);
     /// supported synchronization functions in the device, fields are true if the matching flag in [StatusWord] are supported
@@ -158,6 +264,8 @@ pub mod cia402 {
             The control unit shall not use the requested synchronization function.
             
             The drive shall not use any synchronization function, i.e. 60DA h = 0000h
+            
+        allowed modes are defined in [supported_sychronization]
     */
     pub const enabled_sychronization: Sdo<SynchronizationSetting> = Sdo::complete(0x60da);
     
@@ -220,9 +328,9 @@ pub mod cia402 {
     pub mod homing {
         use super::*;
         
-        pub const offset: Sdo<> = Sdo::complete(0x607c);
+        pub const offset: Sdo<i32> = Sdo::complete(0x607c);
         /**
-            ETG.6010 Table 27: Homing methods
+            ETG.6010 Table 27: Homing methods to use
             
             | method | Description |
             |--------|-------------|
@@ -238,13 +346,15 @@ pub mod cia402 {
             | 35 | Homing on current position – obsolete
             | 36 | Homing with touch-probe
             | 37 | Homing on current position
+            | _  | Other values are non-standard and specific to manufactuers
             
             See ETG.6010 7.3 for more details
         */
         pub const method: Sdo<u16> = Sdo::complete(0x6098);
         pub const velocity: Sdo<u32> = Sdo::complete(0x6099);
         pub const acceleration: Sdo<u32> = Sdo::complete(0x609a);
-        pub const supported: SdoList<bool> = SdoList {index: 0x60e3};
+        /// list of supported homing modes
+        pub const supported: SdoList<bool> = SdoList::new(0x60e3);
     }
     /// ETG.6010 7.4
     pub mod touch {
@@ -255,27 +365,40 @@ pub mod cia402 {
     
     /// A drive may support several sensor interfaces. The information coming from this/these additional sensors should be given here
     pub mod sensors {
-        pub const position: SdoList<i32> = SdoList<i32> {index: 0x60e4};
-        pub const position_encoder_increments: SdoList<u32> = SdoList {index: 0x60e6};
-        pub const position_motor_revolutions: SdoList<u32> = SdoList {index: 0x60eb};
+        use super::*;
         
-        pub const velocity: SdoList<i32> = SdoList {index: 0x60e5};
-        pub const velocity_encoder_increments: SdoList<u32> = SdoList {index: 0x60e7};
-        pub const velocity_motor_revolutions: SdoList<u32> = SdoList {index: 0x60ec};
+        pub const position: SdoList<i32> = SdoList::new(0x60e4);
+        pub const position_encoder_increments: SdoList<u32> = SdoList::new(0x60e6);
+        pub const position_motor_revolutions: SdoList<u32> = SdoList::new(0x60eb);
         
-        pub const gear_ratio_motor: SdoList<u32> = SdoList {index: 0x60e8};
-        pub const gear_ratio_shaft: SdoList<u32> = SdoList {index: 0x60ed};
-        pub const feed: SdoList<u32> = SdoList {index: 0x60e9};
-        pub const shaft: SdoList<u32> = SdoList {index: 0x60ee};
+        pub const velocity: SdoList<i32> = SdoList::new(0x60e5);
+        pub const velocity_encoder_increments: SdoList<u32> = SdoList::new(0x60e7);
+        pub const velocity_motor_revolutions: SdoList<u32> = SdoList::new(0x60ec);
+        
+        pub const gear_ratio_motor: SdoList<u32> = SdoList::new(0x60e8);
+        pub const gear_ratio_shaft: SdoList<u32> = SdoList::new(0x60ed);
+        pub const feed: SdoList<u32> = SdoList::new(0x60e9);
+        pub const shaft: SdoList<u32> = SdoList::new(0x60ee);
     }
     
-    pub const position_limit: Sdo<PositionLimits> = Sdo::complete(0x607b);
-    pub const position_limit_software: Sdo<> = Sdo::complete(0x607d);
-    pub const position_mode: Sdo<PositioningMode> = Sdo::complete(0x60f2);
+    pub const position_mode: Sdo<Positioning> = Sdo::complete(0x60f2);
+    pub const position_limit: PositionLimits = PositionLimits {
+        min: Sdo::sub(0x607b, 0, 0),
+        max: Sdo::sub(0x607b, 1, 32),
+        };
+    pub const position_limit_software: PositionLimits = PositionLimits {
+        min: Sdo::sub(0x607d, 0, 0),
+        max: Sdo::sub(0x607d, 1, 32),
+        };
     
-    pub const following_error_current: Sdo<i32> = Sdo::complete(0x60f4);
-    pub const following_error_window: Sdo<> = Sdo::complete(0x6065);
-    pub const following_error_timeout: Sdo<> = Sdo::complete(0x6066);
+    pub mod following_error {
+        pub use super::*;
+        
+        pub const current: Sdo<i32> = Sdo::complete(0x60f4);
+        pub const window: Sdo<> = Sdo::complete(0x6065);
+        pub const timeout: Sdo<> = Sdo::complete(0x6066);
+    }
+    
     pub const max_velocity: Sdo<u32> = Sdo::complete(0x6080);
     pub const max_rated_torque: Sdo<u16> = Sdo::complete(0x6076);
     
@@ -284,6 +407,21 @@ pub mod cia402 {
     
     pub const motion_profile: Sdo<> = Sdo::complete(0x6086);
     pub const interpolation_time_period: Sdo<> = Sdo::complete(0x60c2);
+    
+    /**
+        motor resolution (steps/revolution) for stepper motors
+        
+        can be calculated according to:
+        
+        `motor_resolution = fullsteps * microsteps / revolution`
+        
+        the calculation of the position scaling is done by the following formula:
+        
+        `current_position = (position_internal * feed) / (motor_resolution * gear_ratio)`
+        
+        ETG.6010 table 81
+    */
+    pub const resolution: Sdo<u32> = Sdo::complete(0x60ef);
     
     /// This object shall indicate the electrical commutation angle for the space vector modulation. The value 16 shall be given in 360°/2 , whereby the electrical angle is used. Table 13 specifies the object description, and Table 14 specifies the entry description.
     pub const commutation_angle: Sdo<u16> = Sdo::complete(0x60ea);
@@ -294,44 +432,7 @@ pub mod cia402 {
         pub const deceleration: Sdo<> = Sdo::complete(0x6085);
         pub const option: Sdo<> = Sdo::complete(0x605a);
     }
-    
-    // csp
-    // statusword.12 = following_command  (mendatory)
-    /*   
-        Drive follows the command value shall be zero if the drive does not follow the target value (position, velocity or torque) because of local reasons (internal set-point settings), e.g. if a local Input is configured to a halt function or a safety function prevents the drive in Operational to follow the target set point. The control device shall evaluate the bit. The Bit 12 shall be set if the drive is in state Operation enabled and follows the target and set-point values of the control device. In all other cases it shall be zero. If the bit is not supported it shall be fix set to 1 in the statusword.
-    */
-
-    // statusword.10 = reached_command
-    /*   
-        used in Profile position mode as "target reached" information. In csp the new target position is given cyclically by the control device. This bit can be used as Status Toggle information to indicate if the device provides updated input data. The bit shall be toggled with every update of the input process data. If object 60D9 h is supported, the Status Toggle function can be enabled or disabled.
-        The Following Error functionality is usually not supported by the drive in csp mode therefore Bit 13 can be used to extend the Status Toggle information to a 2-Bit Input Cycle Counter. Object 60D9h and 60DAh shall be supported and used to enable or disable the Input Cycle Counter functionality.
-    */
-    
-    //csv
-    // statusword.12 = following_command  (mendatory)
-    /*
-        Drive follows the command value shall be zero if the drive does not follow the target value (position, velocity or torque) because of local reasons (internal set-point settings), e.g. if a local Input is configured to a halt function or if a safety function prevents the drive in Operational to follow the target set point. The control device shall evaluate the bit. The Bit 12 shall be set if the drive is in state Operation enabled and follows the target and set-point values of the control device. In all other cases it shall be zero. If the bit is not supported it shall be fix set to 1 in the statusword.
-    */
-    // statusword.10 = reached_command
-    /*
-        In csv mode Bit 10 can be used as Status Toggle information to indicate if the device provides updated input data. The bit shall be toggled with every update of the input process data. If object 60D9h is supported, the Status Toggle function can be enabled or disabled.
-        Bit 13 can be used to extend the Status Toggle information to a 2-Bit Input Cycle Counter. Object 60D9h and 60DAh shall be supported and used to enable or disable the Input Cycle Counter functionality.
-    */
-    
-    //cst
-    // statusword.12 = following_command  (mendatory)
-    /*
-        The Bit 12 Drive follows the command value shall be zero if the drive does not follow the target value (position, velocity or torque) because of local reasons (internal set-point settings), e.g. if a local Input is configured to a halt function or if a safety function prevents the drive in Operational to follow the target set point. The control device shall evaluate the bit. The Bit 12 shall be set if the drive is in state Operation enabled and follows the target and set-point values of the control device. In all other cases it shall be zero. If the bit is not supported it shall be fix set to 1 in the statusword.
-        
-        NOTE: If Bit 12 is not supported and is not set to 1, the control device will not run the drive, because it expects that the drive does not follow the command.
-    */
-    // statusword.10 = reached_command
-    /*
-        In cst mode Bit 10 can be used as Status Toggle information to indicate if the device provides updated input data. The bit shall be toggled with every update of the input process data. If object 60D9h is supported, the Status Toggle function can be enabled or disabled.
-        Bit 13 can be used to extend the Status Toggle information to a 2-Bit Input Cycle Counter. Object 60D9h and 60DAh shall be supported and used to enable or disable the Input Cycle Counter functionality.
-    */
 }
-
 
 
 
@@ -339,31 +440,12 @@ pub mod cia402 {
 
 /// description of SDO configuring a PDO
 /// the SDO is assumed to follow the cia402 specifications for PDO SDOs
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Pdo {
-	/// index of the SDO that configures the PDO
-	pub index: u16,
-	/// number of entries in the PDO
-	pub num: u8,
-}
-impl Pdo {
-    /// return a field pointing to the nth entry definition of the PDO
-    pub fn slot(&self, i: u8) -> Sdo<PdoEntry> {
-        Sdo::sub(self.index, i+1, core::mem::size_of::<u8>() + core::mem::size_of::<PdoEntry>()*usize::from(i))
-    }
-    /// return a field pointing to the number of items set in the PDO
-    pub const fn len(&self) -> Sdo<u8> {
-        Sdo::sub(self.index, 0, 0)
-    }
-}
-impl fmt::Debug for Pdo {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Pdo {{index: 0x{:x}, num: {}}}", self.index, self.num)
-	}
-}
+pub type Pdo = SdoList<PdoEntry>;
+
 
 /// content of a subitem in an SDO for PDO mapping
 #[bitsize(32)]
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct PdoEntry {
     /// bit size of the subitem value
     bitsize: u8,
@@ -374,26 +456,6 @@ pub struct PdoEntry {
 }
 data::bilge_pdudata!(PdoEntry, u32);
 
-/// ETG.1000.6 table 67
-pub struct SyncManager {
-    /// index of first SDO configuring a [SyncChannel]
-    pub index: u16,
-    /// number of SDOs configuring SyncChannels
-    pub num: u8,
-}
-impl SyncManager {
-    pub fn channel(&self, i: u8) -> SyncChannel {
-        SyncChannel { 
-            index: self.index + u16::from(i), 
-            direction: match i%2 {
-                0 => SyncDirection::Write,
-                1 => SyncDirection::Read,
-                _ => unreachable!(),
-                }, 
-            num: 254,
-            }
-    }
-}
 
 /**
     description of SDO configuring a SyncChannel
@@ -408,7 +470,7 @@ pub struct SyncChannel {
 	/// whether this channel is to be read or written by the master, this might be set by the user if the slave supports it.
 	pub direction: SyncDirection,
 	/// max number of PDO that can be assigned to the SyncChannel
-	pub num: u8,
+	pub capacity: u8,
 }
 impl SyncChannel {
     /// return a field pointing to the nth entry definition of the sync manager channel
@@ -425,27 +487,91 @@ impl SyncChannel {
 }
 impl fmt::Debug for SyncChannel {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "SyncChannel {{index: 0x{:x}, num: {}}}", self.index, self.num)
+		write!(f, "SyncChannel {{index: 0x{:x}, capacity: {}}}", self.index, self.capacity)
 	}
 }
 
-/**
-    a SDO containing a boolean for each PDO, read true if the matching PDO has an invalid mapping
-    
-    ETG.6010 table 6
-*/
-pub struct PdoInvalids {
+/// ETG.1000.6 table 67
+pub struct SyncManager {
+    /// index of first SDO configuring a [SyncChannel]
     pub index: u16,
-    pub num: u8,
+    /// number of SDOs configuring SyncChannels
+    pub len: u8,
 }
-impl PdoInvalids {
-    pub fn len(&self) -> Sdo<u8>  {Sdo::sub(self.index, 0)}
-    pub fn slot(&self, i: u8) -> Sdo<bool>  {Sdo::sub_with_size(self.index, (i+1), (i+1)*8, 8)}
+impl SyncManager {
+    /// return a description of the sdo controling the given channel
+    pub fn channel(&self, i: u8) -> SyncChannel {
+        SyncChannel { 
+            index: self.index + u16::from(i), 
+            direction: match i%2 {
+                0 => SyncDirection::Write,
+                1 => SyncDirection::Read,
+                _ => unreachable!(),
+                }, 
+            capacity: 254,
+            }
+    }
 }
 
 
+/**
+    sync manager synchronization object
+
+    ETG.1000.6 table 78
+*/
+pub struct Synchronization {
+    pub index: u16,
+}
+impl From<u16> for Synchronization {
+    fn from(index: u16) -> Self {Self{index}}
+}
+impl Synchronization {
+    /// choose the event to synchronize with
+    pub fn ty(&self) -> Sdo<SyncType>  {Sdo::sub(self.index, 1, 8)}
+    /// time between two events in ns
+    pub fn period(&self) -> Sdo<u32>  {Sdo::sub(self.index, 2, 40)}
+    /// time between related AL event and the associated action in ns
+    pub fn shift(&self) -> Sdo<u32>  {Sdo::sub(self.index, 3, 72)}
+}
+
+/** Like an enum, but with a serie of value matching sync managers indices
+
+    ETG.1000.6 table 78
+*/
+#[repr(packed)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct SyncType (u16);
+impl SyncType {
+    /// not synchronized
+    pub const fn none() -> Self {Self(0)}
+    /// Synchron – synchronized with AL Event on this Sync Manager
+    pub const fn synchron() -> Self {Self(1)}
+    /// DC Sync0 – synchronized with AL Event Sync0
+    pub const fn dc_sync0() -> Self {Self(2)}
+    /// DC Sync1 – synchronized with AL Event Sync1
+    pub const fn dc_sync1() -> Self {Self(3)}
+    /// SyncSmN – synchronized with AL Event of Sync Manager N
+    pub const fn sync_manager(n: u8) -> Self {
+        assert!(n < 32);
+        Self(4 + n as u16)
+    }
+}
+data::packed_pdudata!(SyncType);
+
+/// ETG.1000.6 table 76
+#[bitsize(8)]
+pub enum SyncMode {
+    Disable = 0,
+    MailboxReceive = 1,
+    MailboxSend = 2,
+    ProcessDataOutput = 3,
+    ProcessDataInput = 4,
+}
+data::bilge_pdudata!(SyncMode, u8);
 
 
+
+/// ETG.1000.6 table 68, ETG.6010 table 84
 #[bitsize(32)]
 #[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct DeviceType {
@@ -458,7 +584,8 @@ pub struct DeviceType {
 }
 data::bilge_pdudata!(DeviceType, u32);
 
-#[bitsize(4)]
+/// ETG.6010 table 84
+#[bitsize(8)]
 #[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct DriveType {
     reserved: u1,
@@ -470,6 +597,7 @@ pub struct DriveType {
     pub safety: bool,
     reserved: u4,
 }
+data::bilge_pdudata!(DriveType, u4);
 
 /**
     identify the source of actual errors on the device. several source can cause errors at the same time.
@@ -477,21 +605,23 @@ pub struct DriveType {
     ETG.1000.6 table 69
 */
 #[bitsize(8)]
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct DeviceError {
     /// generic error, no particular source
-    generic: bool,
+    pub generic: bool,
     /// error in current control
-    current: bool,
+    pub current: bool,
     /// error in voltage control
-    voltage: bool,
-    temperature: bool,
-    communication: bool,
+    pub voltage: bool,
+    pub temperature: bool,
+    pub communication: bool,
     /// error specific to the device profile in use
-    device_profile: bool,
+    pub device_profile: bool,
     reserved: u1,
     /// manufactorer-specific error
-    manufacturer: bool,
+    pub manufacturer: bool,
 }
+data::bilge_pdudata!(DeviceError, u8);
 
 /**
 bit structure of a status word
@@ -529,10 +659,23 @@ pub struct StatusWord {
     pub warning: bool,
     reserved: u1,
     pub remote: bool,
+    /**
+        in synchronous modes, this bit toggles each time a new command value is received by the slave.
+        In other modes, it is true once the control loop has reached the given target (position, velocity, etc) within a certain range configured elsewere.
+    */
     pub reached_command: bool,
+    /// whether a torque or velocity limit is currently overriding the control loop output
     pub limit_active: bool,
+    /**
+        `true` if the device control loop is actively following the command. `false` otherwise (halt is set, and error occured, or internal reasons)
+        
+        used by most variants of [OperationMode], if not supported by cyclic synchronous modes, it shall be set to `true`
+    */
     pub following_command: bool,
-    pub cycle: bool,
+    /**
+        in cyclic synchronous modes, it can be used to extend the `reached_command` toggle into a 2-bit cycle counter. This is configured in [cia402::enabled_sychronization]
+    */
+    pub following_error: bool,
     reserved: u2,
 }
 data::bilge_pdudata!(StatusWord, u16);
@@ -587,7 +730,7 @@ pub struct ControlWord {
     pub quick_stop: bool,
     pub enable_operation: bool,
     pub homing: bool,
-    reserved: u2,
+    pub cycle: u2,
     pub reset_fault: bool,
     pub halt: bool,
     pub specific: bool,
@@ -645,22 +788,26 @@ pub enum OperationMode {
         If the following error is calculated in the control device it is afflicted with a dead-time. Therefore the calculation of the following error in the drive might have a better quality.
         The following error value shall only be evaluated in state Operation enabled.
         After a Reset the set point should be set to the actual value so that the following error is zero.
-        In the csp mode the Halt bit (bit 8) of the controlword shall be ignored because the halt function is controlled by the control device.
-        Bit 5 and 6 of the controlword can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented with every update of the output process data. Object 60D9h and 60DAh shall be supported and used to enable or disable the Output Cycle Counter functionality.
+        
+        In the csp mode [ControlWord::halt] shall be ignored because the halt function is controlled by the control device.
+        
+        [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented with every update of the output process data. Object [cia402::enabled_sychronization] shall be supported and used to enable or disable the Output Cycle Counter functionality.
     */
 	SynchronousPosition = 8,
 	/** 
         CSV (Cyclic Synchronous Velocity)
         
-        In the csv mode the Halt bit (bit 8) of the Controlword shall be ignored because the halt function is controlled by the control device.
-        Bit 5 and 6 of Controlword can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented
+        In the csv mode [ControlWord::halt] shall be ignored because the halt function is controlled by the control device.
+        
+       [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented
     */
 	SynchronousVelocity = 9,
 	/**
         CST (Cyclic Synchronous Torque)
         
         In the cst mode the Halt bit (bit 8) of the Controlword shall be ignored because the halt function is controlled by the control device.
-        Bit 5 and 6 of Controlword can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented with every update of the output process data. Object 60D9h and 60DAh shall be supported and used to enable or disable the Output Cycle Counter functionality.
+        
+        [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented with every update of the output process data. [cia402::enabled_sychronization] shall be supported and used to enable or disable the Output Cycle Counter functionality.
     */
 	SynchronousTorque = 10,
 	/**
@@ -673,11 +820,10 @@ pub enum OperationMode {
         - to check the function (increments, zero signal) and direction of the sensor
         - Use of external sensor interface to calculate commutation angle (in that case there might be no internal feedback to Torque control)
         
-        In the cstca mode the Halt bit (bit 8) of the Controlword shall be ignored because the halt function is controlled by the control device.
-        Bit 5 and 6 of Controlword can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented with every update of the output process data. Object 60D9h and 60DAh shall be supported and used to enable or disable the Output Cycle Counter functionality.
+        In the cstca mode [ControlWord::halt] shall be ignored because the halt function is controlled by the control device.
+        [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented with every update of the output process data. [cia402::enabled_sychronization] shall be supported and used to enable or disable the Output Cycle Counter functionality.
 
-        In cstca mode Bit 10 can be used as Status Toggle information to indicate if the device provides updated input data. The bit shall be toggled with every update of the input process data. If object 60D9h is supported, the Status Toggle function can be enabled or disabled.
-        Bit 13 can be used to extend the Status Toggle information to a 2-Bit Input Cycle Counter. Object 60D9h and 60DAh shall be supported and used to enable or disable the Input Cycle Counter functionality. The Bit 12 Drive follows the command value shall be zero if the drive does not follow the target value (position, velocity or torque) because of local reasons (internal set-point settings), e.g. if a local Input is configured to a halt function or if a safety function prevents the drive in Operational to follow the target set point. The control device shall evaluate the bit. The Bit 12 shall be set if the drive is in state Operation enabled and follows the target and set-point values of the control device. In all other cases it shall be zero. If the bit is not supported it shall be fix set to 1 in the statusword.
+        In cstca mode [StatusWord::reached_command] can be used as Status Toggle information to indicate if the device provides updated input data. The bit shall be toggled with every update of the input process data. If object [cia402::supported_sychronization] is supported, [StatusWord::following_error] can be used to extend the Status Toggle information to a 2-Bit Input Cycle Counter. [cia402::enabled_sychronization] shall be supported and used to enable or disable the Input Cycle Counter functionality. [StatusWord::following_command] shall be zero if the drive does not follow the target value (position, velocity or torque) because of local reasons (internal set-point settings), e.g. if a local Input is configured to a halt function or if a safety function prevents the drive in Operational to follow the target set point. The control device shall evaluate the bit. [StatusWord::following_command] shall be set if the drive is in state Operation enabled and follows the target and set-point values of the control device. In all other cases it shall be zero. If the bit is not supported it shall be fix set to 1 in the statusword.
     */
 	SynchronousTorqueCommutation = 11,
 }
@@ -712,6 +858,7 @@ data::bilge_pdudata!(SupportedModes, u32);
     ETG.6010 figure 16, 17
 */
 #[bitsize(32)]
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct SynchronizationSetting {
     ///  Status Toggle bit in csp, csv, cst and cstca mode supported/enabled
     pub toggle: bool,
@@ -721,30 +868,28 @@ pub struct SynchronizationSetting {
     pub output_cycle: bool,
     reserved: u29,
 }
+data::bilge_pdudata!(SynchronizationSetting, u32);
 
-pub struct HomingMethods {
-    pub index: u16,
-    pub num: 254,
-}
-impl HomingMethods {
-    pub fn len(&self) -> Sdo<u8>    {Sdo::sub(self.index, 0)}
-    pub fn method(&self, id: u8) -> Sdo<bool>   {Sdo::sub(self.index, id+1, (id+1)*8)}
-}
 
-#[bisize(16)]
-struct Positioning {
-    relative: bool,
+/// ETG.6010 figure 25
+#[bitsize(16)]
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct Positioning {
+    pub relative: u2,
     /// change immediately option
-    cio: u2,
+    pub cio: u2,
     /// request response option
-    rro: u2,
+    pub rro: u2,
     /// rotary axis direction option
-    rado: PositioningMode,
-    ip: u3,
+    pub rado: PositioningMode,
+    pub ip: u4,
     reserved: u3,
     manufacturer: u1,
 }
+data::bilge_pdudata!(Positioning, u16);
 /**
+    ETG.6010 table 78
+
     | negative | positive | effect |
     |----------|----------|--------|
     |     0    |    0     | Normal positioning similar to linear axis. If reaching or exceeding the position range limits (607Bh) the input value shall wrap automatically to the other end of the range
@@ -753,9 +898,16 @@ struct Positioning {
     |     1    |    1     | Positioning with the shortest way to the target position. Special condition: If the difference between actual value and target position in a 360° system is 180°, the axis will move in positive direction.
 */
 #[bitsize(2)]
-struct PositioningMode {
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct PositioningMode {
     /// if target position is higher than actual position, axis moves over “Min position limit“ to target position
-    closest_negative: bool,
+    pub closest_negative: bool,
     /// if target position is lower than actual position, axis moves over “Max position limit“ to target position
-    closest_positive: bool,
+    pub closest_positive: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PositionLimits {
+    pub min: Sdo<u16>,
+    pub max: Sdo<u16>,
 }

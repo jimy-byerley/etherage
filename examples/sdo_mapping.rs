@@ -28,11 +28,11 @@ async fn main() -> std::io::Result<()> {
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
         let restatus = slave.register(SyncDirection::Read, registers::al::status);
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, num: 10 });
-            let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, num: 10 });
+        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, capacity: 10 });
+            let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1600, 10));
                 let control = pdo.push(Sdo::<u16>::complete(0x6040));
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, num: 10 });
-            let mut pdo = channel.push(sdo::Pdo{ index: 0x1a00, num: 10 });
+        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, capacity: 10 });
+            let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1a00, 10));
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
                 let position = pdo.push(Sdo::<i32>::complete(0x6064));

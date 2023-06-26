@@ -4,7 +4,6 @@ use crate::{
 	rawmaster::{RawMaster, SlaveAddress},
 	data::{PduData, Field},
 	mailbox::Mailbox,
-	sdo::Sdo,
 	can::Can,
 	registers,
 	};

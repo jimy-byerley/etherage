@@ -5,7 +5,6 @@ use crate::{
 	slave::Slave,
 	registers,
 	};
-use bilge::prelude::*;
 use std::{
     collections::HashSet,
     sync::Mutex,

@@ -58,7 +58,7 @@ use crate::{
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     data::{PduData, Field},
     sdo::{self, Sdo, SyncDirection},
-    slave::{Slave, CommunicationState},
+    slave::Slave,
     registers,
     };
 use core::{
@@ -206,7 +206,7 @@ impl Group<'_> {
     /**
         write on the given slave the matching configuration from the mapping
     
-        the slave is assumed to be in state [CommunicationState::PreOperational], and can be switched to [CommunicationState::SafeOperational] after this step.
+        the slave is assumed to be in state [PreOperational](crate::CommunicationState::PreOperational), and can be switched to [SafeOperational](crate::CommunicationState::SafeOperational) after this step.
     */
     pub async fn configure(&self, slave: &Slave<'_>)  {
         let master = unsafe{ slave.raw_master() };
@@ -227,7 +227,7 @@ impl Group<'_> {
             coe.sdo_write(&pdo.config.len(), u2::new(0), 0).await;
             for (i, sdo) in pdo.sdos.iter().enumerate() {
                 // PDO mapping
-                coe.sdo_write(&pdo.config.slot(i as u8), u2::new(0), sdo::PdoEntry::new(
+                coe.sdo_write(&pdo.config.item(i), u2::new(0), sdo::PdoEntry::new(
                     sdo.field.len.try_into().expect("field too big for a subitem"),
                     sdo.sub.unwrap(),
                     sdo.index,
@@ -506,7 +506,7 @@ impl<'a> MappingSlave<'a> {
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: unsafe {&mut *(self as *const _ as *mut _)},
             direction: sdo.direction,
-            num: sdo.num as usize,
+            capacity: sdo.capacity as usize,
         }
         
         // TODO: make possible to push an alread existing channel as long as its content is the same
@@ -516,12 +516,12 @@ pub struct MappingChannel<'a> {
     slave: &'a mut MappingSlave<'a>,
     entries: &'a mut Vec<u16>,
     direction: SyncDirection,
-    num: usize,
+    capacity: usize,
 }
 impl<'a> MappingChannel<'a> {
     /// add a pdo to this channel, and return an object to map it
     pub fn push(&'a mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
-        assert!(self.entries.len()+1 < self.num);
+        assert!(self.entries.len()+1 < self.capacity);
         
         self.entries.push(pdo.index);
         let c = ConfigPdo {
@@ -537,7 +537,7 @@ impl<'a> MappingChannel<'a> {
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: self.slave,
             direction: self.direction,
-            num: pdo.num as usize,
+            capacity: pdo.capacity as usize,
         }
         
         // TODO: make possible to push an alread existing PDO as long as its content is the same
@@ -547,12 +547,12 @@ pub struct MappingPdo<'a> {
     slave: &'a mut MappingSlave<'a>,
     entries: &'a mut Vec<Sdo>,
     direction: SyncDirection,
-    num: usize,
+    capacity: usize,
 }
 impl<'a> MappingPdo<'a> {
     /// add an sdo to this channel, and return its matching field in the logical memory
     pub fn push<T: PduData>(&mut self, sdo: Sdo<T>) -> Field<T> {
-        assert!(self.entries.len()+1 < self.num);
+        assert!(self.entries.len()+1 < self.capacity);
         
         self.entries.push(sdo.clone().downcast());
         let len = (sdo.field.len + 7) / 8;
