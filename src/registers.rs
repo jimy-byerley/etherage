@@ -95,7 +95,7 @@ pub mod sii {
 pub const fmmu: FMMU = FMMU {address: 0x0600, num: 16};
 pub const clock: Field<DistributedClock> = Field::simple(0x0900);
 pub const clock_latch: Field<u32> = Field::simple(0x0900);
-pub const clock_delay: Field<u32> = Field::simple(0x0928);
+pub const clock_diff: Field<u32> = Field::simple(0x0932);
 
 /// AL (Application Layer) registers are controling the communication state of a slave
 pub mod al {
@@ -796,45 +796,37 @@ pub struct DistributedClock {
         A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
         This array contains the latched receival time on each port.
     */
-    pub received_time: ReceiveTimePort,
-    /**
-        A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
-    */
+    pub received_time: [u32;4],
+    /// A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
     pub system_time: u64,
-    /**
-        Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
-    */
+    /// Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
     pub receive_time_unit: u64,
     /// Offset between the local time (in ns) and the local system time (in ns)
     pub system_offset: u64,
     /// Offset between the reference system time (in ns) and the local system time (in ns)
     pub system_delay: u32,
+    /**
+        Bits 30..0: Mean difference between local copy of "system time" and "received system time" values.
+        Bit 31: 0 - Local copy of "system time" > "received system time". 1 - Othercase
+    */
     pub system_difference: TimeDifference,
+    /// Implementation specific
     reserved: [u32; 3],
 }
 data::packed_pdudata!(DistributedClock);
 
 impl DistributedClock {
     pub fn new() -> Self{
-        Self{ 
-            received_time : ReceiveTimePort { port0 : 0, port1 : 0, port2: 0, port3 :0 },
-            system_time : 0,
+        Self{
+            received_time : [0;4] ,
+            localsystem_time : 0,
             receive_time_unit : 0,
             system_offset : 0,
             system_delay : 0,
-            system_difference : 0, 
+            system_difference : 0,
             reserved : [0;3]
         }
     }
-}
-
-#[repr(packed)]
-#[derive(Debug, Copy, Clone)]
-pub struct ReceiveTimePort{
-    pub port0 : u32,
-    pub port1 : u32,
-    pub port2 : u32,
-    pub port3 : u32,
 }
 
 #[bitsize(32)]
@@ -846,8 +838,6 @@ pub struct TimeDifference {
     pub sign: bool,
 }
 data::bilge_pdudata!(TimeDifference, u32);
-
-
 
 // /** registers in physical memory of a slave
 //

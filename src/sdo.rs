@@ -1,4 +1,4 @@
-/*! 
+/*!
 Convenient structures to read/write the slave's dictionnary objects (SDO) and configure mappings...);
 */
 
@@ -42,17 +42,17 @@ impl<T: PduData> Sdo<T> {
 		field: BitField::new(offset, size),
 	}}
 	/// address a complete sdo at the given index, with `sub=0` and `byte=0`
-	pub fn complete(index: u16) -> Self { Self{ 
-		index, 
-		sub: SdoPart::Complete, 
+	pub fn complete(index: u16) -> Self { Self{
+		index,
+		sub: SdoPart::Complete,
 		field: BitField::new(0, T::Packed::LEN*8),
 	}}
-	pub fn complete_with_size(index: u16, size: usize) -> Self { Self{ 
-		index, 
-		sub: SdoPart::Complete, 
+	pub fn complete_with_size(index: u16, size: usize) -> Self { Self{
+		index,
+		sub: SdoPart::Complete,
 		field: BitField::new(0, size),
 	}}
-	
+
 // 	/// retreive the current subitem value from the given slave
 // 	pub async fn get(&self, slave: &Slave) -> T  {todo!()}
 // 	/// set the subitem value on the given slave
@@ -62,7 +62,7 @@ impl SdoPart {
     /// return the subindex or 0 for a complete item
     pub fn unwrap(self) -> u8 { match self {
             Self::Complete => 0,
-            Self::Sub(i) => i,  
+            Self::Sub(i) => i,
     }}
     pub fn is_complete(&self) -> bool { match self {
             Self::Complete => true,

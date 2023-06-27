@@ -44,7 +44,7 @@ pub mod mailbox;
 pub mod sdo;
 pub mod can;
 pub mod master;
-pub mod clock;
+pub mod synchro;
 pub mod slave;
 
 
@@ -54,6 +54,7 @@ pub use crate::socket::*;
 pub use crate::rawmaster::*;
 pub use crate::master::*;
 pub use crate::slave::*;
+pub use crate::synchro::*;
 
 
 use std::sync::Arc;
