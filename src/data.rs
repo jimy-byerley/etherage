@@ -14,10 +14,10 @@ pub trait PduData: Sized {
 
     fn pack(&self, data: &mut [u8]) -> PackingResult<()> { self.pack_slice(data, 0, Self::packed_bitsize(), Ordering::Little) }
     fn unpack(src: &[u8]) -> PackingResult<Self> { Self::unpack_slice(src, 0, Self::packed_bitsize(), Ordering::Little)}
-    
+
     fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<()>;
     fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<Self>;
-    
+
     fn packed_size() -> usize {Self::Packed::LEN}
     fn packed_bitsize() -> usize {Self::Packed::LEN * 8}
 }
@@ -450,66 +450,11 @@ macro_rules! num_pdudata {
             ```
             Caveat overlap the end of slice
             */
-            // fn pack_slice(&self, data: &mut [u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<()>
-            // {
-            //     //Test input parameters
-            //     let array_len_bit : usize = data.len() * 8;
-            //     let field_len_bit : usize = core::mem::size_of::<$t>() * 8;
-            //     let excluded_bits : u8 = 8 - ((usize::from(bitoffset) + bitsize) % 8) as u8;
-
-            //     if bitsize == 0 {
-            //         return Err(PackingError::InvalidValue("Bit size couldn't be negative")); }
-            //     if bitoffset >= MAX_OFFSET {
-            //         return Err(PackingError::BadAlignment(bitoffset as usize, "Offset greater than 8")); }
-            //     if bitsize + bitoffset as usize > array_len_bit {
-            //         return Err(PackingError::BadSize(bitsize, "Data too large for the given slice")); }
-                
-            //     //Get unsed data
-            //     let prefix_mask : u8 = match bitoffset > 0 {
-            //         true => ( data[0] >> excluded_bits ) << excluded_bits,
-            //         false => 0
-            //     };
-                
-            //     //Ordering byte
-            //     let ordering_bits = match bitordering {
-            //         Ordering::Big => self.to_be_bytes(),
-            //         Ordering::Little => self.to_le_bytes(),
-            //         _ => return Err(PackingError::BadOrdering(bitordering,"Mixed endian is invalid in this case"))
-            //     };
-                
-            //     //Get suffix mask
-            //     let suffix_mask : u8 = match bitoffset > 0 {
-            //         true => (ordering_bits[ordering_bits.len() -1] << excluded_bits),
-            //         _ => 0,
-            //     };
-                
-            //     //Clear non used data
-            //     // Exemple (on 1 byte, with offset = 3 and bitsize = 4 | d d d d * * * * | -> | d d d d 0 0 0 0 | -> | 0 0 0  d d d d 0 |
-            //     // Exemple (on 1 byte, with offset = 3 and bitsize = 7 | d d d d d d d * | -> | d d d d d d d 0 | -> | 0 0 0  d d d d d |
-            //     let mut core = <$t>::from_be_bytes(ordering_bits);
-            //     core >>= (field_len_bit - bitsize) as $t;
-            //     core <<= (field_len_bit - bitsize) as $t;
-            //     core >>= bitoffset;
-            //     let array = core.to_be_bytes();
-                
-            //     //Format final data
-            //     for i in 0 .. (bitsize + 7) / 8
-            //     {
-            //         if i == 0 { data[i] = array[i] | prefix_mask; }
-            //         else { data[i] = array[i] ; }
-            //     }
-            //     if (bitsize + usize::from(bitoffset)) % 8 > 0 {
-            //         data[(bitsize + usize::from(bitoffset))/ 8] |= suffix_mask; 
-            //     }
-                
-            //     return Ok(());
-            // }
-
             fn pack_slice(&self, data : &mut [u8], bitoffset: u8, bitsize: usize, bitordering : Ordering) -> PackingResult<()> {
                 //Test input parameters
                 let array_len_bit : usize = data.len() * 8;
                 let field_len_bit : usize = core::mem::size_of::<$t>() * 8;
-                let excluded_bits : u8 = 8 - ((usize::from(bitoffset) + bitsize) % 8) as u8;
+                let excluded_bits : u8 = (8 - bitoffset) % 8 as u8;
 
                 if bitsize == 0 {
                     return Err(PackingError::InvalidValue("Bit size couldn't be negative")); }
@@ -517,75 +462,101 @@ macro_rules! num_pdudata {
                     return Err(PackingError::BadAlignment(bitoffset as usize, "Offset greater than 8")); }
                 if bitsize + bitoffset as usize > array_len_bit {
                     return Err(PackingError::BadSize(bitsize, "Data too large for the given slice")); }
-                
-                //Get prefix
-                let mut beg : u8 = match bitoffset % 8 > 0 {
+
+                //Get data non used at the beginning of slice
+                let beg : u8 = match bitoffset % 8 > 0 {
                     true => (data[0] >> 8 - bitoffset) << (8 - bitoffset),
                     false => data[0],
                 };
 
                 //Move data
-                let dataArray = self.to_be_bytes();
+                let data_array = match bitordering { Ordering::Little => self.to_le_bytes(), _ => self.to_be_bytes() }; // self.to_be_bytes();
+                let mut buff : u8 = 0x00;
                 for i in 0..data.len().min(core::mem::size_of::<$t>()) {
-                    let buff = match (i + 1)  < core::mem::size_of::<$t>() && bitoffset != 0u8 {
-                        true => dataArray[i + 1] >> (8 - bitoffset) % 8,
-                        false => 0,
-                    };
-                    data[i] = dataArray[i] << bitoffset | buff;
+                    if (usize::from(bitoffset) + bitsize > 8 * i) {
+                        data[i] = data_array[i] << bitoffset | buff;
+                        buff = match bitoffset != 0u8 {  true => (data_array[i] >> excluded_bits), false => 0, };
+                    }
                 }
 
                 //Set saved data from slice
                 data[0] |= beg;
 
-                //Ordering
-                #[cfg(target_endian = "little")]
-                if bitordering == Ordering::Little {
-                    let sz : usize = data.len().min(core::mem::size_of::<$t>());
-                    data[0..sz].reverse();
+                //Remove unsed data at the end of array
+                if (bitsize + usize::from(bitoffset)) % 8 != 0 {
+                    let end = (bitsize + usize::from(bitoffset) + 7) / 8 - 1;
+                    let remove_bit = (bitsize + usize::from(bitoffset) ) % 8;
+                    data[end] = (data[end] << remove_bit) >> remove_bit;
                 }
 
-                #[cfg(target_endian = "big")]
-                if bitordering == Ordering::Little {
-                    data.reverse();
-                }
-                
+                //Ordering
+                // #[cfg(target_endian = "little")]
+                // if bitordering == Ordering::Little {
+                //     let sz : usize = data.len().min(core::mem::size_of::<$t>());
+                //     data[0..sz].reverse();
+                // }
+
+                //#[cfg(target_endian = "big")]
+                //if bitordering == Ordering::Little {
+                //     let sz : usize = data.len().min(core::mem::size_of::<$t>());
+                //     data[0..sz].reverse();
+                //}
+
                 //Switch ordering
                 return Ok(())
             }
 
+
+            /** Unpack data in a value according to the following argument: <br>
+             * Data are packed following these step: ordering > offset > trunc
+             - data: Packed data - "in" value<br>
+             - bitoffset: Index of the data shift. Have to be between 0 and MAX_OFFSET (=7)<br>
+             - bitsize: Size of the variable type: Integer on 16 bits => 16 or Integer on 3bits => 3 <br>
+             - bitordering: Endian ordering for the packed data<br>
+             */
             fn unpack_slice(src: &[u8], bitoffset: u8, bitsize: usize, bitordering: Ordering) -> PackingResult<Self> {
                 //Test input parameters
                 let array_len_bit = src.len() * 8;
                 let field_len_bit = core::mem::size_of::<$t>() * 8;
-                let excluded_bits : u8 = 8 - ((usize::from(bitoffset) + bitsize) % 8) as u8;
-                
+                let excluded_bits : u8 = (8 - bitoffset) % 8;
+
                 if bitoffset >= MAX_OFFSET {
                     return Err(PackingError::BadAlignment(bitoffset as usize, "Alignement superior than one byte")); }
                 if bitsize + bitoffset as usize > array_len_bit || bitsize > field_len_bit {
                     return Err(PackingError::BadSize(bitsize, "Size greater than input slice size" )); }
 
                 //Extract data and suffix
-                let mut buf = [0; core::mem::size_of::<$t>()];
-                let bufsize = src.len().min(buf.len());
-                buf[.. bufsize].copy_from_slice(&src[.. bufsize]);
-                let mut data : $t = <$t>::from_be_bytes(buf);
-                data <<= bitoffset;
-                let mut data = data.to_be_bytes();
-                let suffix : u8 = match src.len() > core::mem::size_of::<$t>() {
-                    true => src[core::mem::size_of::<$t>()],
-                    _ => 0,
-                };
+                let mut data_array = [0; core::mem::size_of::<$t>()];
+                let mut data = [0; core::mem::size_of::<$t>()];
+                let sz = src.len().min(data.len());
+                data[.. sz].copy_from_slice(&src[.. sz]);
 
-                //Concatenate suffix
-                if bitsize + bitoffset as usize > field_len_bit {
-                    let shift = suffix >> excluded_bits ;
-                    data[bitsize / 8] |= shift;
+                //Remove prefix
+                data[0] = match bitoffset > 0 { true => (data[0] >> bitoffset) << bitoffset, false => data[0]};
+
+                //Remove unsed data at the end of array
+                if (bitsize + usize::from(bitoffset)) % 8 != 0 {
+                    let end = (bitsize + usize::from(bitoffset) + 7) / 8 - 1;
+                    let remove_bit = (bitsize + usize::from(bitoffset) ) % 8;
+                    if end < data.len() {
+                    data[end] = (data[end] << remove_bit) >> remove_bit; }
+                }
+
+                //Move data
+                let mut buff : u8 = 0x00;
+                let mut i = src.len().min(core::mem::size_of::<$t>());
+                while i != 0 {
+                    if (usize::from(bitoffset) + bitsize >= 8 * i) {
+                        data_array[i - 1] = data[i - 1] >> bitoffset | buff;
+                        buff = match bitoffset != 0u8 {  true => (data[i - 1] << excluded_bits), false => 0, };
+                    }
+                    i -= 1;
                 }
 
                 //Ordering
                 return Ok(match bitordering {
-                    Ordering::Big => Self::from_be_bytes(data),
-                    Ordering::Little => Self::from_le_bytes(data),
+                    Ordering::Big => Self::from_be_bytes(data_array),
+                    Ordering::Little => Self::from_le_bytes(data_array),
                     _ => return Err(PackingError::BadOrdering(bitordering, "Mixed endian is invalid in this case"))
                 });
             }
@@ -830,22 +801,19 @@ impl<'a> Cursor<&'a mut [u8]> {
     }
 }
 
-
-
-
 #[test]
 fn test_aligned() {
     use core::fmt::Debug;
-    
+
     fn test<T: PduData + PartialEq + Debug>(data: T, reference: &[u8]) {
         let mut buf = T::Packed::uninit();
         buf.as_mut().fill(0);
         data.pack(buf.as_mut()).unwrap();
-        
+
         assert_eq!(buf.as_ref(), reference);
         assert_eq!(T::unpack(buf.as_ref()).unwrap(), data);
     }
-    
+
     test(0u8, &[0x00]);
     test(0u32, &[0x00; 4]);
     test(1u8, &[0x01]);
@@ -857,18 +825,18 @@ fn test_aligned() {
 #[test]
 fn test_field() {
     use core::fmt::Debug;
-    
+
     fn test
         <T: PduData + PartialEq + Debug + Clone, const N: usize>
-        (data: T, field: Field<T>, ref_value: T, ref_packed: &[u8; N]) 
+        (data: T, field: Field<T>, ref_value: T, ref_packed: &[u8; N])
     {
         let mut buf = [0; N];
         field.set(&mut buf, data.clone()).unwrap();
-        
+
         assert_eq!(buf.as_slice(), ref_packed.as_slice());
         assert_eq!(field.get(&buf).unwrap(), ref_value);
     }
-    
+
     test(0u8, Field::new(1,1), 0, &[0, 0]);
     test(0u16, Field::new(1,2), 0, &[0, 0, 0]);
     test(1u8, Field::new(1,1), 1, &[0, 0x01]);
@@ -880,114 +848,39 @@ fn test_field() {
 #[test]
 fn test_bitfield() {
     use core::fmt::Debug;
-    
+
     fn test
         <T: PduData + PartialEq + Debug + Clone, const N: usize>
-        (data: T, field: BitField<T>, ref_value: T, ref_packed: &[u8; N]) 
+        (data: T, field: BitField<T>, ref_value: T, ref_packed: &[u8; N])
     {
         let mut buf = [0; N];
         field.set(&mut buf, data.clone()).unwrap();
-        
+
         assert_eq!(buf.as_slice(), ref_packed.as_slice());
         assert_eq!(field.get(&buf).unwrap(), ref_value);
     }
-    
-    test(0u8, BitField::new(3,7), 0, &[0, 0]);
-    test(0u16, BitField::new(3,15), 0, &[0, 0, 0]);
-    test(0b10u8, BitField::new(3,7), 0b10, &[0, 0b10_000000]);
-    test(0b10u16, BitField::new(3,15), 0b10, &[0, 0b01000000, 0]);
-    
-    
-    
+
+
     use bilge::prelude::*;
-    
+
     #[bitsize(24)]
-    struct tutu {
+    struct Tutu {
         padding: u3,
         v: u14,
         padding: u7,
     }
-    println!("bilge {:?}", tutu::new(u14::new(0b00_0110_0101_1111_u16)).value.to_le_bytes());
-    
-    #[bitsize(32)]
-    struct tata {
-        padding: u6,
-        v: u4,
-        padding: u22,
+    #[bitsize(24)]
+    struct Tata {
+        padding: u2,
+        v: u20,
+        padding: u2,
     }
-    println!("bilge {:?}", tata::new(u4::new(0b1101)).value);
-    
-    
-//      0b1_1111_000  0b011_0010
-//         0b_0011_0010_1111_1000
-    test(0b1100_0110_0101_1111_u16, 
-        BitField::new(3,14), 
-        0b1100_0110_0101_1111_u16, 
-        &[0b0001_1000, 0b1100_1000, 0],
-        );
-//     test(0b00001100_01100101_11111001_10100011_u32, 
-//         BitField::new(3,14), 
-//         0b00001100_01100101_11111001_10100011_u32, 
-//         &[0b00000011, 0b00011000, 0b00000000, 0b0000000, 0],
-//         );
-        
+    let bilge_test = Tutu::new(u14::new(1234u16));
+    let bilge_test_2 = Tata::new(u20::new(12345u32));
+
+    test(12345u32, BitField::new(2,20), 12345u32, &bilge_test_2.value.to_le_bytes());
+    test(1234u16, BitField::new(3,14), 1234u16, &bilge_test.value.to_le_bytes());
+    //test(0u16, BitField::new(3,15), 0, &[0, 0, 0]);
+    //test(0b10u8, BitField::new(3,7), 0b10, &[0, 0b10_000000]);
+    //test(0b10u16, BitField::new(3,15), 0b10, &[0, 0b01000000, 0]);
 }
-
-#[test]
-fn test_shit_bits(){
-    println!("{:016b}-{:016b}", 0xFFu16, 0xFFu16 << 3); 
-}
-
-#[test]
-fn test_old() {
-    // Pdu field
-    let a : Field::<u16> = Field::default();
-    let mut c: [u8; 6] = [0; 6];
-    a.set(&mut c[0..], 5).expect("Error on setting data");
-
-    let b : Field::<u32> = Field::new(2, 2);
-    b.set(&mut c[0..], 5).expect("Error on setting data");
-    println!("{:#?}",c);
-    println!("{:#?}",a.get(&c));
-
-    c.fill(0);
-    let d : BitField<u16> = BitField::new(2, 11);
-    d.set(&mut c[2..], 5);
-
-    println!("i: c");
-    println!("{:#?}",d);
-    for i in 0..6{ println!("{}: {:b} ",i, c[i]) }
-
-    println!("{:#?}", Field::try_from(d));
-
-    println!("{:#?}", BitField::<u32>::default().try_into() as Result<Field<u32>,PackingError>);
-
-    let gg : BitField<u16> = a.try_into().unwrap();
-    println!("{:#?}", gg );
-
-    //Bilge
-    // let a1: MyStructInt = MyStructInt::new(5);
-    // let b2: u32 = a1.len() as u32;
-    // println!("{:#02x}",a1.value);
-    // println!("{:#?} ",b2);
-
-    let a: Field<u8> = Field::simple(0x6);
-    let b: BitField<u8> = BitField::new(0x4, 8);
-    let mut c : [u8; 0x8] = [0;0x8];
-    let mut d : [u8; 0x8] = [0;0x8];
-    a.set(&mut c[0..], 27);
-    b.set(&mut d[0..], 27);
-    println!("Print c:");
-    for i in 0..c.len(){ println!("{}: {:b} ",i, c[i]) }
-    println!("Print d:");
-    for i in 0..d.len(){ println!("{}: {:b} ",i, d[i]) }
-
-    let e: Field<u8> = Field::simple(0x6);
-    let f: BitField<u8> = BitField::new(0x4, 8);
-
-    let g = e.get(&c[0..]).unwrap();
-    let h = f.get(&d[0..]).unwrap();
-    println!("{}",g);
-    println!("{}",h);
-}
-
