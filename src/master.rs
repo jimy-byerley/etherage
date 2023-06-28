@@ -3,6 +3,7 @@ use crate::{
 	rawmaster::{RawMaster, SlaveAddress, PduAnswer},
 	data::{PduData, Field},
 	slave::Slave,
+	mapping::{Allocator, Mapping, Group},
 	registers,
 	};
 use std::{
@@ -43,12 +44,14 @@ pub type MixedState = registers::AlMixedState;
 pub struct Master {
     pub(crate) raw: RawMaster,
     pub(crate) slaves: Mutex<HashSet<SlaveAddress>>,
+    allocator: Allocator,
 }
 impl Master {
 	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {     
 		Self {
 			raw: RawMaster::new(socket),
 			slaves: Mutex::new(HashSet::new()),
+			allocator: Allocator::new(),
 		}
 	}
     
@@ -72,8 +75,21 @@ impl Master {
         SlaveDiscovery::new(self, self.slaves().await)
     }
     
-    /// reset all slaves fixed addresses in the ethercat segment.
-    /// this function will panic if there is instances of [Slave] alive
+    /// return a reference to the master allocator of logical memory
+    pub fn allocator(&self) -> &'_ Allocator {
+        &self.allocator
+    }
+    
+    /// allocate a group in the logical memory
+    pub fn group(&'_ self, mapping: &Mapping) -> Group<'_> {
+        self.allocator.group(&self.raw, mapping)
+    }
+    
+    /**
+        reset all slaves fixed addresses in the ethercat segment.
+        
+        this function will panic if there is instances of [Slave] alive
+    */
     pub async fn reset_addresses(&self) {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
         self.raw.bwr(registers::address::fixed, 0).await;
@@ -89,7 +105,8 @@ impl Master {
         self.raw.brd(registers::al::status).await.value.state()
 	}
 	/**
-		send an request for communication state change to all slaves
+		send an request for communication state change to all slaves.
+		
 		the change will be effective on every slave on this function return, however [Slave::expect] will need to be called in order to convert salve instances to their proper state
 	*/
 	pub async fn switch(&self, target: MixedState) {
@@ -114,7 +131,7 @@ impl Master {
 }
 
 
-/// iterator of available slaves in the segment, in topological order
+/// iterator of unused slaves in the segment, in topological order
 pub struct SlaveDiscovery<'a> {
     master: &'a Master,
     iter: Range<u16>,

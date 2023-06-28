@@ -110,7 +110,7 @@ impl<T: PduData> Copy for Sdo<T> {}
 
 
 /// SDO behaving like a list
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Eq, PartialEq)]
 pub struct SdoList<T> {
     /// index of the SDO to be considered as a list
     pub index: u16,
@@ -148,6 +148,11 @@ impl<T: PduData> SdoList<T> {
 }
 impl<T: PduData> From<u16> for SdoList<T> {
     fn from(index: u16) -> Self {Self::new(index)}
+}
+impl<T: PduData> fmt::Debug for SdoList<T> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "SdoList<{}> {{index: 0x{:x}, capacity: {}}}", core::any::type_name::<T>(), self.index, self.capacity)
+	}
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
 impl<T> Clone for SdoList<T> {
@@ -426,6 +431,18 @@ pub mod cia402 {
     /// This object shall indicate the electrical commutation angle for the space vector modulation. The value 16 shall be given in 360°/2 , whereby the electrical angle is used. Table 13 specifies the object description, and Table 14 specifies the entry description.
     pub const commutation_angle: Sdo<u16> = Sdo::complete(0x60ea);
     
+    /**
+        profile parameters used in [OperationMode::ProfilePosition] and [OperationMode::ProfileVelocity]
+        
+        ETG.6010 table 15
+    */
+    pub mod profile {
+        use super::*;
+        
+        pub const velocity: Sdo<i32> = Sdo::complete(0x6081);
+        pub const acceleration: Sdo<i32> = Sdo::complete(0x6083);
+    }
+    
     pub mod quick_stop {
         use super::*;
     
@@ -487,7 +504,7 @@ impl SyncChannel {
 }
 impl fmt::Debug for SyncChannel {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "SyncChannel {{index: 0x{:x}, capacity: {}}}", self.index, self.capacity)
+		write!(f, "SyncChannel {{index: 0x{:x}, direction: {:?}, capacity: {}}}", self.index, self.direction, self.capacity)
 	}
 }
 

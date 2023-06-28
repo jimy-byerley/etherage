@@ -79,10 +79,12 @@ const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1000, end: 0x1300};
 
 
 /// convenient object to manage slaves configurations and logical memory
-pub struct Allocator<'a> {
-    master: &'a RawMaster,
+pub struct Allocator {
+    internal: Mutex<AllocatorInternal>,
+}
+pub struct AllocatorInternal {
     slaves: HashMap<u16, Weak<ConfigSlave>>,
-    free: Mutex<BTreeSet<LogicalSlot>>,
+    free: BTreeSet<LogicalSlot>,
 }
 /// allocator slot in logical memory
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
@@ -90,33 +92,34 @@ struct LogicalSlot {
     size: u32,
     position: u32,
 }
-impl<'a> Allocator<'a> {
-    pub fn new(master: &'a RawMaster) -> Self { 
+impl Allocator {
+    pub fn new() -> Self { 
         let mut free = BTreeSet::new();
         free.insert(LogicalSlot {size: u32::MAX, position: 0});
-        Self {
-            master,
+        let internal = Mutex::new(AllocatorInternal {
             slaves: HashMap::new(),
-            free: Mutex::new(free),
-        }
+            free,
+        });
+        Self {internal}
     }
     /// allocate the memory area and the slaves for the given mapping.
     /// returning a [Group] for using that memory and communicate with the slaves
-    pub fn group(&mut self, mapping: &Mapping) -> Group<'_> {
-        // check that new mapping has not conflict with current config
-        assert!(self.compatible(&mapping));
+    pub fn group<'a>(&'a self, master: &'a RawMaster, mapping: &Mapping) -> Group<'a> {
         // compute mapping size
         let size = mapping.offset.borrow().clone();
+        
+        let mut internal = self.internal.lock().unwrap();
+        // check that new mapping has not conflict with current config
+        assert!(internal.compatible(&mapping));
         // reserve memory
         let slot;
         {
-            let mut free = self.free.lock().unwrap();
-            slot = free.range(LogicalSlot {size, position: 0} ..)
+            slot = internal.free.range(LogicalSlot {size, position: 0} ..)
                         .next().expect("no more logical memory")
                         .clone();
-            free.remove(&slot);
+            internal.free.remove(&slot);
             if slot.size > size {
-                free.insert(LogicalSlot {
+                internal.free.insert(LogicalSlot {
                     position: slot.position + size, 
                     size: slot.size - size,
                 });
@@ -126,18 +129,18 @@ impl<'a> Allocator<'a> {
         let mut slaves = HashMap::<u16, Arc<ConfigSlave>>::new();
         for (&k, slave) in mapping.config.slaves.borrow().iter() {
             slaves.insert(k, 
-                if let Some(value) = self.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
+                if let Some(value) = internal.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
                     // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()` 
                     {value}
                 else {
                     let new = Arc::new(slave.as_ref().clone());
-                    self.slaves.insert(k, Arc::downgrade(&new));
+                    internal.slaves.insert(k, Arc::downgrade(&new));
                     new
                 });
         }
         // create
         Group {
-            master: self.master,
+            master,
             allocator: self,
             allocated: slot.size,
             config: slaves,
@@ -150,6 +153,21 @@ impl<'a> Allocator<'a> {
     /// check that a given mapping is compatible with the already configured slaves in the allocator
     /// if true, a group can be initialized from the mapping
     pub fn compatible(&self, mapping: &Mapping) -> bool {
+        self.internal.lock().unwrap().compatible(mapping)
+    }
+    /// return the amount of allocated memory in the logical memory
+    pub fn allocated(&self) -> u32 {
+        self.internal.lock().unwrap().allocated()
+    }
+    /// return the amount of free (potentially fragmented) memory in the logical memory
+    pub fn free(&self) -> u32 {
+        self.internal.lock().unwrap().free()
+    }
+}
+impl AllocatorInternal {
+    /// check that a given mapping is compatible with the already configured slaves in the allocator
+    /// if true, a group can be initialized from the mapping
+    fn compatible(&self, mapping: &Mapping) -> bool {
         for (address, slave) in mapping.config.slaves.borrow().iter() {
             if let Some(alter) = self.slaves.get(address) {
                 if let Some(alter) = alter.upgrade() {
@@ -161,21 +179,22 @@ impl<'a> Allocator<'a> {
         true
     }
     /// return the amount of allocated memory in the logical memory
-    pub fn allocated(&self) -> u32 {
+    fn allocated(&self) -> u32 {
         u32::MAX - self.free()
     }
     /// return the amount of free (potentially fragmented) memory in the logical memory
-    pub fn free(&self) -> u32 {
-        self.free.lock().unwrap().iter()
-                .map(|s|  s.size)
-                .sum::<u32>()
+    fn free(&self) -> u32 {
+        self.free.iter()
+            .map(|s|  s.size)
+            .sum::<u32>()
     }
 }
-impl fmt::Debug for Allocator<'_> {
+impl fmt::Debug for Allocator {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let internal = self.internal.lock().unwrap();
         write!(f, "<Allocator with {} slaves using {} bytes>", 
-            self.slaves.len(), 
-            self.allocated(),
+            internal.slaves.len(), 
+            internal.allocated(),
             )
     }
 }
@@ -188,7 +207,7 @@ impl fmt::Debug for Allocator<'_> {
 */
 pub struct Group<'a> {
     master: &'a RawMaster,
-    allocator: &'a Allocator<'a>,
+    allocator: &'a Allocator,
     allocated: u32,
     
     /// configuration per slave
@@ -203,6 +222,9 @@ pub struct Group<'a> {
     write: Vec<u8>,
 }
 impl Group<'_> {
+    pub fn contains(&self, slave: u16) -> bool {
+        self.config.contains_key(&slave)
+    }
     /**
         write on the given slave the matching configuration from the mapping
     
@@ -313,7 +335,8 @@ impl Group<'_> {
 }
 impl Drop for Group<'_> {
     fn drop(&mut self) {
-        self.allocator.free.lock().unwrap().remove(&LogicalSlot {size: self.allocated, position: self.offset});
+        self.allocator.internal.lock().unwrap()
+            .free.remove(&LogicalSlot {size: self.allocated, position: self.offset});
     }
 }
 impl fmt::Debug for Group<'_> {

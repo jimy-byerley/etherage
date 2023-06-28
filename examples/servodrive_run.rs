@@ -23,7 +23,7 @@ async fn main() -> std::io::Result<()> {
         std::thread::spawn(move || loop {
             master.send();
     })};
-    std::thread::sleep(Duration::from_millis(500));
+    std::thread::sleep(std::time::Duration::from_millis(500));
     
     println!("create mapping");
     let config = mapping::Config::default();
@@ -33,19 +33,22 @@ async fn main() -> std::io::Result<()> {
         let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, capacity: 10 });
             let mut pdo              = channel.push(sdo::Pdo::with_capacity(0x1600, 10));
                 let controlword      = pdo.push(sdo::cia402::controlword);
-                let target_position  = pdo.push(sdo::cia402::target::position);
                 let target_mode      = pdo.push(sdo::cia402::target::mode);
+                let target_position  = pdo.push(sdo::cia402::target::position);
                 let _target_velocity = pdo.push(sdo::cia402::target::velocity);
+                let _target_torque = pdo.push(sdo::cia402::target::torque);
         let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, capacity: 10 });
             let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1a00, 10));
                 let statusword       = pdo.push(sdo::cia402::statusword);
                 let error            = pdo.push(sdo::cia402::error);
+                let _current_mode  = pdo.push(sdo::cia402::current::mode);
                 let current_position = pdo.push(sdo::cia402::current::position);
+                let _current_velocity = pdo.push(sdo::cia402::current::velocity);
                 let _current_torque  = pdo.push(sdo::cia402::current::torque);
     println!("done {:#?}", config);
     
-    let mut allocator = mapping::Allocator::new(&master);
-    let mut group = tokio::sync::Mutex::new(allocator.group(&mapping));
+    let mut allocator = mapping::Allocator::new();
+    let mut group = tokio::sync::Mutex::new(allocator.group(&master, &mapping));
     
     println!("group {:#?}", group);
     println!("fields {:#?}", (statusword, controlword));

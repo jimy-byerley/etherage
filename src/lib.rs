@@ -64,9 +64,9 @@ pub mod mapping;
 pub use crate::data::{PduData, Field, BitField};
 pub use crate::sdo::Sdo;
 pub use crate::socket::*;
-pub use crate::rawmaster::*;
-pub use crate::master::*;
-pub use crate::slave::*;
+pub use crate::rawmaster::{RawMaster, SlaveAddress};
+pub use crate::master::Master;
+pub use crate::slave::{Slave, CommunicationState};
 pub use crate::mapping::{Mapping, Group};
 
 

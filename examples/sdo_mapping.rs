@@ -39,8 +39,8 @@ async fn main() -> std::io::Result<()> {
                 let torque = pdo.push(Sdo::<i16>::complete(0x6077));
     println!("done {:#?}", config);
     
-    let mut allocator = mapping::Allocator::new(&master);
-    let mut group = allocator.group(&mapping);
+    let mut allocator = mapping::Allocator::new();
+    let mut group = allocator.group(&master, &mapping);
     
     println!("group {:#?}", group);
     println!("fields  {:#?}", (control, status, error, position));
