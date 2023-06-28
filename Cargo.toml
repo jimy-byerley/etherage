@@ -12,17 +12,17 @@ url = "https://github.com/jimy-byerley/etherage"
 resolver = "2"
 
 [dependencies]
-heapless = "0.7.16"
-log = "0.4.17"
-futures-concurrency = "7.2.1"
-packed_struct = { version = "0.10.0", default-features = false }
-tokio = { version = "1.21.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
+heapless = "^0.7.16"
+log = "^0.4.17"
+futures-concurrency = "^7.2.1"
+packed_struct = { version = "^0.10.0", default-features = false }
+tokio = { version = "^1.21.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
 bilge = { version="^0.1.4", git="https://github.com/hecatia-elegua/bilge"}
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2.134"
+libc = "^0.2.134"
 thread-priority = "0.13.1"
 
 [dev-dependencies]
-env_logger = "0.10.0"
-ctrlc = "3.2.3"
+env_logger = "^0.10.0"
+ctrlc = "^3.2.3"
