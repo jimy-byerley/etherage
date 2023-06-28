@@ -124,6 +124,7 @@ impl<'a> Slave<'a> {
 			let mut config = registers::AlControlRequest::default();
 			config.set_state(target.into());
 			config.set_ack(true);
+			config.set_request_id(true);
 			config
 		}).await.one();
 		
@@ -135,7 +136,10 @@ impl<'a> Slave<'a> {
 				if received == registers::AlError::NoError  {break}
 				panic!("error on state change: {:?}", received);
 			}
-			if received.state() == target.into()  {break}
+			println!("slave {:?} state {:?}", self.address, CommunicationState::try_from(received.state()).unwrap());
+			if received.state() == target.into()  {
+                break
+            }
 		}
 		self.state = target;
     }
@@ -146,6 +150,10 @@ impl<'a> Slave<'a> {
     */
     pub fn expect(&mut self, state: CommunicationState) {
         self.state = state;
+    }
+    /// expected state of the slave
+    pub fn expected(&self) -> CommunicationState {
+        self.state
     }
     
     /// get the current address used to communicate with the slave

@@ -58,7 +58,7 @@ use crate::{
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     data::{PduData, Field},
     sdo::{self, Sdo, SyncDirection},
-    slave::Slave,
+    slave::{Slave, CommunicationState},
     registers,
     };
 use core::{
@@ -228,7 +228,7 @@ impl Group<'_> {
     /**
         write on the given slave the matching configuration from the mapping
     
-        the slave is assumed to be in state [PreOperational](crate::CommunicationState::PreOperational), and can be switched to [SafeOperational](crate::CommunicationState::SafeOperational) after this step.
+        the slave is assumed to be in state [PreOperational](CommunicationState::PreOperational), and can be switched to [SafeOperational](crate::CommunicationState::SafeOperational) after this step.
     */
     pub async fn configure(&self, slave: &Slave<'_>)  {
         let master = unsafe{ slave.raw_master() };
@@ -238,24 +238,41 @@ impl Group<'_> {
             };
         let config = &self.config[&address];
         
+        assert_eq!(slave.expected(), CommunicationState::PreOperational);
+        
         // range of physical memory to be mapped
         let physical = SLAVE_PHYSICAL_MAPPABLE;
         
         let mut coe = slave.coe().await;
+        let priority = u2::new(1);
         
         // PDO mapping
         for pdo in config.pdos.values() {
-            // pdo size must be set to zero before assigning items
-            coe.sdo_write(&pdo.config.len(), u2::new(0), 0).await;
-            for (i, sdo) in pdo.sdos.iter().enumerate() {
-                // PDO mapping
-                coe.sdo_write(&pdo.config.item(i), u2::new(0), sdo::PdoEntry::new(
-                    sdo.field.len.try_into().expect("field too big for a subitem"),
-                    sdo.sub.unwrap(),
-                    sdo.index,
-                    )).await;
+            if pdo.config.fixed {
+                for (i, sdo) in pdo.sdos.iter().enumerate() {
+                    assert_eq!(
+                        coe.sdo_read(&pdo.config.item(i), priority).await, 
+                        sdo::PdoEntry::new(
+                            sdo.field.len.try_into().expect("field too big for a subitem"),
+                            sdo.sub.unwrap(),
+                            sdo.index,
+                            ), 
+                        "slave {} fixed pdo {}", address, pdo.config.item(i));
+                }
             }
-            coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await;
+            else {
+                // pdo size must be set to zero before assigning items
+                coe.sdo_write(&pdo.config.len(), priority, 0).await;
+                for (i, sdo) in pdo.sdos.iter().enumerate() {
+                    // PDO mapping
+                    coe.sdo_write(&pdo.config.item(i), priority, sdo::PdoEntry::new(
+                        sdo.field.len.try_into().expect("field too big for a subitem"),
+                        sdo.sub.unwrap(),
+                        sdo.index,
+                        )).await;
+                }
+                coe.sdo_write(&pdo.config.len(), priority, pdo.sdos.len() as u8).await;
+            }
         }
 
         // sync mapping
@@ -263,14 +280,14 @@ impl Group<'_> {
 
             let mut size = 0;
             // channel size must be set to zero before assigning items
-            coe.sdo_write(&channel.config.len(), u2::new(0), 0).await;
+            coe.sdo_write(&channel.config.len(), priority, 0).await;
             for (j, &pdo) in channel.pdos.iter().enumerate() {
-                coe.sdo_write(&channel.config.slot(j as u8), u2::new(0), pdo).await;
+                coe.sdo_write(&channel.config.slot(j as u8), priority, pdo).await;
                 size += config.pdos[&pdo].sdos.iter()
                             .map(|sdo| (sdo.field.len / 8) as u16)
                             .sum::<u16>();
             }
-            coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await;
+            coe.sdo_write(&channel.config.len(), priority, channel.pdos.len() as u8).await;
             
             // enable sync channel
             master.fpwr(address, channel.config.register(), {
