@@ -819,7 +819,7 @@ impl DistributedClock {
     pub fn new() -> Self{
         Self{
             received_time : [0;4] ,
-            localsystem_time : 0,
+            system_time : 0,
             receive_time_unit : 0,
             system_offset : 0,
             system_delay : 0,

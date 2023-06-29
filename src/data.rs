@@ -14,7 +14,7 @@ pub trait PduData: Sized {
 
     fn pack(&self, dst: &mut [u8]) -> PackingResult<()>;
     fn unpack(src: &[u8]) -> PackingResult<Self>;
-    
+
     fn packed_size() -> usize  {Self::Packed::LEN}
     fn packed_bitsize() -> usize {Self::Packed::LEN*8}
 }
@@ -33,8 +33,8 @@ pub type PackingResult<T> = Result<T, PackingError>;
 
 
 /// this trait is an equivalent to `packed_struct::ByteArray` but since rust doesn't actually support using generic consts in const expressions, we do not have choice
-pub trait Storage: AsRef<[u8]> + AsMut<[u8]> 
-//         + Index<Range<usize>, Output=[u8]> + IndexMut<Range<usize>, Output=[u8]> 
+pub trait Storage: AsRef<[u8]> + AsMut<[u8]>
+//         + Index<Range<usize>, Output=[u8]> + IndexMut<Range<usize>, Output=[u8]>
 //         + Index<usize, Output=u8> + IndexMut<usize, Output=u8>
 //             + Index<SliceIndex<[u8], Output=[u8]>, Output=[u8]> // + IndexMut<usize, Output=u8>
 {
@@ -47,7 +47,7 @@ impl<const N: usize> Storage for [u8; N] {
 }
 
 /** dtype identifiers associated to dtypes allowing to dynamically check the type of a [PduData] implementor
-	
+
 	It is only convering the common useful types and not all the possible implementors of [PduData]
 */
 #[derive(Copy, Clone, Debug)]
@@ -63,7 +63,7 @@ pub enum TypeId {
 impl<const N: usize> PduData for [u8; N] {
 	const ID: TypeId = TypeId::CUSTOM;
 	type Packed = Self;
-	
+
 	fn pack(&self, dst: &mut [u8]) -> PackingResult<()> {
         dst.copy_from_slice(self);
         Ok(())
@@ -78,15 +78,15 @@ impl<const N: usize> PduData for [u8; N] {
 impl PduData for bool {
 	const ID: TypeId = TypeId::BOOL;
 	type Packed = [u8; 1];
-	
+
 	fn pack(&self, dst: &mut [u8]) -> PackingResult<()>  {
-        if dst.len() < Self::Packed::LEN  
+        if dst.len() < Self::Packed::LEN
             {return Err(PackingError::BadSize(dst.len(), ""))}
         dst[0] = if *self {0b1} else {0b0};
         Ok(())
 	}
 	fn unpack(src: &[u8]) -> PackingResult<Self>  {
-        if src.len() < Self::Packed::LEN  
+        if src.len() < Self::Packed::LEN
             {return Err(PackingError::BadSize(src.len(), ""))}
 		Ok(src[0] & 0b1 == 0b1)
 	}
@@ -99,18 +99,18 @@ macro_rules! bilge_pdudata {
         // we cannot use Self.value for unknown reason
         // we cannot use $id::from(Self) for unknown reason
         // we cannot use $id::to_le_bytes because it is only implemented for byte exact integers
-        
+
         const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
         type Packed = [u8; ($id::BITS as usize + 7)/8];
-        
+
         fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
-            if dst.len() < Self::Packed::LEN  
+            if dst.len() < Self::Packed::LEN
                 {return Err(crate::data::PackingError::BadSize(dst.len(), "bilge struct needs exact size"))}
             dst[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
             Ok(())
         }
         fn unpack(src: &[u8]) -> crate::data::PackingResult<Self> {
-            if src.len() < Self::Packed::LEN  
+            if src.len() < Self::Packed::LEN
                 {return Err(crate::data::PackingError::BadSize(src.len(), "bilge struct needs exact size"))}
             let mut tmp = [0; core::mem::size_of::<Self>()];
             tmp[.. Self::Packed::LEN].copy_from_slice(&src[.. Self::Packed::LEN]);
@@ -125,7 +125,7 @@ macro_rules! packed_pdudata {
     ($t: ty) => { impl crate::data::PduData for $t {
         const ID: crate::data::TypeId = crate::data::TypeId::CUSTOM;
         type Packed = [u8; core::mem::size_of::<$t>()];
-        
+
         fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
             if dst.len() < Self::Packed::LEN
                 {return Err(crate::data::PackingError::BadSize(dst.len(), "not enough bytes for struct"))}
@@ -147,7 +147,7 @@ macro_rules! num_pdudata {
 	($t: ty, $id: ident) => { impl crate::data::PduData for $t {
 			const ID: crate::data::TypeId = crate::data::TypeId::$id;
             type Packed = [u8; core::mem::size_of::<$t>()];
-			
+
             fn pack(&self, dst: &mut [u8]) -> crate::data::PackingResult<()> {
 				dst.copy_from_slice(&self.to_le_bytes());
 				Ok(())
@@ -175,9 +175,9 @@ num_pdudata!(f64, F64);
 
 
 
-/** 
+/**
 	locate some data in a datagram by its byte position and length, which must be extracted to type `T` to be processed in rust
-	
+
 	It acts like a getter/setter of a value in a byte sequence. One can think of it as an offset to a data location because it does not actually point the data but only its offset in the byte sequence, it also contains its length to dynamically check memory bounds.
 */
 #[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
@@ -198,7 +198,7 @@ impl<T: PduData> Field<T>
 	pub const fn simple(byte: usize) -> Self {
         Self{extracted: PhantomData, byte, len: T::Packed::LEN}
 	}
-	
+
 	/// extract the value pointed by the field in the given byte array
 	pub fn get(&self, data: &[u8]) -> T       {
 		T::unpack(&data[self.byte..][..self.len])
@@ -215,9 +215,9 @@ impl<T: PduData> fmt::Debug for Field<T> {
 		write!(f, "Field{{0x{:x}, {}}}", self.byte, self.len)
 	}
 }
-/** 
+/**
 	locate some data in a datagram by its bit position and length, which must be extracted to type `T` to be processed in rust
-	
+
 	It acts like a getter/setter of a value in a byte sequence. One can think of it as an offset to a data location because it does not actually point the data but only its offset in the byte sequence, it also contains its length to dynamically check memory bounds.
 */
 #[derive(Default, Clone)]
@@ -249,7 +249,7 @@ impl<T: PduData> fmt::Debug for BitField<T> {
 /** helper to read/write sequencial data from/to a byte slice
 
     It is close to what [std::io::Cursor] is doing, but this struct allows reading forward without consuming the stream, and returns slices without copying the data. It is also meant to work with [PduData]
-    
+
     Depending on the mutability of the slice this struct is built on, different capabilities are provided.
 */
 pub struct Cursor<T> {
@@ -260,7 +260,7 @@ impl<T> Cursor<T> {
     /// create a new cursor starting at position zero in the given slice
     pub fn new(data: T) -> Self   {Self{position: 0, data}}
     /** current position in the read/write slice
-    
+
         bytes before this position are considered read or written, and bytes after are coming for use in next read/write calls
     */
     pub fn position(&self) -> usize   {self.position}

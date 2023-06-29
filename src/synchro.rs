@@ -1,10 +1,10 @@
 use crate::{
-    registers::{DistributedClock}, EthercatError, PduAnswer, RawMaster, Slave, SlaveAddr
+    registers::{DistributedClock}, EthercatError, PduAnswer, RawMaster, Slave, SlaveAddress
 };
 use chrono;
 use core::option::Option;
 use std::{vec::*};
-use tokio::{task, time::Duration};
+use tokio::{task, time::{Duration, self}};
 
 /// Distribution clock - Physical addr:
 /// - ReceiveTimePort0 :    0x0900 - 32bits
@@ -75,7 +75,7 @@ enum SyncType {
 #[derive(Debug, PartialEq)]
 struct SlaveInfo<'a> {
     slave_ref: &'a Slave<'a>,
-    index: usize,
+    index: u16,
     clock_range: bool,
     is_dc_supported: bool,
     is_desync : bool,
@@ -83,7 +83,7 @@ struct SlaveInfo<'a> {
 }
 
 impl<'a> SlaveInfo<'a> {
-    fn new(slv: &Slave<'a>, idx: usize) -> Self {
+    fn new(slv: &Slave<'a>, idx: u16) -> Self {
         Self {
             slave_ref: slv,
             index: idx,
@@ -97,19 +97,19 @@ impl<'a> SlaveInfo<'a> {
 
 #[derive(Debug)]
 struct SyncClock<'a> {
-    slave_ref: usize,
+    slave_ref: u16,
     command_type: ReferenceClock,
     clock_type: SyncType,
     timestamp_size: bool,
     auto_resync : bool,
     channel: u8,
     slaves: Vec<SlaveInfo<'a>>,
-    cycle_time: usize,
+    cycle_time: u64,
     master: &'a RawMaster,
 }
 
 impl<'a> SyncClock<'a> {
-    fn new(master: &RawMaster) -> Self {
+    pub fn new(master: &RawMaster) -> Self {
         Self {
             slave_ref: 0,
             command_type: ReferenceClock::ARMW,
@@ -125,12 +125,12 @@ impl<'a> SyncClock<'a> {
 
     /// Enable/Disable automatic resynchronisation. Use cycle time as execution period
     /// Once the automatic control is start, time cannot period cannot be changed (TODO: for the moment)
-    fn toggle_auto_resync(&mut self) -> bool {
+    pub fn toggle_auto_resync(&mut self) -> bool {
         self.auto_resync = !self.auto_resync;
 
         if self.auto_resync {
             let task = task::spawn(async {
-                let mut interval : time::interval(Duration::from_micros(self.cycle_time));
+                let mut interval: time::Interval = time::interval(Duration::from_micros(self.cycle_time));
                 while self.auto_resync {
                     self.survey_time_sync().await;
                     interval.tick().await;
@@ -143,7 +143,7 @@ impl<'a> SyncClock<'a> {
 
     /// Configure the periode used when automatic resynchronisation is enable
     /// - time: Time in microseconds between each synchronisation control (default value set to 1ms)
-    fn set_cycle_time(&mut self, time: usize) -> Result<(), ClockError> {
+    pub fn set_cycle_time(&mut self, time: u64) -> Result<(), ClockError> {
         if time < 20 {
             return Err(ClockError::TimeTooShort);
         }
@@ -154,20 +154,20 @@ impl<'a> SyncClock<'a> {
     /// Register on slave to this synchronisation instance
     /// - slv: Slave to register
     /// - index: Index of the slave in the group
-    fn slave_register(&mut self, slv: &Slave, idx: usize) {
+    pub fn slave_register(&mut self, slv: &Slave, idx: u16) {
         self.slaves.push(SlaveInfo::new(slv, idx));
         self.slaves.sort_by(|a, b| a.index.cmp(&b.index));
     }
 
     /// Register many slave to this synchronisation instance
     /// - slvs: Slaves to register into a slice. We assume that slaves are sort by croissant order
-    fn slaves_register(&mut self, slvs : &[Slave] ) {
-        let mut i : usize = match self.slaves.is_empty() > 0 {
+    pub fn slaves_register(&mut self, slvs : &[Slave] ) {
+        let mut i : usize = match self.slaves.is_empty() {
             false => self.slaves.len(),
             _ => 1
         };
         for slv in slvs {
-            self.slaves.push(SlaveInfo::new(slv, i));
+            self.slaves.push(SlaveInfo::new(slv,i as u16));
             i += 1;
         }
     }
@@ -194,9 +194,14 @@ impl<'a> SyncClock<'a> {
         }
 
         //Compute delay - begin from the last slave of the loop
-        let timeref: u64 = self.slaves[self.slave_ref].clock.receive_time_unit;
+        let timeref: u64 = self.slaves[usize::from(self.slave_ref)].clock.receive_time_unit;
         let mut prv_slave: Option<&SlaveInfo<'a>> = Option::None;
         for slv in self.slaves.iter_mut().rev() {
+            if slv.index < self.slave_ref {
+                // Ignore slave before the reference
+                continue;
+            }
+
             if prv_slave != Option::None {
                 if prv_slave.unwrap().clock.received_time[3] != 0 {
                     slv.clock.system_delay = ((slv.clock.received_time[1] - slv.clock.received_time[0])
@@ -213,7 +218,44 @@ impl<'a> SyncClock<'a> {
             prv_slave = Some(slv);
         }
 
-        //Send computation result to each slave delay
+        return Ok(());
+    }
+
+    /// Check clock synchronization for each slave
+    /// If one clock is divergent - send a sync request
+    async fn survey_time_sync(&mut self) {
+
+        let mut is_resync_needed = false;
+        for slv in self.slaves.iter_mut() {
+            let answer: PduAnswer<u32> = unsafe {self.master.fprd(slv.index, crate::registers::clock_diff) }.await;
+            if answer.answers != 0 {
+                return; //TODO throw error
+            }
+            unsafe {
+                slv.clock.system_difference = std::mem::transmute::<u32, crate::registers::TimeDifference>(answer.value); //TODO replace by PDU
+            };
+            let m_field = crate::BitField::<u32>::new(1, 31);
+            slv.is_desync = m_field.get(&answer.value.to_le_bytes()[0..]) > 1000;
+            if slv.is_desync {  is_resync_needed = true; }
+        }
+        if is_resync_needed {
+            self.resync();
+        }
+    }
+
+    /// Design a slave reference for distributed clock, compute delay and notify all the ethercat loop
+    /// Return an error:
+    ///     - In case of slave reference doesn't register in this DC instance
+    ///     - In case of command execution fail
+    pub async fn set_reference_slave(&mut self, slv_ref_index : u16) -> Result<(), EthercatError<&str>> {
+        if usize::from(slv_ref_index) > self.slaves.len() {
+            return Err(crate::EthercatError::Slave("Reference doesn't register in this DC instance")); }
+        self.slave_ref = slv_ref_index;
+
+        // Compute delay between slave (ordered by index)
+        self.compute_delay();
+
+        // Notify slave from delay and drift from reference slave
         for slv in self.slaves.iter() {
             let answer = self.master.write(slv.slave_ref.get_address(), crate::registers::clock, slv.clock.clone()).await;
             if answer.answers != 1 {
@@ -224,56 +266,5 @@ impl<'a> SyncClock<'a> {
         return Ok(());
     }
 
-    /// Check clock synchronization for each slave
-    /// If one clock is divergent - send a sync request
-    async fn survey_time_sync(&mut self) {
-
-        let mut is_resync_needed = false;
-        for slv in self.slaves.iter_mut() {
-            let answer = unsafe {self.master.fprd(slv.slave_ref.get_index(), register::clock_diff) }.await;
-            if answer.answers != 0 {
-                return; //TODO throw error
-            }
-            slv.clock.system_difference = answer.value;
-            slv.is_desync = slv.clock.system_difference.mean().value() > 1000;
-            if slv.is_desync {  is_resync_needed = true; }
-        }
-        if is_resync_needed {
-            self.resync();
-        }
-    }
-
-    fn set_reference_slave(&mut self, slv_ref_index : usize) {
-        self.slave_ref = slv_ref_index;
-
-        //For all slave, update reference slave and offset time
-        for slv in self.slaves.iter() {
-            let answer = unsafe {self.master.write(slv.slave_ref.get_address(), crate::registers::clock_delay, slv.slave_ref)}.await;
-            if answer.answers != 1 {
-                return Err(crate::EthercatError::Slave("Error on distributed clock delay synchronisation"));
-            }
-        }
-    }
-
-    fn resync(&self) {
-        for slv in self.slaves {
-            //if slv.slave_ref.is_dc_capable() {
-                //TODO replace this code with adapted register
-                //let delay: Field<u64> = Field::simple(slv.clock.system_difference);
-                //let time: [u8; 4] = [0u8; 4];
-                //delay.pack(time, slv.clock.system_delay);
-                //unsafe { self.master.write(slv.slave_ref.get_address(), offset, time) };
-            //}
-        }
-    }
-
-    /// Set the index of Slave used as clocked reference (must be the first with DC capabalities)
-    fn set_reference(&self, idx: usize) -> bool {
-        if self.slaves.len() > idx {
-            self.slave_ref = idx;
-            return true;
-        } else {
-            return false;
-        }
-    }
+    fn resync(&self) {}
 }
