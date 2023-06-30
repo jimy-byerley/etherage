@@ -21,8 +21,11 @@ use crate::{
     };
 
 
-/// maximum frame size, currently limited to the size tolerated by its header (content size coded with 11 bits)
-const MAX_ETHERCAT_FRAME: usize = 2050;
+/// maximum frame size, currently limited to the ethernet frame size
+// size tolerated by its header (content size coded with 11 bits)
+// const MAX_ETHERCAT_FRAME: usize = 2050;
+// size tolerated by ethernet encapsulation
+const MAX_ETHERCAT_FRAME: usize = 1500;
 /// minimum PDU size
 const MIN_PDU: usize = 60;
 /// maximum number of PDU in an ethercat frame
@@ -65,7 +68,7 @@ pub struct RawMaster {
 	received: Notify,
 	sendable: Condvar,
 	send: Condvar,
-	sent: Condvar,
+	sent: Notify,
 	
 	// communication state
     // states are locked using [std::sync::Mutex] since it is recommended by async-io
@@ -100,7 +103,7 @@ impl RawMaster {
             received: Notify::new(),
             sendable: Condvar::new(),
             send: Condvar::new(),
-            sent: Condvar::new(),
+            sent: Notify::new(),
             
             pdu_state: Mutex::new(PduState {
                 last_start: EthercatHeader::packed_size(),
@@ -257,17 +260,25 @@ impl RawMaster {
             let mut state = self.pdu_state.lock().unwrap();
             
             while state.free.is_empty() {
-                println!("no more token, waiting");
+                let notification = self.received.notified();
                 drop(state);
-                self.received.notified().await;
+                notification.await;
                 state = self.pdu_state.lock().unwrap();
             }
             
             // sending the buffer if necessary
-            while MAX_ETHERCAT_FRAME < state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size() {
-                println!("no more space, waiting");
+            while self.socket.max_frame() < state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size() {
+                assert!(self.socket.max_frame() > 
+                    EthercatHeader::packed_size() 
+                    + data.len() 
+                    + PduHeader::packed_size() 
+                    + PduFooter::packed_size(), "data too big for an ethercat frame");
+                self.sendable.notify_one();
                 self.send.notify_one();
-                state = self.sent.wait(state).unwrap();
+                let notification = self.sent.notified();
+                drop(state);
+                notification.await;
+                state = self.pdu_state.lock().unwrap();
             }
             
             // reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
@@ -331,8 +342,10 @@ impl RawMaster {
         };
         
         // waiting for the answer
-        while ! *ready { 
-            self.received.notified().await; 
+        loop { 
+            let notification = self.received.notified();
+            if *ready {break}
+            notification.await; 
         }
         
 		let state = self.pdu_state.lock().unwrap();
@@ -390,9 +403,10 @@ impl RawMaster {
 	}
 	/// this is the socket sending handler
 	pub fn send(&self) {
-        let state = self.pdu_state.lock().unwrap();
-        let state = self.sendable.wait(state).unwrap();
-        let mut state = self.send.wait_timeout(state, self.pdu_merge_time).unwrap().0;
+        let mut state = self.pdu_state.lock().unwrap();
+        if state.last_end == 0
+            {state = self.sendable.wait(state).unwrap();}
+        state = self.send.wait_timeout(state, self.pdu_merge_time).unwrap().0;
         
         // check header
         EthercatHeader::new(
@@ -407,7 +421,7 @@ impl RawMaster {
         // reset state
         state.last_end = 0;
         state.last_start = EthercatHeader::packed_size();
-        drop(state);
+        self.sent.notify_waiters();
 	}
 }
 

@@ -1,12 +1,12 @@
 
 use crate::{
     master::Master,
-	rawmaster::{RawMaster, SlaveAddress},
-	data::{PduData, Field},
-	mailbox::Mailbox,
-	can::Can,
-	registers,
-	};
+    rawmaster::{RawMaster, SlaveAddress},
+    data::{PduData, Field},
+    mailbox::Mailbox,
+    can::Can,
+    registers,
+    };
 use tokio::sync::{Mutex, MutexGuard};
 use core::ops::Range;
 use std::sync::Arc;
@@ -25,17 +25,17 @@ const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100}
 
 
 /**
-	This struct exposes the ethercat master functions addressing one slave.
-	
-	Its lifetime refers to the [Master] the slave answers to.
+    This struct exposes the ethercat master functions addressing one slave.
     
-	## Note
-	
-	At contrary to [RawMaster], this struct is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
-	The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
-	
-	## Example
-	
+    Its lifetime refers to the [Master] the slave answers to.
+    
+    ## Note
+    
+    At contrary to [RawMaster], this struct is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
+    The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
+    
+    ## Example
+    
     The following is a typical configuration sequence of a slave
     
     ```ignore
@@ -114,34 +114,68 @@ impl<'a> Slave<'a> {
     
     /// return the current state of the slave, it does not the current expected state for this slave
     pub async fn state(&self) -> CommunicationState {
-		self.master.read(self.address, registers::al::status).await.one()
+        self.master.read(self.address, registers::al::status).await.one()
             .state().try_into().unwrap()
-	}
+    }
     /// send a state change request to the slave, and return once the slave has switched
     pub async fn switch(&mut self, target: CommunicationState)  {
-		// send state switch request
-		self.master.write(self.address, registers::al::control, {
-			let mut config = registers::AlControlRequest::default();
-			config.set_state(target.into());
-			config.set_ack(true);
-			config.set_request_id(true);
-			config
-		}).await.one();
-		
-		// wait for state change, or error
-		loop {
-			let received = self.master.read(self.address, registers::al::response).await.one();
-			if received.error() {
-				let received = self.master.read(self.address, registers::al::error).await.one();
-				if received == registers::AlError::NoError  {break}
-				panic!("error on state change: {:?}", received);
-			}
-			println!("slave {:?} state {:?}", self.address, CommunicationState::try_from(received.state()).unwrap());
-			if received.state() == target.into()  {
+        // send state switch request
+        while self.master.write(self.address, registers::al::control, {
+                let mut config = registers::AlControlRequest::default();
+                config.set_state(target.into());
+                config.set_ack(true);
+                config.set_request_id(true);
+                config
+            }).await.answers != 1  {}
+        
+        // wait for state change, or error
+        loop {
+            let status = self.master.read(self.address, registers::al::response).await.one();
+            if status.error() {
+                let error = self.master.read(self.address, registers::al::error).await.one();
+                if error == registers::AlError::NoError  {break}
+                panic!("error on slave {:?} state change: {:?}", self.address, error);
+            }
+            print!("slave {:?} state {:?}  waiting {:?}     \r", 
+                self.address, 
+                CommunicationState::try_from(status.state()).unwrap(), 
+                target,
+                );
+            if status.state() == target.into()  {
                 break
             }
-		}
-		self.state = target;
+        }
+        self.state = target;
+
+// 		// send state switch request
+// 		'main: loop {
+//             self.master.write(self.address, registers::al::control, {
+//                     let mut config = registers::AlControlRequest::default();
+//                     config.set_state(target.into());
+//                     config.set_ack(true);
+//                     config.set_request_id(true);
+//                     config
+//                 }).await;
+// 		
+//             // wait for state change, or error
+//             for _ in 0 .. 20 {
+//                 let status = self.master.read(self.address, registers::al::response).await.one();
+//                 if status.error() {
+//                     let error = self.master.read(self.address, registers::al::error).await.one();
+//                     if error == registers::AlError::NoError  {break}
+//                     panic!("error on slave {:?} state change: {:?}", self.address, error);
+//                 }
+//                 println!("slave {:?} state {:?}  waiting {:?}", 
+//                     self.address, 
+//                     CommunicationState::try_from(status.state()).unwrap(), 
+//                     target,
+//                     );
+//                 if status.state() == target.into()  {
+//                     break 'main
+//                 }
+//             }
+//         }
+//         self.state = target;
     }
     /**
         set the expected state of the slave.
@@ -202,13 +236,13 @@ impl<'a> Slave<'a> {
             MAILBOX_BUFFER_READ,
             ).await;
         // switch SII owner to PDI, so mailbox can init
-		self.master.write(self.address, registers::sii::access, {
-			let mut config = registers::SiiAccess::default();
-			config.set_owner(registers::SiiOwner::Pdi);
-			config
+        self.master.write(self.address, registers::sii::access, {
+            let mut config = registers::SiiAccess::default();
+            config.set_owner(registers::SiiOwner::Pdi);
+            config
             }).await.one();
-		
-		self.coe = None;
+        
+        self.coe = None;
         self.mailbox = Some(Arc::new(Mutex::new(mailbox)));
     }
     

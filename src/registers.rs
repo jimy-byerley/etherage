@@ -104,13 +104,15 @@ pub mod al {
     pub const response: Field<AlControlResponse> = Field::simple(dls_user::r3.byte);
     pub const error: Field<AlError> = Field::simple(dls_user::r6.byte);
     pub const status: Field<AlStatus> = Field::simple(dls_user::r3.byte);
+    pub const pdi: Field<AlPdiControlType> = Field::simple(dls_user::r7.byte);
+    pub const sync_config: Field<AlSyncConfig> = Field::simple(dls_user::r8.byte);
 }
 
 
 
 /// ETG.1000.6 table 9
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
 pub struct AlControlRequest {
     /// requested state of communication
     pub state: AlMixedState,
@@ -124,7 +126,7 @@ data::bilge_pdudata!(AlControlRequest, u8);
 
 /// ETG.1000.6 table 10
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct AlControlResponse {
     /// formerly requested state of communication
     pub state: AlMixedState,
@@ -141,7 +143,7 @@ data::bilge_pdudata!(AlControlResponse, u8);
 
 /// ETG.1000.6 table 12
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct AlStatus {
     /// current state of communication
     pub state: AlMixedState,
@@ -346,6 +348,35 @@ pub enum AlError {
 }
 data::bilge_pdudata!(AlError, u16);
 
+/// ETG.1000.6 table 13
+#[bitsize(9)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct AlPdiControlType {
+    /// Type specific (see ETG.1000.3 DL information parameter)
+    pub pdi: u8,
+    /**
+        - false: AL Management will be done by an application Controller
+        - true: AL Management will be emulated (AL status follows directly AL control)
+    */
+    pub strict: bool,
+}
+data::bilge_pdudata!(AlPdiControlType, u9);
+
+/// ETG.1000.6 table 15
+#[bitsize(8)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct AlSyncConfig {
+    /// controller specific
+    pub signal_conditioning_sync0: u2,
+    pub enable_signal_sync0: bool,
+    pub enable_interrupt_sync0: bool,
+    
+    /// controller specific
+    pub signal_conditioning_sync1: u2,
+    pub enable_signal_sync1: bool,
+    pub enable_interrupt_sync1: bool,
+}
+data::bilge_pdudata!(AlSyncConfig, u8);
 
 
 /// ETG.1000.4 table 31
@@ -557,15 +588,16 @@ pub struct ExternalEvent {
 data::bilge_pdudata!(ExternalEvent, u16);
 
 /// A write to one counter will reset all counters of the group
+/// ETG.1000.4 table 40
 #[repr(packed)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PortsErrorCount {
 	pub port: [PortErrorCount; 4],
 }
 data::packed_pdudata!(PortsErrorCount);
 
 #[bitsize(16)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct PortErrorCount {
 	/// counts the occurrences of frame errors (including RX errors within frame)
 	pub frame: u8,
