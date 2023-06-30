@@ -95,7 +95,8 @@ pub mod sii {
 pub const fmmu: FMMU = FMMU {address: 0x0600, num: 16};
 pub const clock: Field<DistributedClock> = Field::simple(0x0900);
 pub const clock_latch: Field<u32> = Field::simple(0x0900);
-pub const clock_diff: Field<u32> = Field::simple(0x0932);
+pub const clock_diff: Field<u32> = Field::simple(0x092C);
+pub const clock_loop: Field<[u8;6]> = Field::simple(0x0930);
 
 /// AL (Application Layer) registers are controling the communication state of a slave
 pub mod al {
@@ -823,14 +824,14 @@ impl DistributedClock {
             receive_time_unit : 0,
             system_offset : 0,
             system_delay : 0,
-            system_difference : 0,
+            system_difference : TimeDifference { value: 0 },
             reserved : [0;3]
         }
     }
 }
 
 #[bitsize(32)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, PartialEq)]
 pub struct TimeDifference {
     /// Mean difference between local copy of System Time and received System Time values
     pub mean: u31,

@@ -1,24 +1,15 @@
 use crate::{
-    registers::{DistributedClock}, EthercatError, PduAnswer, RawMaster, Slave, SlaveAddress
+    registers::{DistributedClock}, EthercatError, PduAnswer, RawMaster, Slave
 };
 use chrono;
 use core::option::Option;
 use std::{vec::*};
 use tokio::{task, time::{Duration, self}};
 
-/// Distribution clock - Physical addr:
-/// - ReceiveTimePort0 :    0x0900 - 32bits
-/// - ReceiveTimePort1 :    0x0904 - 32bits
-/// - ReceiveTimePort2 :    0x0908 - 32bits
-/// - ReceiveTimePort3 :    0x090C - 32bits
-/// - SystemTime :          0x0910 - 64bits
-/// - ReceivingTimePU :     0x0918 - 64bits
-/// - ReceivingTimeOffset : 0x0920 - 64bits
-/// - ReceivingTimeDelay :  0x0928 - 32bits
-/// - ReceivingTimeDiff :   0x092C - 32bits
-/// - ReceivingTimeLoop0 :  0x0930 - 32bits
-/// - ReceivingTimeLoop1 :  0x0932 - 32bits
-/// - ReceivingTimeLoop2 :  0x0934 - 32bits
+/// Default frame count used to set static drift synchronization
+const frm_drift_default : usize = 15000;
+/// Default time (in µs) used to trigger system time synchronization
+const time_drift_default : usize = 1;
 
 /// Isochroneous PDI cloking struct
 struct Isochronous {
@@ -57,10 +48,10 @@ enum ClockError {
 }
 
 #[derive(Default, Debug, PartialEq)]
-enum ReferenceClock {
+enum DCCorrectionType {
     #[default]
-    ARMW,
-    FRMW,
+    Static,
+    Continuous,
 }
 
 #[derive(Default, Debug, PartialEq)]
@@ -80,6 +71,7 @@ struct SlaveInfo<'a> {
     is_dc_supported: bool,
     is_desync : bool,
     clock: DistributedClock,
+    loop_paramters : [u16;3]
 }
 
 impl<'a> SlaveInfo<'a> {
@@ -91,6 +83,7 @@ impl<'a> SlaveInfo<'a> {
             is_dc_supported: true,
             is_desync : false,
             clock: DistributedClock::new(),
+            loop_paramters : [0;3]
         }
     }
 }
@@ -98,57 +91,82 @@ impl<'a> SlaveInfo<'a> {
 #[derive(Debug)]
 struct SyncClock<'a> {
     slave_ref: u16,
-    command_type: ReferenceClock,
+    dc_correction_typ : DCCorrectionType,
     clock_type: SyncType,
     timestamp_size: bool,
-    auto_resync : bool,
+    is_active : bool,
     channel: u8,
     slaves: Vec<SlaveInfo<'a>>,
-    cycle_time: u64,
     master: &'a RawMaster,
+    cycle_time: usize,
+    frm_lim : usize,
 }
 
 impl<'a> SyncClock<'a> {
     pub fn new(master: &RawMaster) -> Self {
         Self {
             slave_ref: 0,
-            command_type: ReferenceClock::ARMW,
+            dc_correction_typ : DCCorrectionType::Continuous,
             clock_type: SyncType::None,
             timestamp_size: false,
-            auto_resync : false,
+            is_active : false,
             channel: 0,
-            cycle_time: 1000,
             slaves: Vec::new(),
             master,
+            frm_lim : frm_drift_default,
+            cycle_time: time_drift_default,
         }
     }
 
-    /// Enable/Disable automatic resynchronisation. Use cycle time as execution period
+    /// Enable/Disable dc synchronisation. Use cycle time as execution period
     /// Once the automatic control is start, time cannot period cannot be changed (TODO: for the moment)
-    pub fn toggle_auto_resync(&mut self) -> bool {
-        self.auto_resync = !self.auto_resync;
+    /// Start cyclic time correction only with conitnuous drift flag set
+    pub async fn start_sync (&mut self) {
+        self.is_active = !self.is_active;
 
-        if self.auto_resync {
-            let task = task::spawn(async {
-                let mut interval: time::Interval = time::interval(Duration::from_micros(self.cycle_time));
-                while self.auto_resync {
-                    self.survey_time_sync().await;
-                    interval.tick().await;
-                    }
-                });
+        //Static drif correction
+        for i in [0..self.frm_lim] {
+            self.sync();
         }
 
-        return self.auto_resync;
+        //Continuous drift correction
+        let mut interval: time::Interval = time::interval(Duration::from_micros(self.cycle_time as u64));
+        if self.is_active && self.dc_correction_typ == DCCorrectionType::Continuous {
+            while self.is_active {
+                interval.tick().await;
+                self.sync();
+            }
+        }
+    }
+
+    /// Return current limits used to trigger synchronisation
+    pub fn get_drift_lim(&self) -> (usize, usize){
+        return  (self.frm_lim, self.cycle_time);
     }
 
     /// Configure the periode used when automatic resynchronisation is enable
-    /// - time: Time in microseconds between each synchronisation control (default value set to 1ms)
-    pub fn set_cycle_time(&mut self, time: u64) -> Result<(), ClockError> {
-        if time < 20 {
-            return Err(ClockError::TimeTooShort);
+    /// Time in microseconds between each synchronisation control (default value set to 1ms)
+    /// Default value is set if time < 100 µs
+    /// Send "Unauthorized command" error if DC is active.
+    pub fn set_cycle_time(&mut self, time: usize) -> Result<(), ClockError> {
+        if self.is_active {
+            self.cycle_time = match time < 100 {
+                true => time_drift_default,
+                _ => time,
+            };
+            return Ok(());
         }
-        self.cycle_time = time;
-        return Ok(());
+        else { return Err(ClockError::UnauthorizedCommand); }
+    }
+
+    /// Set frames limits used to trigger a DC synchronization with drift and continueous clock
+    /// Minimum value set at 1000. If value too small, set default value (15000)
+    pub fn set_frame_limit(&mut self, lim : usize) {
+        if lim >= 1000 {
+            self.frm_lim = lim; }
+        else {
+            self.frm_lim = frm_drift_default;
+        }
     }
 
     /// Register on slave to this synchronisation instance
@@ -222,24 +240,18 @@ impl<'a> SyncClock<'a> {
     }
 
     /// Check clock synchronization for each slave
-    /// If one clock is divergent - send a sync request
+    /// If one clock is divergent
     async fn survey_time_sync(&mut self) {
 
-        let mut is_resync_needed = false;
+        let mut is_resync_needed: bool = false;
         for slv in self.slaves.iter_mut() {
             let answer: PduAnswer<u32> = unsafe {self.master.fprd(slv.index, crate::registers::clock_diff) }.await;
             if answer.answers != 0 {
                 return; //TODO throw error
             }
-            unsafe {
-                slv.clock.system_difference = std::mem::transmute::<u32, crate::registers::TimeDifference>(answer.value); //TODO replace by PDU
-            };
-            let m_field = crate::BitField::<u32>::new(1, 31);
-            slv.is_desync = m_field.get(&answer.value.to_le_bytes()[0..]) > 1000;
-            if slv.is_desync {  is_resync_needed = true; }
-        }
-        if is_resync_needed {
-            self.resync();
+            slv.clock.system_difference = crate::registers::TimeDifference { value: answer.value };
+            let buff: crate::registers::TimeDifference = slv.clock.system_difference;
+            slv.is_desync = u32::from(buff.mean().value()) > 1000;
         }
     }
 
@@ -266,5 +278,59 @@ impl<'a> SyncClock<'a> {
         return Ok(());
     }
 
-    fn resync(&self) {}
+    /// Set control loop parameter for the slave used in the current distributed clock instance.
+    /// Only parameter 1 and 3 are available in "Write" mode
+    /// This data in specific to the user implementation
+    /// - slv_idx: Index of the slave in ethercat loop
+    /// - param_1: Parameter 1
+    /// - param_3: Parameter 3
+    pub async fn set_loop_paramters(&mut self, slv_idx : u16, param_1 : u16, param_3 : u16) {
+        for slv in self.slaves.iter_mut() {
+            if slv_idx == slv.index {
+                slv.loop_paramters[0] = param_1;
+                slv.loop_paramters[2] = param_3;
+                let mut data : [u8;6] = [0;6];
+                data[0..2].copy_from_slice(&param_1.to_be_bytes()[0..]);
+                data[4..6].copy_from_slice(&param_3.to_be_bytes()[0..]);
+                if self.master.fpwr(slv.index, crate::registers::clock_loop, data).await.answers == 0u16{
+                    //Todo print error
+                }
+            }
+        }
+    }
+
+    // Get control loop parameter for the slave used in the current distributed clock instance.
+    // - slv_idx: Index of the slave in etrercat loop
+    pub fn get_loop_parameters(&self, slv_idx : u16) -> Option<[u16;3]> {
+        let mut res: Option<[u16;3]> = Option::None;
+        for slv in self.slaves.iter() {
+            if slv_idx == slv.index {
+                res = Some(slv.loop_paramters.clone());
+            }
+        }
+        return res;
+    }
+
+    async fn sync(&self) {
+        let answer: PduAnswer<u32> = unsafe {self.master.fprd(self.slave_ref, crate::registers::clock_latch).await };
+        if answer.answers != 0 {
+                //self.master.armw(self.slaves[self.slave_ref + 1], crate::registers::clock_latch, answer.value).await;
+        }
+    }
 }
+
+
+
+// Distribution clock - Physical addr:
+// - ReceiveTimePort0 :    0x0900 - 32bits
+// - ReceiveTimePort1 :    0x0904 - 32bits
+// - ReceiveTimePort2 :    0x0908 - 32bits
+// - ReceiveTimePort3 :    0x090C - 32bits
+// - SystemTime :          0x0910 - 64bits
+// - ReceivingTimePU :     0x0918 - 64bits
+// - ReceivingTimeOffset : 0x0920 - 64bits
+// - ReceivingTimeDelay :  0x0928 - 32bits
+// - ReceivingTimeDiff :   0x092C - 32bits
+// - ReceivingTimeLoop0 :  0x0930 - 32bits
+// - ReceivingTimeLoop1 :  0x0932 - 32bits
+// - ReceivingTimeLoop2 :  0x0934 - 32bits
