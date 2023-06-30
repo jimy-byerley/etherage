@@ -143,11 +143,17 @@ impl Allocator {
             master,
             allocator: self,
             allocated: slot.size,
-            config: slaves,
             offset: slot.position,
             size,
-            read: vec![0; size as usize],
-            write: vec![0; size as usize],
+            
+            config: slaves,
+            data: tokio::sync::Mutex::new(GroupData {
+                master,
+                offset: slot.position,
+                size,
+                read: vec![0; size as usize],
+                write: vec![0; size as usize],
+            }),
         }
     }
     /// check that a given mapping is compatible with the already configured slaves in the allocator
@@ -209,9 +215,15 @@ pub struct Group<'a> {
     master: &'a RawMaster,
     allocator: &'a Allocator,
     allocated: u32,
+    offset: u32,
+    size: u32,
     
     /// configuration per slave
     config: HashMap<u16, Arc<ConfigSlave>>,
+    data: tokio::sync::Mutex<GroupData<'a>>,
+}
+pub struct GroupData<'a> {
+    master: &'a RawMaster,
     /// byte offset of this data group in the logical memory
     offset: u32,
     /// byte size of this data group in the logical memory
@@ -221,7 +233,7 @@ pub struct Group<'a> {
     /// data duplex: data to write to slave
     write: Vec<u8>,
 }
-impl Group<'_> {
+impl<'a> Group<'a> {
     pub fn contains(&self, slave: u16) -> bool {
         self.config.contains_key(&slave)
     }
@@ -249,6 +261,7 @@ impl Group<'_> {
         // PDO mapping
         for pdo in config.pdos.values() {
             if pdo.config.fixed {
+                // check that current sdo values are the requested ones
                 for (i, sdo) in pdo.sdos.iter().enumerate() {
                     assert_eq!(
                         coe.sdo_read(&pdo.config.item(i), priority).await, 
@@ -261,6 +274,7 @@ impl Group<'_> {
                 }
             }
             else {
+                // TODO: send as a complete SDO rather than subitems
                 // pdo size must be set to zero before assigning items
                 coe.sdo_write(&pdo.config.len(), priority, 0).await;
                 for (i, sdo) in pdo.sdos.iter().enumerate() {
@@ -279,6 +293,7 @@ impl Group<'_> {
         for channel in config.channels.values() {
 
             let mut size = 0;
+            // TODO: send as a complete SDO rather than subitems
             // channel size must be set to zero before assigning items
             coe.sdo_write(&channel.config.len(), priority, 0).await;
             for (j, &pdo) in channel.pdos.iter().enumerate() {
@@ -324,6 +339,12 @@ impl Group<'_> {
                 }).await.one();
         }
     }
+    /// obtain exclusive access (mutex) to the data buffers
+    pub async fn data(&self) -> tokio::sync::MutexGuard<GroupData<'a>> {
+        self.data.lock().await
+    }
+}
+impl<'a> GroupData<'a> {
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: add a fallback implementation in case the slave does not support *RW commands
@@ -362,6 +383,8 @@ impl fmt::Debug for Group<'_> {
             self.offset, self.size, self.config.len())
     }
 }
+
+
 
 
 /// struct holding configuration informations for multiple slaves, that can be shared between multiple mappings
