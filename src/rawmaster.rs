@@ -16,8 +16,9 @@ use tokio::sync::Notify;
 use bilge::prelude::*;
 
 use crate::{
+    EthercatError, EthercatResult,
     socket::*,
-    data::{self, Field, PduData, Storage, Cursor},
+    data::{self, Field, PduData, Storage, Cursor, PackingResult},
     };
 
 
@@ -185,7 +186,7 @@ impl RawMaster {
         buffer.as_mut().fill(0);
         PduAnswer {
 			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
-			value: T::unpack(buffer.as_ref()).unwrap(),
+			data: buffer,
 			}
     }
 	/// maps to a PDU *WR command
@@ -200,7 +201,7 @@ impl RawMaster {
         data.pack(buffer.as_mut()).unwrap();
 		PduAnswer {
 			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
-			value: (),
+			data: [],
 			}
 	}
 	/// maps to a PDU *RW command
@@ -215,7 +216,7 @@ impl RawMaster {
         data.pack(buffer.as_mut()).unwrap();
         PduAnswer {
 			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
-			value: T::unpack(buffer.as_ref()).unwrap(),
+			data: buffer,
 			}
 	}
 	
@@ -340,40 +341,52 @@ impl RawMaster {
 	}
 	
 	/// extract a received frame of PDUs and buffer each for reception by an eventual `self.pdu()` future waiting for it.
-	fn pdu_receive(&self, state: &mut PduState, frame: &[u8]) {
+	fn pdu_receive(&self, state: &mut PduState, frame: &[u8]) -> EthercatResult<()> {
+        let _finisher = Finisher::new(|| self.received.notify_waiters());
         let mut frame = Cursor::new(frame);
         loop {
-            let header = frame.unpack::<PduHeader>().unwrap();
+            let header = frame.unpack::<PduHeader>()
+                            .map_err(|_| EthercatError::Protocol("unable to unpack PDU header, skiping all remaning PDUs in frame"))?;
             
             let token = usize::from(header.token());
-            assert!(token <= state.receive.len());
+            if token >= state.receive.len()
+                {return Err(EthercatError::Protocol("received inconsistent PDU token"))}
+            
             if let Some(mut storage) = state.receive[token].as_mut() {
-                let content = frame.read(usize::from(u16::from(header.len()))).unwrap();
+                let content = frame.read(usize::from(u16::from(header.len())))
+                    .map_err(|_|  EthercatError::Protocol("unable to unpack PDU size"))?;
                 
                 // copy the PDU content in the reception buffer
                 // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
                 storage.data.copy_from_slice(content);
-                let footer = frame.unpack::<PduFooter>().unwrap();
+                let footer = frame.unpack::<PduFooter>()
+                    .map_err(|_|  EthercatError::Protocol("unable to unpack PDU footer"))?;
 				storage.answers = footer.value; //footer.working_count();
 				storage.ready = true;
             }
             if ! header.next() {break}
-            if frame.remain().len() == 0 {todo!("raise frame error")}
+            if frame.remain().len() == 0 
+                {return Err(EthercatError::Protocol("inconsistent ethercat frame size: remaining unused data after PDUs"))}
         }
-        // the working count in the footer is useless for the master, mostly used by slaves
-        self.received.notify_waiters();
+        Ok(())
     }
 	
-	/// this is the socket reception handler
-	/// it receives and process one datagram, it may be called in loop with no particular timer since the sockets are assumed blocking
-	pub fn receive(&self) {
-        let mut receive = self.ethercat_receive.lock().unwrap();
-        let size = self.socket.receive(receive.deref_mut()).unwrap();
-        let frame = &receive[.. size];
+	/**
+        this is the socket reception handler
         
-        let header = EthercatHeader::unpack(frame).unwrap();
-        let content = &frame[EthercatHeader::packed_size() ..];
-        let content = &content[.. header.len().value() as usize];
+        it receives and process one datagram, it may be called in loop with no particular timer since the sockets are assumed blocking
+        
+        In case something goes wrong during PDUs unpacking, the PDUs successfully processed will be reported to their pending futures, the futures for PDU which caused the read to fail and all following PDUs in the frame will be left pending (since the data is corrupted, there is no way to determine which future should be aborted)
+    */
+	pub fn receive(&self) -> EthercatResult<()> {
+        let mut receive = self.ethercat_receive.lock().unwrap();
+        let size = self.socket.receive(receive.deref_mut())?;
+        let frame = Cursor::new(&receive[.. size]);
+        
+        let header = frame.unpack::<EthercatHeader>()?;
+        if frame.remain().len() < header.len().value() as usize
+            {return Err(EthercatError::Protocol("received frame header has inconsistent length"))}
+        let content = &frame.remain()[.. header.len().value() as usize];
         
         assert!(header.len().value() as usize <= content.len());
         // TODO check working count to detect possible refused requests
@@ -381,15 +394,16 @@ impl RawMaster {
             EthercatType::PDU => self.pdu_receive(
                                     self.pdu_state.lock().unwrap().deref_mut(), 
                                     content,
-                                    ),
+                                    )?,
             // what is this ?
             EthercatType::NetworkVariable => todo!(),
             // no mailbox frame shall transit to this master, ignore it or raise an error ?
             EthercatType::Mailbox => {},
         }
+        Ok(())
 	}
 	/// this is the socket sending handler
-	pub fn send(&self) {
+	pub fn send(&self) -> EthercatResult<()> {
         let state = self.pdu_state.lock().unwrap();
         let state = self.sendable.wait(state).unwrap();
         let mut state = self.send.wait_timeout(state, self.pdu_merge_time).unwrap().0;
@@ -403,11 +417,13 @@ impl RawMaster {
         // send
         // we are blocking the async machine until the send ends
         // we assume it is not a long operation to copy those data into the system buffer
-        self.socket.send(&state.send[.. state.last_end]).unwrap();
+        self.socket.send(&state.send[.. state.last_end])?;
         // reset state
         state.last_end = 0;
         state.last_start = EthercatHeader::packed_size();
         drop(state);
+        
+        Ok(())
 	}
 }
 
@@ -426,21 +442,38 @@ pub enum SlaveAddress {
 }
 
 /// container for a PDU command's answer
-pub struct PduAnswer<T> {
+pub struct PduAnswer<T: PduData> {
     /// number of slaves who executed the command
 	pub answers: u16,
 	/// received value (will be the same as the sent value if no slave executed the command)
-	pub value: T,
+	pub data: T::Packed,
 }
-impl<T> PduAnswer<T> {
+impl<T: PduData> PduAnswer<T> {
     /// extract the value only if exactly one slave answered
-    pub fn one(self) -> T {
+    pub fn one(self) -> EthercatResult<T> {
         self.exact(1)
     }
     /// extract the value only if the given amount of slaves answered
-    pub fn exact(self, n: u16) -> T {
-        assert_eq!(self.answers, n);
-        self.value
+    pub fn exact(self, n: u16) -> EthercatResult<T> {
+        if self.answers != n {
+            if self.answers == 0 
+                {return Err(EthercatError::Protocol("no slave answered"))}
+            else if self.answers < 0
+                {return Err(EthercatError::Protocol("to few slaves answered"))}
+            else if self.answers > 0
+                {return Err(EthercatError::Protocol("to much slaves answered"))}
+        }
+        Ok(self.value()?)
+    }
+    /// extract the value if any slave answered
+    pub fn any(self) -> EthercatResult<T> {
+        if self.answers == 0
+            {return Err(EthercatError::Protocol("no slave answered"))}
+        Ok(self.value()?)
+    }
+    /// extract the value, whatever it is and if slaves answered or not
+    pub fn value(self) -> PackingResult<T> {
+        T::unpack(self.data.as_ref())
     }
 }
 
@@ -562,7 +595,7 @@ pub enum PduCommand {
 }
 
 
-
+// callback that will be called on object drop
 struct Finisher<F: FnOnce()> {
     callback: Option<F>,
 }

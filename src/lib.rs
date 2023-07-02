@@ -34,9 +34,9 @@
     - [ ] distributed clock
         + [ ] static drift
         + [ ] dynamic drift
-	- convenience
-		+ [x] logical memory & slave group management tools
-		+ [x] mapping tools
+    - convenience
+        + [x] logical memory & slave group management tools
+        + [x] mapping tools
     - optimization features
         + [x] multiple PDUs per ethercat frame (speed up and compress transmissions)
         + [x] tasks for different slaves or for same slave are parallelized whenever possible
@@ -45,6 +45,7 @@
 */
 
 pub mod data;
+
 #[allow(non_upper_case_globals)] 
 #[allow(unused)]
 pub mod registers;
@@ -94,4 +95,29 @@ pub enum EthercatError<T> {
     ///
     /// these errors can generally not be fixed and the whole communication has to be restarted
     Protocol(&'static str),
+    
+    /// error is due to too much time elapsed, but does not compromise the communication
+    ///
+    /// these errors are generally contextual and the operation can be retried.
+    Timeout(&'static str),
+}
+
+type EthercatResult<T, E=()> = core::result::Result<T, EthercatError<E>>;
+
+
+impl<T> From<std::io::Error> for EthercatError<T> {
+    fn from(src: std::io::Error) -> Self {
+        EthercatError::Io(Arc::new(src))
+    }
+}
+
+use data::PackingError;
+impl<T> From<PackingError> for EthercatError<T> {
+    fn from(src: PackingError) -> Self {
+        EthercatError::Protocol(match src {
+            PackingError::BadSize(_, text) => text,
+            PackingError::BadAlignment(_, text) => text,
+            PackingError::InvalidValue(text) => text,
+        })
+    }
 }
