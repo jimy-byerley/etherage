@@ -102,7 +102,7 @@ pub enum EthercatError<T> {
     Timeout(&'static str),
 }
 
-type EthercatResult<T, E=()> = core::result::Result<T, EthercatError<E>>;
+pub type EthercatResult<T, E=()> = core::result::Result<T, EthercatError<E>>;
 
 
 impl<T> From<std::io::Error> for EthercatError<T> {
@@ -121,3 +121,13 @@ impl<T> From<PackingError> for EthercatError<T> {
         })
     }
 }
+// impl<E,F> From<EthercatError<F>> for EthercatError<E>
+// where E: From<F>
+// {
+//     fn from(src: EthercatError<F>) -> Self {
+//         match src {
+//             Self::Slave(value) => E::from(value),
+//             other => other,
+//         }
+//     }
+// }
