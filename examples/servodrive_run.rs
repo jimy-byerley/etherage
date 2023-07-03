@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    error::Error,
+    };
 use core::time::Duration;
 use futures_concurrency::future::Join;
 use etherage::{
@@ -11,19 +14,19 @@ use etherage::{
     };
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), Box<dyn Error>> {
     let master = Arc::new(RawMaster::new(EthernetSocket::new("eno1")?));
     {
         let master = master.clone();
         std::thread::spawn(move || loop {
-            master.receive();
+            master.receive().unwrap();
     })};
     {
         let master = master.clone();
         std::thread::spawn(move || loop {
-            master.send();
+            master.send().unwrap();
     })};
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(Duration::from_millis(100));
     
     println!("create mapping");
     let config = mapping::Config::default();
@@ -47,21 +50,21 @@ async fn main() -> std::io::Result<()> {
                 let _current_torque  = pdo.push(sdo::cia402::current::torque);
     println!("done {:#?}", config);
     
-    let mut allocator = mapping::Allocator::new();
+    let allocator = mapping::Allocator::new();
     let mut group = tokio::sync::Mutex::new(allocator.group(&master, &mapping));
     
     println!("group {:#?}", group);
     println!("fields {:#?}", (statusword, controlword));
     
     let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
-    slave.switch(CommunicationState::Init).await;
-    slave.set_address(1).await;
-    slave.init_mailbox().await;
+    slave.switch(CommunicationState::Init).await?;
+    slave.set_address(1).await?;
+    slave.init_mailbox().await?;
     slave.init_coe().await;
-    slave.switch(CommunicationState::PreOperational).await;
-    group.get_mut().configure(&slave).await;
-    slave.switch(CommunicationState::SafeOperational).await;
-    slave.switch(CommunicationState::Operational).await;
+    slave.switch(CommunicationState::PreOperational).await?;
+    group.get_mut().configure(&slave).await?;
+    slave.switch(CommunicationState::SafeOperational).await?;
+    slave.switch(CommunicationState::Operational).await?;
     
     
     let cycle = tokio::sync::Notify::new();

@@ -1,55 +1,58 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    error::Error,
+    };
 use core::time::Duration;
 use futures_concurrency::future::Join;
 use etherage::{
-    EthernetSocket, RawMaster, 
+    EthernetSocket, RawMaster,
     Sdo, SlaveAddress, Slave, CommunicationState,
     };
 use bilge::prelude::u2;
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), Box<dyn Error>> {
     let master = Arc::new(RawMaster::new(EthernetSocket::new("eno1")?));
     {
         let master = master.clone();
         std::thread::spawn(move || loop {
-            master.receive();
+            master.receive().unwrap();
     })};
     {
         let master = master.clone();
         std::thread::spawn(move || loop {
-            master.send();
+            master.send().unwrap();
     })};
-    std::thread::sleep(Duration::from_millis(500));
+    std::thread::sleep(Duration::from_millis(100));
     
     let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
-    slave.switch(CommunicationState::Init).await;
-    slave.set_address(1).await;
-    slave.init_mailbox().await;
+    slave.switch(CommunicationState::Init).await?;
+    slave.set_address(1).await?;
+    slave.init_mailbox().await?;
     slave.init_coe().await;
-    slave.switch(CommunicationState::PreOperational).await;
+    slave.switch(CommunicationState::PreOperational).await?;
     
     let sdo = Sdo::<u32>::complete(0x1c12);
     let priority = u2::new(1);
     
     // test read/write
-    let received = slave.coe().await.sdo_read(&sdo, priority).await;
-    slave.coe().await.sdo_write(&sdo, priority, received).await;
+    let received = slave.coe().await.sdo_read(&sdo, priority).await?;
+    slave.coe().await.sdo_write(&sdo, priority, received).await?;
     
     // test concurrent read/write
     (
         async {
             println!("begin");
-            let received = slave.coe().await.sdo_read(&sdo, priority).await;
+            let received = slave.coe().await.sdo_read(&sdo, priority).await.unwrap();
             println!("between");
-            slave.coe().await.sdo_write(&sdo, priority, received).await;
+            slave.coe().await.sdo_write(&sdo, priority, received).await.unwrap();
             println!("end");
         },
         async {
             println!("begin");
-            let received = slave.coe().await.sdo_read(&sdo, priority).await;
+            let received = slave.coe().await.sdo_read(&sdo, priority).await.unwrap();
             println!("between");
-            slave.coe().await.sdo_write(&sdo, priority, received).await;
+            slave.coe().await.sdo_write(&sdo, priority, received).await.unwrap();
             println!("end");
         },
     ).join().await;

@@ -16,10 +16,6 @@ use std::sync::Arc;
 const MAILBOX_MAX_SIZE: usize = registers::mailbox_buffers[0].len;
 /// maximum byte size of sdo data that can be expedited
 const EXPEDITED_MAX_SIZE: usize = 4;
-/// maximum byte size of an sdo data that can be put in a sdo request
-const SDO_REQUEST_MAX_SIZE: usize = registers::mailbox_buffers[0].len 
-                                        - <CoeHeader as PduData>::Packed::LEN 
-                                        - <SdoHeader as PduData>::Packed::LEN;
 /// maximum byte size of an sdo data that can be put in a sdo segment
 /// it is constrained by the mailbox buffer size on the slave
 const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
@@ -89,7 +85,6 @@ impl<'a> Can<'a> {
         let (header, frame) = Self::receive_sdo_response(
                 &mut mailbox,
                 &mut buffer, 
-                priority, 
                 SdoCommandResponse::Upload, 
                 sdo,
                 ).await?;
@@ -136,7 +131,7 @@ impl<'a> Can<'a> {
                             u3::from(SdoCommandRequest::UploadSegment),
                         )).unwrap();
                     frame.write(&[0; 7]).unwrap();
-                    mailbox.write(MailboxType::Can, priority, frame.finish()).await;
+                    mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
                 }
             
 				// receive segment
@@ -144,7 +139,6 @@ impl<'a> Can<'a> {
                     let (header, segment) = Self::receive_sdo_segment(
                             &mut mailbox, 
                             &mut buffer, 
-                            priority, 
                             SdoCommandResponse::UploadSegment, 
                             toggle,
                             ).await?;
@@ -201,7 +195,6 @@ impl<'a> Can<'a> {
             Self::receive_sdo_response(
                 &mut mailbox,
                 &mut buffer, 
-                priority, 
                 SdoCommandResponse::Download, 
                 sdo,
                 ).await?;
@@ -233,7 +226,6 @@ impl<'a> Can<'a> {
             Self::receive_sdo_response(
                 &mut mailbox,
                 &mut buffer, 
-                priority, 
                 SdoCommandResponse::Download, 
                 sdo,
                 ).await?;
@@ -260,7 +252,6 @@ impl<'a> Can<'a> {
                 Self::receive_sdo_segment(
                     &mut mailbox,
                     &mut buffer, 
-                    priority, 
                     SdoCommandResponse::DownloadSegment, 
                     toggle,
                     ).await?;
@@ -277,12 +268,11 @@ impl<'a> Can<'a> {
 	async fn receive_sdo_response<'b, T: PduData>(
         mailbox: &mut Mailbox<'_>,
         buffer: &'b mut [u8], 
-        priority: u2,
         expected: SdoCommandResponse,
         sdo: &Sdo<T>, 
         ) -> EthercatResult<(SdoHeader, &'b [u8]), CanError> 
     {
-        let mut frame = Cursor::new(mailbox.read(MailboxType::Can, priority, buffer).await?);
+        let mut frame = Cursor::new(mailbox.read(MailboxType::Can, buffer).await?);
         
         let check_header = |header: SdoHeader| {
             if header.index() != sdo.index        {return Err(Error::Protocol("slave answered about wrong item"))}
@@ -319,12 +309,11 @@ impl<'a> Can<'a> {
 	async fn receive_sdo_segment<'b>(
         mailbox: &mut Mailbox<'_>,
         buffer: &'b mut [u8], 
-        priority: u2,
         expected: SdoCommandResponse,
         toggle: bool, 
         ) -> EthercatResult<(SdoSegmentHeader, &'b [u8]), CanError> 
     {
-        let mut frame = Cursor::new(mailbox.read(MailboxType::Can, priority, buffer).await?);
+        let mut frame = Cursor::new(mailbox.read(MailboxType::Can, buffer).await?);
         
         match frame.unpack::<CoeHeader>()
             .map_err(|_|  Error::Protocol("unable to unpack COE frame header"))?
@@ -575,7 +564,10 @@ impl SdoAbortCode {
     pub fn protocol_related(self) -> bool {u32::from(self) >> 24 == 0x05}
 }
 
+/// error type returned by the CoE functions
+type Error = EthercatError<CanError>;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum CanError {
     Mailbox(MailboxError),
     Sdo(SdoAbortCode),
@@ -587,5 +579,8 @@ impl From<MailboxError> for CanError {
 impl From<EthercatError<MailboxError>> for EthercatError<CanError> {
     fn from(src: EthercatError<MailboxError>) -> Self {src.into()}
 }
+impl From<EthercatError<()>> for EthercatError<CanError> {
+    fn from(src: EthercatError<()>) -> Self {src.upgrade()}
+}
 
-type Error = EthercatError<CanError>;
+

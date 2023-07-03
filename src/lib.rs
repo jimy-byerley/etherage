@@ -88,7 +88,7 @@ pub enum EthercatError<T> {
     
     /// error reported by the master
     ///
-    /// these errors can generally be handled and fixed by retrying the operation or using the master differently
+    /// these errors can generally be handled and fixed by retrying the operation or using the master differently when the issue is in the user code
     Master(&'static str),
     
     /// error detected by the master in the ethercat communication
@@ -103,6 +103,15 @@ pub enum EthercatError<T> {
 }
 
 pub type EthercatResult<T=(), E=()> = core::result::Result<T, EthercatError<E>>;
+
+
+use core::fmt;
+impl<T: fmt::Debug> fmt::Display for EthercatError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as fmt::Debug>::fmt(self, f)
+    }
+}
+impl<T: fmt::Debug> std::error::Error for EthercatError<T> {}
 
 
 impl<T> From<std::io::Error> for EthercatError<T> {

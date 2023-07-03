@@ -59,7 +59,9 @@ use crate::{
     data::{PduData, Field},
     sdo::{self, Sdo, SyncDirection},
     slave::Slave,
+    can::CanError,
     registers,
+    EthercatResult,
     };
 use core::{
     fmt,
@@ -230,7 +232,7 @@ impl Group<'_> {
     
         the slave is assumed to be in state [PreOperational](crate::CommunicationState::PreOperational), and can be switched to [SafeOperational](crate::CommunicationState::SafeOperational) after this step.
     */
-    pub async fn configure(&self, slave: &Slave<'_>)  {
+    pub async fn configure(&self, slave: &Slave<'_>) -> EthercatResult<(), CanError> {
         let master = unsafe{ slave.raw_master() };
         let address = match slave.address() {
             SlaveAddress::Fixed(a) => a,
@@ -246,16 +248,16 @@ impl Group<'_> {
         // PDO mapping
         for pdo in config.pdos.values() {
             // pdo size must be set to zero before assigning items
-            coe.sdo_write(&pdo.config.len(), u2::new(0), 0).await;
+            coe.sdo_write(&pdo.config.len(), u2::new(0), 0).await?;
             for (i, sdo) in pdo.sdos.iter().enumerate() {
                 // PDO mapping
                 coe.sdo_write(&pdo.config.item(i), u2::new(0), sdo::PdoEntry::new(
                     sdo.field.len.try_into().expect("field too big for a subitem"),
                     sdo.sub.unwrap(),
                     sdo.index,
-                    )).await;
+                    )).await?;
             }
-            coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await;
+            coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await?;
         }
 
         // sync mapping
@@ -263,14 +265,14 @@ impl Group<'_> {
 
             let mut size = 0;
             // channel size must be set to zero before assigning items
-            coe.sdo_write(&channel.config.len(), u2::new(0), 0).await;
+            coe.sdo_write(&channel.config.len(), u2::new(0), 0).await?;
             for (j, &pdo) in channel.pdos.iter().enumerate() {
-                coe.sdo_write(&channel.config.slot(j as u8), u2::new(0), pdo).await;
+                coe.sdo_write(&channel.config.slot(j as u8), u2::new(0), pdo).await?;
                 size += config.pdos[&pdo].sdos.iter()
                             .map(|sdo| (sdo.field.len / 8) as u16)
                             .sum::<u16>();
             }
-            coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await;
+            coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await?;
             
             // enable sync channel
             master.fpwr(address, channel.config.register(), {
@@ -283,7 +285,7 @@ impl Group<'_> {
                 config.set_watchdog(channel.config.direction == registers::SyncDirection::Write);
                 config.set_enable(true);
                 config
-                }).await.one();
+                }).await.one()?;
         }
         
         // FMMU mapping
@@ -304,8 +306,10 @@ impl Group<'_> {
                 config.set_write(entry.direction == SyncDirection::Write);
                 config.set_enable(true);
                 config
-                }).await.one();
+                }).await.one()?;
         }
+        
+        Ok(())
     }
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {

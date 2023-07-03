@@ -458,9 +458,9 @@ impl<T: PduData> PduAnswer<T> {
         if self.answers != n {
             if self.answers == 0 
                 {return Err(EthercatError::Protocol("no slave answered"))}
-            else if self.answers < 0
+            else if self.answers < n
                 {return Err(EthercatError::Protocol("to few slaves answered"))}
-            else if self.answers > 0
+            else if self.answers > n
                 {return Err(EthercatError::Protocol("to much slaves answered"))}
         }
         Ok(self.value()?)

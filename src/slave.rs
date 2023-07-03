@@ -127,7 +127,7 @@ impl<'a> Slave<'a> {
 			config.set_state(target.into());
 			config.set_ack(true);
 			config
-		}).await.one();
+		}).await.one()?;
 		
 		// wait for state change, or error
 		loop {

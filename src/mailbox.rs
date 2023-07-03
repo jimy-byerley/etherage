@@ -103,7 +103,7 @@ impl<'b> Mailbox<'b> {
         
         - 0 is lowest priority, 3 is highest
     */
-	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> EthercatResult<&'a [u8], MailboxError> {
+	pub async fn read<'a>(&mut self, ty: MailboxType, data: &'a mut [u8]) -> EthercatResult<&'a [u8], MailboxError> {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         
@@ -187,7 +187,7 @@ impl<'b> Mailbox<'b> {
 		loop {
             let state = self.master.fprd(self.slave, mailbox_control).await;
             if state.answers == 1 {
-                if state.value()?.mailbox_full()  {break}
+                if ! state.value()?.mailbox_full()  {break}
             }
         }
         // write data
