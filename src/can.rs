@@ -94,17 +94,17 @@ impl<'a> Can<'a> {
                 sdo,
                 ).await?;
         if ! header.sized()
-            {return Err(EthercatError::Protocol("got SDO response without data size"))}
+            {return Err(Error::Protocol("got SDO response without data size"))}
         
         
         if header.expedited() {
             // expedited transfer
             let total = EXPEDITED_MAX_SIZE - u8::from(header.size()) as usize;
             if total > data.len() 
-                {return Err(EthercatError::Master("data buffer is too small for requested SDO"))}
+                {return Err(Error::Master("data buffer is too small for requested SDO"))}
             data[.. total].copy_from_slice(Cursor::new(frame)
                 .read(total)
-                .map_err(|_| EthercatError::Protocol("inconsistent expedited response data size"))?
+                .map_err(|_| Error::Protocol("inconsistent expedited response data size"))?
                 );
             Ok(&mut data[.. total])
         }
@@ -112,15 +112,15 @@ impl<'a> Can<'a> {
             // normal transfer, eventually segmented
             let mut frame = Cursor::new(frame);
             let total = frame.unpack::<u32>()
-                .map_err(|_| EthercatError::Protocol("unable unpack sdo size from SDO response"))?
+                .map_err(|_| Error::Protocol("unable unpack sdo size from SDO response"))?
                 .try_into().expect("SDO is too big for master memory");
             if total > data.len()
-                {return Err(EthercatError::Master("read buffer is too small for requested SDO"))}
+                {return Err(Error::Master("read buffer is too small for requested SDO"))}
             
             let mut received = Cursor::new(&mut data.as_mut()[.. total]);
             let mut toggle = false;
             received.write(frame.remain())
-                .map_err(|_| EthercatError::Protocol("received more data than declared from SDO"))?;
+                .map_err(|_| Error::Protocol("received more data than declared from SDO"))?;
             
             // receive more data from segments
             // TODO check for possible SDO error
@@ -150,7 +150,7 @@ impl<'a> Can<'a> {
                             ).await?;
                     let segment = &segment[.. received.remain().len()];
                     received.write(segment)
-                        .map_err(|_| EthercatError::Protocol("received more data than declared from SDO"))?;
+                        .map_err(|_| Error::Protocol("received more data than declared from SDO"))?;
                     
 					if ! header.more () {break}
                 }
@@ -170,7 +170,7 @@ impl<'a> Can<'a> {
         let mut packed = T::Packed::uninit();
         data.pack(packed.as_mut())
             .expect("unable to pack data for sending");
-        self.sdo_write_slice(&sdo.downcast(), priority, packed.as_ref()).await?
+        self.sdo_write_slice(&sdo.downcast(), priority, packed.as_ref()).await
 	}
 	pub async fn sdo_write_slice(&mut self, sdo: &Sdo, priority: u2, data: &[u8]) 
         -> EthercatResult<(), CanError>  
@@ -194,7 +194,7 @@ impl<'a> Can<'a> {
                         )).unwrap();
                 frame.write(data).unwrap();
                 frame.write(&[0; 4][data.len() ..]).unwrap();
-                mailbox.write(MailboxType::Can, priority, frame.finish()).await;
+                mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
             }
             
             // receive acknowledge
@@ -204,7 +204,7 @@ impl<'a> Can<'a> {
                 priority, 
                 SdoCommandResponse::Download, 
                 sdo,
-                ).await.unwrap();
+                ).await?;
 		}
 		else {
 			// normal transfer, eventually segmented
@@ -226,7 +226,7 @@ impl<'a> Can<'a> {
                 frame.pack(&(data.remain().len() as u32)).unwrap();
                 let segment = data.remain().len().min(SDO_SEGMENT_MAX_SIZE);
                 frame.write(data.read(segment).unwrap()).unwrap();
-                mailbox.write(MailboxType::Can, priority, frame.finish()).await;
+                mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
             }
 			
             // receive acknowledge
@@ -236,7 +236,7 @@ impl<'a> Can<'a> {
                 priority, 
                 SdoCommandResponse::Download, 
                 sdo,
-                ).await.unwrap();
+                ).await?;
             
             // send many segments for the rest of the data, aknowledge each time
             let mut toggle = false;
@@ -253,7 +253,7 @@ impl<'a> Can<'a> {
                             u3::from(SdoCommandRequest::DownloadSegment),
                         )).unwrap();
                     frame.write(data.read(segment).unwrap()).unwrap();
-                    mailbox.write(MailboxType::Can, priority, frame.finish()).await;
+                    mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
                 }
                 
                 // receive aknowledge
@@ -263,10 +263,11 @@ impl<'a> Can<'a> {
                     priority, 
                     SdoCommandResponse::DownloadSegment, 
                     toggle,
-                    ).await.unwrap();
+                    ).await?;
                 toggle = !toggle;
             }
 		}
+        Ok(())
 		
         // TODO: error propagation instead of asserts
         // TODO send SdoCommand::Abort in case any error
@@ -279,34 +280,39 @@ impl<'a> Can<'a> {
         priority: u2,
         expected: SdoCommandResponse,
         sdo: &Sdo<T>, 
-        ) -> Result<(SdoHeader, &'b [u8]), EthercatError<SdoAbortCode>> 
+        ) -> EthercatResult<(SdoHeader, &'b [u8]), CanError> 
     {
-        let mut frame = Cursor::new(mailbox.read(MailboxType::Can, priority, buffer).await);
+        let mut frame = Cursor::new(mailbox.read(MailboxType::Can, priority, buffer).await?);
         
         let check_header = |header: SdoHeader| {
-            if header.index() != sdo.index        {return Err(EthercatError::Protocol("slave answered about wrong item"))}
-            if header.sub() != sdo.sub.unwrap()   {return Err(EthercatError::Protocol("slave answered about wrong subitem"))}
+            if header.index() != sdo.index        {return Err(Error::Protocol("slave answered about wrong item"))}
+            if header.sub() != sdo.sub.unwrap()   {return Err(Error::Protocol("slave answered about wrong subitem"))}
             Ok(())
         };
         
-        match frame.unpack::<CoeHeader>().unwrap().service() {
+        match frame.unpack::<CoeHeader>()
+            .map_err(|_| Error::Protocol("unable to unpack COE frame header"))?
+            .service() 
+        {
             CanService::SdoResponse => {
-                let header = frame.unpack::<SdoHeader>().unwrap();
-                if SdoCommandResponse::try_from(header.command()).unwrap()  != expected
-                    {return Err(EthercatError::Protocol("slave answered with wrong operation"))}
+                let header = frame.unpack::<SdoHeader>()
+                    .map_err(|_| Error::Protocol("unable to unpack SDO response header"))?;
+                if SdoCommandResponse::try_from(header.command()) != Ok(expected)
+                    {return Err(Error::Protocol("slave answered with wrong operation"))}
                 check_header(header)?;
                 Ok((header, frame.remain()))
                 },
             CanService::SdoRequest => {
-                let header = frame.unpack::<SdoHeader>().unwrap();
-                if SdoCommandRequest::try_from(header.command()).unwrap()  != SdoCommandRequest::Abort
-                    {return Err(EthercatError::Protocol("slave answered a COE request"))}
+                let header = frame.unpack::<SdoHeader>()
+                    .map_err(|_| Error::Protocol("unable to unpack SDO request header"))?;
+                if SdoCommandRequest::try_from(header.command()) != Ok(SdoCommandRequest::Abort)
+                    {return Err(Error::Protocol("slave answered a COE request"))}
                 check_header(header)?;
-                Err(EthercatError::Slave(frame.unpack::<SdoAbortCode>().unwrap()))
+                let error = frame.unpack::<SdoAbortCode>()
+                        .map_err(|_| Error::Protocol("unable to unpack SDO error code"))?;
+                Err(Error::Slave(CanError::Sdo(error)))
                 },
-            _ => {
-                return Err(EthercatError::Protocol("unexpected COE service during SDO operation"))
-            },
+            _ => {return Err(Error::Protocol("unexpected COE service during SDO operation"))},
         }
 	}
 	
@@ -316,28 +322,34 @@ impl<'a> Can<'a> {
         priority: u2,
         expected: SdoCommandResponse,
         toggle: bool, 
-        ) -> EthercatResult<(SdoSegmentHeader, &'b [u8]), SdoAbortCode> 
+        ) -> EthercatResult<(SdoSegmentHeader, &'b [u8]), CanError> 
     {
-        let mut frame = Cursor::new(mailbox.read(MailboxType::Can, priority, buffer).await);
+        let mut frame = Cursor::new(mailbox.read(MailboxType::Can, priority, buffer).await?);
         
-        match frame.unpack::<CoeHeader>().unwrap().service() {
+        match frame.unpack::<CoeHeader>()
+            .map_err(|_|  Error::Protocol("unable to unpack COE frame header"))?
+            .service() 
+        {
             CanService::SdoResponse => {
-                let header = frame.unpack::<SdoSegmentHeader>().unwrap();
-                if SdoCommandResponse::try_from(header.command()).unwrap()  != expected
-                    {return Err(EthercatError::Protocol("slave answered with a COE request"))}
-                if header.toggle() != toggle   {return Err(EthercatError::Protocol("bad toggle bit in segment received"))}
+                let header = frame.unpack::<SdoSegmentHeader>()
+                    .map_err(|_|  Error::Protocol("unable to unpack segment response header"))?;
+                if SdoCommandResponse::try_from(header.command()) != Ok(expected)
+                    {return Err(Error::Protocol("slave answered with a COE request"))}
+                if header.toggle() != toggle   
+                    {return Err(Error::Protocol("bad toggle bit in segment received"))}
                 
                 Ok((header, frame.remain()))
                 },
             CanService::SdoRequest => {
-                let header = frame.unpack::<SdoHeader>().unwrap();
-                if SdoCommandRequest::try_from(header.command()).unwrap()  != SdoCommandRequest::Abort
-                    {return Err(EthercatError::Protocol("slave answered a COE request"))}
-                Err(EthercatError::Slave(frame.unpack::<SdoAbortCode>().unwrap()))
+                let header = frame.unpack::<SdoHeader>()
+                    .map_err(|_|  Error::Protocol("unable to unpack request header"))?;
+                if SdoCommandRequest::try_from(header.command()) != Ok(SdoCommandRequest::Abort)
+                    {return Err(Error::Protocol("slave answered a COE request"))}
+                let error = frame.unpack::<SdoAbortCode>()
+                        .map_err(|_| Error::Protocol("unable to unpack SDO error code"))?;
+                Err(Error::Slave(CanError::Sdo(error)))
                 },
-            _ => {
-                return Err(EthercatError::Protocol("unexpected COE service during SDO operation"))
-            },
+            _ => {return Err(Error::Protocol("unexpected COE service during SDO segment operation"))},
         }
 	}
 	
@@ -572,3 +584,8 @@ pub enum CanError {
 impl From<MailboxError> for CanError {
     fn from(src: MailboxError) -> Self {CanError::Mailbox(src)}
 }
+impl From<EthercatError<MailboxError>> for EthercatError<CanError> {
+    fn from(src: EthercatError<MailboxError>) -> Self {src.into()}
+}
+
+type Error = EthercatError<CanError>;

@@ -102,7 +102,7 @@ impl Master {
     
 	/// retreive a structure representing the state of all slaves in the segment
 	pub async fn states(&self) -> MixedState {
-        self.raw.brd(registers::al::status).await.value.state()
+        self.raw.brd(registers::al::status).await.value().unwrap().state()
 	}
 	/**
 		send an request for communication state change to all slaves.
@@ -146,7 +146,7 @@ impl<'a> SlaveDiscovery<'a> {
     /// next method lile in an iterator, except this method is async
     pub async fn next(&mut self) -> Option<Slave<'a>> {
         while let Some(address) = self.iter.next() {
-            if let Some(slave) = Slave::new(&self.master, SlaveAddress::AutoIncremented(address)).await
+            if let Ok(slave) = Slave::new(&self.master, SlaveAddress::AutoIncremented(address)).await
                 {return Some(slave)}
         }
         None

@@ -381,7 +381,7 @@ impl RawMaster {
 	pub fn receive(&self) -> EthercatResult<()> {
         let mut receive = self.ethercat_receive.lock().unwrap();
         let size = self.socket.receive(receive.deref_mut())?;
-        let frame = Cursor::new(&receive[.. size]);
+        let mut frame = Cursor::new(&receive[.. size]);
         
         let header = frame.unpack::<EthercatHeader>()?;
         if frame.remain().len() < header.len().value() as usize

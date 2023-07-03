@@ -102,7 +102,7 @@ pub enum EthercatError<T> {
     Timeout(&'static str),
 }
 
-pub type EthercatResult<T, E=()> = core::result::Result<T, EthercatError<E>>;
+pub type EthercatResult<T=(), E=()> = core::result::Result<T, EthercatError<E>>;
 
 
 impl<T> From<std::io::Error> for EthercatError<T> {
@@ -121,13 +121,27 @@ impl<T> From<PackingError> for EthercatError<T> {
         })
     }
 }
-// impl<E,F> From<EthercatError<F>> for EthercatError<E>
-// where E: From<F>
-// {
-//     fn from(src: EthercatError<F>) -> Self {
-//         match src {
-//             Self::Slave(value) => E::from(value),
-//             other => other,
-//         }
-//     }
-// }
+
+// because rust doesn't allow specialization and already implements `From<T> for T`, we cannot write smart conversions for generic EthercatError<T>, so these are manual conversion methods
+impl<E> EthercatError<E> {
+    fn into<F>(self) -> EthercatError<F>
+    where F: From<E> {
+        self.map(|e| F::from(e))
+    }
+    fn map<F,T>(self, callback: F) -> EthercatError<T>
+    where F: Fn(E) -> T
+    {
+        match self {
+            EthercatError::Slave(value) => EthercatError::Slave(callback(value)),
+            EthercatError::Io(e) => EthercatError::Io(e),
+            EthercatError::Master(message) => EthercatError::Master(message),
+            EthercatError::Protocol(message) => EthercatError::Protocol(message),
+            EthercatError::Timeout(message) => EthercatError::Timeout(message),
+        }
+    }
+}
+impl EthercatError<()> {
+    fn upgrade<F>(self) -> EthercatError<F> {
+        self.map(|_|  unimplemented!("an ethercat error with not slave-specific error type cannot report a slave error"))
+    }
+}

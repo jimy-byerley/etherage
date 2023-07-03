@@ -5,7 +5,8 @@ use crate::{
 	data::{PduData, Field},
 	mailbox::Mailbox,
 	can::Can,
-	registers,
+	registers::{self, AlError},
+	EthercatError, EthercatResult,
 	};
 use tokio::sync::{Mutex, MutexGuard};
 use core::ops::Range;
@@ -85,16 +86,16 @@ impl<'a> Slave<'a> {
     /**
         build a slave from a `Master`. exclusive acces to the addressed slave is ensured by `Master`, and the use of this struct will be protocl-safe.
     */
-    pub async fn new(master: &'a Master, address: SlaveAddress) -> Option<Slave<'a>> {
+    pub async fn new(master: &'a Master, address: SlaveAddress) -> EthercatResult<Slave<'a>> {
         let mut book = master.slaves.lock().unwrap();
         if book.contains(&address)
         || book.contains(&SlaveAddress::Fixed(
-                master.raw.read(address, registers::address::fixed).await.one()
+                master.raw.read(address, registers::address::fixed).await.one()?
                 ))
-            {None}
+            {Err(EthercatError::Master("slave already in use by an other instance"))}
         else {
             book.insert(address);
-            Some(Self {
+            Ok(Self {
                 master: &master.raw,
                 safemaster: Some(master),
                 address,
@@ -113,12 +114,13 @@ impl<'a> Slave<'a> {
     pub fn informations(&self)  {todo!()}
     
     /// return the current state of the slave, it does not the current expected state for this slave
-    pub async fn state(&self) -> CommunicationState {
-		self.master.read(self.address, registers::al::status).await.one()
-            .state().try_into().unwrap()
+    pub async fn state(&self) -> EthercatResult<CommunicationState> {
+		self.master.read(self.address, registers::al::status).await.one()?
+            .state().try_into()
+            .map_err(|_| EthercatError::Protocol("undefined slave state"))
 	}
     /// send a state change request to the slave, and return once the slave has switched
-    pub async fn switch(&mut self, target: CommunicationState)  {
+    pub async fn switch(&mut self, target: CommunicationState) -> EthercatResult<(), AlError>  {
 		// send state switch request
 		self.master.write(self.address, registers::al::control, {
 			let mut config = registers::AlControlRequest::default();
@@ -129,15 +131,16 @@ impl<'a> Slave<'a> {
 		
 		// wait for state change, or error
 		loop {
-			let received = self.master.read(self.address, registers::al::response).await.one();
+			let received = self.master.read(self.address, registers::al::response).await.one()?;
 			if received.error() {
-				let received = self.master.read(self.address, registers::al::error).await.one();
+				let received = self.master.read(self.address, registers::al::error).await.one()?;
 				if received == registers::AlError::NoError  {break}
-				panic!("error on state change: {:?}", received);
+				return Err(EthercatError::Slave(received));
 			}
 			if received.state() == target.into()  {break}
 		}
 		self.state = target;
+		Ok(())
     }
     /**
         set the expected state of the slave.
@@ -151,10 +154,9 @@ impl<'a> Slave<'a> {
     /// get the current address used to communicate with the slave
     pub fn address(&self) -> SlaveAddress  {self.address}
     /// set a fixed address for the slave, `0` is forbidden
-    pub async fn set_address(&mut self, fixed: u16) {
-        assert_eq!(self.state, Init);
+    pub async fn set_address(&mut self, fixed: u16) -> EthercatResult {
         assert!(fixed != 0);
-        self.master.write(self.address, registers::address::fixed, fixed).await;
+        self.master.write(self.address, registers::address::fixed, fixed).await.one()?;
         let new = SlaveAddress::Fixed(fixed);
         // report existing address if a safemaster is used
         if let Some(safe) = self.safemaster {
@@ -163,6 +165,11 @@ impl<'a> Slave<'a> {
             book.insert(new);
         }
         self.address = new;
+        Ok(())
+    }
+    pub async fn reset_address(self) -> EthercatResult {
+        self.master.write(self.address, registers::address::fixed, 0).await.one()?;
+        Ok(())
     }
     
 //     pub async fn auto_address(&mut self) {
@@ -180,7 +187,7 @@ impl<'a> Slave<'a> {
 //     pub async fn init_clock(&mut self)  {todo!()}
 
     /// initialize the slave's mailbox (if supported by the slave)
-    pub async fn init_mailbox(&mut self) {
+    pub async fn init_mailbox(&mut self) -> EthercatResult {
         assert_eq!(self.state, Init);
         let address = match self.address {
             SlaveAddress::Fixed(i) => i,
@@ -192,16 +199,17 @@ impl<'a> Slave<'a> {
             address,
             MAILBOX_BUFFER_WRITE,
             MAILBOX_BUFFER_READ,
-            ).await;
+            ).await?;
         // switch SII owner to PDI, so mailbox can init
 		self.master.write(self.address, registers::sii::access, {
 			let mut config = registers::SiiAccess::default();
 			config.set_owner(registers::SiiOwner::Pdi);
 			config
-            }).await.one();
+            }).await.one()?;
 		
 		self.coe = None;
         self.mailbox = Some(Arc::new(Mutex::new(mailbox)));
+        Ok(())
     }
     
     /// initialize CoE (Canopen over Ethercat) communication (if supported by the slave), this requires the mailbox to be initialized
@@ -224,7 +232,7 @@ impl<'a> Slave<'a> {
 //     pub fn eoe(&'a self) {todo!()}
     
     /// read a value from the slave's physical memory
-    pub async fn physical_read<T: PduData>(&self, field: Field<T>) -> T  {
+    pub async fn physical_read<T: PduData>(&self, field: Field<T>) -> EthercatResult<T>  {
         self.master.read(self.address, field).await.one()
     }
 }
@@ -237,4 +245,9 @@ impl Drop for Slave<'_> {
             book.remove(&self.address);
         }
     }
+}
+
+
+impl From<EthercatError<()>> for EthercatError<AlError> {
+    fn from(src: EthercatError<()>) -> Self {src.upgrade()}
 }
