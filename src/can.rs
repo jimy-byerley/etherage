@@ -5,7 +5,7 @@ use crate::{
 	registers,
 	sdo::Sdo,
 	data::{self, PduData, Storage, Cursor},
-	EthercatError, EthercatResult,
+    error::{EthercatError, EthercatResult},
 	};
 use bilge::prelude::*;
 use tokio::sync::Mutex;

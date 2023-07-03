@@ -1,7 +1,7 @@
 //! implementation of communication with a slave's mailbox
 
 use crate::{
-    EthercatError, EthercatResult,
+    error::{EthercatError, EthercatResult},
 	rawmaster::{RawMaster, PduCommand, SlaveAddress},
 	registers,
     data::{self, PduData, Cursor},

@@ -6,7 +6,7 @@ use crate::{
 	mailbox::Mailbox,
 	can::Can,
 	registers::{self, AlError},
-	EthercatError, EthercatResult,
+    error::{EthercatError, EthercatResult},
 	};
 use tokio::sync::{Mutex, MutexGuard};
 use core::ops::Range;

@@ -45,6 +45,7 @@
 */
 
 pub mod data;
+pub mod error;
 
 #[allow(non_upper_case_globals)] 
 #[allow(unused)]
@@ -69,88 +70,5 @@ pub use crate::rawmaster::{RawMaster, SlaveAddress};
 pub use crate::master::Master;
 pub use crate::slave::{Slave, CommunicationState};
 pub use crate::mapping::{Mapping, Group};
+pub use crate::error::{EthercatError, EthercatResult};
 
-
-use std::sync::Arc;
-
-/// general object reporting an unexpected result regarding ethercat communication
-#[derive(Clone, Debug)]
-pub enum EthercatError<T> {
-    /// error caused by communication support
-    ///
-    /// these errors are exterior to this library
-    Io(Arc<std::io::Error>),
-    
-    /// error reported by a slave, its type depend on the operation returning this error
-    ///
-    /// these errors can generally be handled and fixed by retrying the operation or reconfiguring the slave
-    Slave(T),
-    
-    /// error reported by the master
-    ///
-    /// these errors can generally be handled and fixed by retrying the operation or using the master differently when the issue is in the user code
-    Master(&'static str),
-    
-    /// error detected by the master in the ethercat communication
-    ///
-    /// these errors can generally not be fixed and the whole communication has to be restarted
-    Protocol(&'static str),
-    
-    /// error is due to too much time elapsed, but does not compromise the communication
-    ///
-    /// these errors are generally contextual and the operation can be retried.
-    Timeout(&'static str),
-}
-
-pub type EthercatResult<T=(), E=()> = core::result::Result<T, EthercatError<E>>;
-
-
-use core::fmt;
-impl<T: fmt::Debug> fmt::Display for EthercatError<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Self as fmt::Debug>::fmt(self, f)
-    }
-}
-impl<T: fmt::Debug> std::error::Error for EthercatError<T> {}
-
-
-impl<T> From<std::io::Error> for EthercatError<T> {
-    fn from(src: std::io::Error) -> Self {
-        EthercatError::Io(Arc::new(src))
-    }
-}
-
-use data::PackingError;
-impl<T> From<PackingError> for EthercatError<T> {
-    fn from(src: PackingError) -> Self {
-        EthercatError::Protocol(match src {
-            PackingError::BadSize(_, text) => text,
-            PackingError::BadAlignment(_, text) => text,
-            PackingError::InvalidValue(text) => text,
-        })
-    }
-}
-
-// because rust doesn't allow specialization and already implements `From<T> for T`, we cannot write smart conversions for generic EthercatError<T>, so these are manual conversion methods
-impl<E> EthercatError<E> {
-    fn into<F>(self) -> EthercatError<F>
-    where F: From<E> {
-        self.map(|e| F::from(e))
-    }
-    fn map<F,T>(self, callback: F) -> EthercatError<T>
-    where F: Fn(E) -> T
-    {
-        match self {
-            EthercatError::Slave(value) => EthercatError::Slave(callback(value)),
-            EthercatError::Io(e) => EthercatError::Io(e),
-            EthercatError::Master(message) => EthercatError::Master(message),
-            EthercatError::Protocol(message) => EthercatError::Protocol(message),
-            EthercatError::Timeout(message) => EthercatError::Timeout(message),
-        }
-    }
-}
-impl EthercatError<()> {
-    fn upgrade<F>(self) -> EthercatError<F> {
-        self.map(|_|  unimplemented!("an ethercat error with not slave-specific error type cannot report a slave error"))
-    }
-}

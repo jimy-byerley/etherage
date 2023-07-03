@@ -61,7 +61,7 @@ use crate::{
     slave::Slave,
     can::CanError,
     registers,
-    EthercatResult,
+    error::EthercatResult,
     };
 use core::{
     fmt,

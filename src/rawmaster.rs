@@ -16,7 +16,7 @@ use tokio::sync::Notify;
 use bilge::prelude::*;
 
 use crate::{
-    EthercatError, EthercatResult,
+    error::{EthercatError, EthercatResult},
     socket::*,
     data::{self, Field, PduData, Storage, Cursor, PackingResult},
     };
