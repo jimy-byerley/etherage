@@ -220,6 +220,26 @@ pub struct AlMixedState {
 	pub operational: bool,
 }
 
+impl fmt::Display for AlMixedState {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}{{", core::any::type_name::<Self>()) ?;
+		for (active, mark) in [ (self.init(), "init"),
+								(self.pre_operational(), "pre"),
+								(self.safe_operational(), "safe"),
+								(self.operational(), "op"),
+								] {
+			write!(f, " ")?;
+			if active {
+				write!(f, "{}", mark)?;
+			} else {
+				for _ in 0 .. mark.len() {write!(f, " ")?;}
+			}
+		}
+		write!(f, "}}")?;
+		Ok(())
+	}
+}
+
 impl TryFrom<AlMixedState> for AlState {
     type Error = &'static str;
     fn try_from(state: AlMixedState) -> Result<Self, Self::Error> {
