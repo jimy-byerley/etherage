@@ -177,6 +177,7 @@ impl<'b> Mailbox<'b> {
             break
         }
         // write data
+        // TODO: retry this solution with writing the last word instead of the last byte
         // we are forced to write the whole buffer (even if much bigger than data) because the slave will notice the data sent only if writing the complete buffer
         // and writing the last byte instead does not work trick it.
 //         if mailbox_size - data.len() > 32 {

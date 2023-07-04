@@ -2,7 +2,7 @@ use crate::{
 	socket::EthercatSocket,
 	rawmaster::{RawMaster, SlaveAddress, PduAnswer},
 	data::{PduData, Field},
-	slave::Slave,
+	slave::{Slave, CommunicationState},
 	mapping::{Allocator, Mapping, Group},
 	registers,
 	};
@@ -109,7 +109,7 @@ impl Master {
 		
 		the change will be effective on every slave on this function return, however [Slave::expect] will need to be called in order to convert salve instances to their proper state
 	*/
-	pub async fn switch(&self, target: MixedState) {
+	pub async fn switch(&self, target: CommunicationState) {
         self.raw.bwr(registers::al::control, {
 			let mut config = registers::AlControlRequest::default();
 			config.set_state(target.into());

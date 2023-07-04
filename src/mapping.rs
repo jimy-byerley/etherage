@@ -58,7 +58,7 @@ use crate::{
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     data::{PduData, Field},
     sdo::{self, Sdo, SyncDirection},
-    slave::Slave,
+    slave::{Slave, CommunicationState},
     registers,
     };
 use core::{
@@ -143,11 +143,17 @@ impl Allocator {
             master,
             allocator: self,
             allocated: slot.size,
-            config: slaves,
             offset: slot.position,
             size,
-            read: vec![0; size as usize],
-            write: vec![0; size as usize],
+            
+            config: slaves,
+            data: tokio::sync::Mutex::new(GroupData {
+                master,
+                offset: slot.position,
+                size,
+                read: vec![0; size as usize],
+                write: vec![0; size as usize],
+            }),
         }
     }
     /// check that a given mapping is compatible with the already configured slaves in the allocator
@@ -209,9 +215,15 @@ pub struct Group<'a> {
     master: &'a RawMaster,
     allocator: &'a Allocator,
     allocated: u32,
+    offset: u32,
+    size: u32,
     
     /// configuration per slave
     config: HashMap<u16, Arc<ConfigSlave>>,
+    data: tokio::sync::Mutex<GroupData<'a>>,
+}
+pub struct GroupData<'a> {
+    master: &'a RawMaster,
     /// byte offset of this data group in the logical memory
     offset: u32,
     /// byte size of this data group in the logical memory
@@ -221,14 +233,14 @@ pub struct Group<'a> {
     /// data duplex: data to write to slave
     write: Vec<u8>,
 }
-impl Group<'_> {
+impl<'a> Group<'a> {
     pub fn contains(&self, slave: u16) -> bool {
         self.config.contains_key(&slave)
     }
     /**
         write on the given slave the matching configuration from the mapping
     
-        the slave is assumed to be in state [PreOperational](crate::CommunicationState::PreOperational), and can be switched to [SafeOperational](crate::CommunicationState::SafeOperational) after this step.
+        the slave is assumed to be in state [PreOperational](CommunicationState::PreOperational), and can be switched to [SafeOperational](crate::CommunicationState::SafeOperational) after this step.
     */
     pub async fn configure(&self, slave: &Slave<'_>)  {
         let master = unsafe{ slave.raw_master() };
@@ -238,39 +250,59 @@ impl Group<'_> {
             };
         let config = &self.config[&address];
         
+        assert_eq!(slave.expected(), CommunicationState::PreOperational);
+        
         // range of physical memory to be mapped
         let physical = SLAVE_PHYSICAL_MAPPABLE;
         
         let mut coe = slave.coe().await;
+        let priority = u2::new(1);
         
         // PDO mapping
         for pdo in config.pdos.values() {
-            // pdo size must be set to zero before assigning items
-            coe.sdo_write(&pdo.config.len(), u2::new(0), 0).await;
-            for (i, sdo) in pdo.sdos.iter().enumerate() {
-                // PDO mapping
-                coe.sdo_write(&pdo.config.item(i), u2::new(0), sdo::PdoEntry::new(
-                    sdo.field.len.try_into().expect("field too big for a subitem"),
-                    sdo.sub.unwrap(),
-                    sdo.index,
-                    )).await;
+            if pdo.config.fixed {
+                // check that current sdo values are the requested ones
+                for (i, sdo) in pdo.sdos.iter().enumerate() {
+                    assert_eq!(
+                        coe.sdo_read(&pdo.config.item(i), priority).await, 
+                        sdo::PdoEntry::new(
+                            sdo.field.len.try_into().expect("field too big for a subitem"),
+                            sdo.sub.unwrap(),
+                            sdo.index,
+                            ), 
+                        "slave {} fixed pdo {}", address, pdo.config.item(i));
+                }
             }
-            coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await;
+            else {
+                // TODO: send as a complete SDO rather than subitems
+                // pdo size must be set to zero before assigning items
+                coe.sdo_write(&pdo.config.len(), priority, 0).await;
+                for (i, sdo) in pdo.sdos.iter().enumerate() {
+                    // PDO mapping
+                    coe.sdo_write(&pdo.config.item(i), priority, sdo::PdoEntry::new(
+                        sdo.field.len.try_into().expect("field too big for a subitem"),
+                        sdo.sub.unwrap(),
+                        sdo.index,
+                        )).await;
+                }
+                coe.sdo_write(&pdo.config.len(), priority, pdo.sdos.len() as u8).await;
+            }
         }
 
         // sync mapping
         for channel in config.channels.values() {
 
             let mut size = 0;
+            // TODO: send as a complete SDO rather than subitems
             // channel size must be set to zero before assigning items
-            coe.sdo_write(&channel.config.len(), u2::new(0), 0).await;
+            coe.sdo_write(&channel.config.len(), priority, 0).await;
             for (j, &pdo) in channel.pdos.iter().enumerate() {
-                coe.sdo_write(&channel.config.slot(j as u8), u2::new(0), pdo).await;
+                coe.sdo_write(&channel.config.slot(j as u8), priority, pdo).await;
                 size += config.pdos[&pdo].sdos.iter()
                             .map(|sdo| (sdo.field.len / 8) as u16)
                             .sum::<u16>();
             }
-            coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await;
+            coe.sdo_write(&channel.config.len(), priority, channel.pdos.len() as u8).await;
             
             // enable sync channel
             master.fpwr(address, channel.config.register(), {
@@ -307,6 +339,12 @@ impl Group<'_> {
                 }).await.one();
         }
     }
+    /// obtain exclusive access (mutex) to the data buffers
+    pub async fn data(&self) -> tokio::sync::MutexGuard<GroupData<'a>> {
+        self.data.lock().await
+    }
+}
+impl<'a> GroupData<'a> {
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: add a fallback implementation in case the slave does not support *RW commands
@@ -345,6 +383,8 @@ impl fmt::Debug for Group<'_> {
             self.offset, self.size, self.config.len())
     }
 }
+
+
 
 
 /// struct holding configuration informations for multiple slaves, that can be shared between multiple mappings

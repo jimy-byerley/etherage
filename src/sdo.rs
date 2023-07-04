@@ -13,6 +13,8 @@ use core::{
     fmt,
 	marker::PhantomData,
 	convert::From,
+	ops::Range,
+	any::type_name
 	};
 use bilge::prelude::*;
 
@@ -91,9 +93,19 @@ impl SdoPart {
             _ => false,
     }}
 }
+impl<T: PduData> fmt::Display for Sdo<T> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{:#x}:{:?}", self.index, self.sub)
+	}
+}
 impl<T: PduData> fmt::Debug for Sdo<T> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Sdo<{}> {{index: 0x{:x}, sub: {:?}, field: {{0x{:x}, {}}}}}", core::any::type_name::<T>(), self.index, self.sub, self.field.bit, self.field.len)
+		write!(f, "{} {{index: {:#x}, sub: {:?}, field: {{{:#x}, {}}}}}", 
+            type_name::<Self>(), 
+            self.index, 
+            self.sub, 
+            self.field.bit, 
+            self.field.len)
 	}
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
@@ -151,7 +163,7 @@ impl<T: PduData> From<u16> for SdoList<T> {
 }
 impl<T: PduData> fmt::Debug for SdoList<T> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "SdoList<{}> {{index: 0x{:x}, capacity: {}}}", core::any::type_name::<T>(), self.index, self.capacity)
+		write!(f, "{} {{index: 0x{:x}, capacity: {}}}", type_name::<Self>(), self.index, self.capacity)
 	}
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
@@ -219,9 +231,9 @@ pub mod device {
 /// ETG.1000.6 table 73
 // const identity: Sdo<record> = Sdo::complete(0x0018);
 /// ETG.1000.6 table 74
-pub const receive_pdos: SdoSerie<Pdo> = SdoSerie::new(0x1600, 512);
+pub const receive_pdos: Range<u16> = Range {start: 0x1600, end: 0x1600+512};
 /// ETG.1000.6 table 75
-pub const transmit_pdos: SdoSerie<Pdo> = SdoSerie::new(0x1a00, 512);
+pub const transmit_pdos: Range<u16> = Range {start: 0x1a00, end: 0x1a00+512};
 /// ETG.1000.6 table 76
 pub const sync_manager_modes: SdoList<SyncMode> = SdoList::with_capacity(0x1c00, 32);
 /// ETG.1000.6 table 67
@@ -406,6 +418,7 @@ pub mod cia402 {
     
     pub const max_velocity: Sdo<u32> = Sdo::complete(0x6080);
     pub const max_rated_torque: Sdo<u16> = Sdo::complete(0x6076);
+    pub const max_profile_velocity: Sdo<i32> = Sdo::complete(0x607f);
     
     pub const polarity: Sdo<> = Sdo::complete(0x607e);
     pub const sensor_velocity: Sdo<i32> = Sdo::complete(0x6069);
@@ -457,12 +470,56 @@ pub mod cia402 {
 
 /// description of SDO configuring a PDO
 /// the SDO is assumed to follow the cia402 specifications for PDO SDOs
-pub type Pdo = SdoList<PdoEntry>;
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct Pdo {
+    /// index of the SDO to be considered as a list
+    pub index: u16,
+    /// true if the SDO entries on the slave shall not be changed
+    pub fixed: bool,
+    /// capacity of the list: max number of elements
+    pub capacity: u8,
+}
+impl Pdo {
+    pub const fn new(index: u16, fixed: bool) -> Self {
+        Self{
+            index,
+            fixed,
+            capacity: 254,
+        }
+    }
+    pub const fn with_capacity(index: u16, fixed: bool, capacity: u8) -> Self {
+        assert!(capacity <= 254);
+        Self{
+            index,
+            fixed,
+            capacity,
+        }
+    }
+    /// sdo subitem giving the current length of the list
+    pub fn len(&self) -> Sdo<u8>  {SdoList::from(self).len()}
+    /// sdo subitem of a list item
+    pub fn item(&self, sub: usize) -> Sdo<PdoEntry>  {SdoList::from(self).item(sub)}
+}
+// impl From<u16> for Pdo {
+//     fn from(index: u16) -> Self {Self::new(index, true)}
+// }
+impl From<&Pdo> for SdoList<PdoEntry> {
+    fn from(pdo: &Pdo) -> Self {Self::with_capacity(pdo.index, pdo.capacity)}
+}
+impl fmt::Debug for Pdo {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{} {{index: {:#x}, fixed: {}, capacity: {}}}", 
+            type_name::<Self>(), 
+            self.index, 
+            self.fixed, 
+            self.capacity)
+	}
+}
 
 
 /// content of a subitem in an SDO for PDO mapping
 #[bitsize(32)]
-#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+#[derive(FromBits, Copy, Clone, Eq, PartialEq)]
 pub struct PdoEntry {
     /// bit size of the subitem value
     bitsize: u8,
@@ -472,6 +529,15 @@ pub struct PdoEntry {
     index: u16,
 }
 data::bilge_pdudata!(PdoEntry, u32);
+impl fmt::Debug for PdoEntry {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{} {{index: {:#x}, sub: {}, bitsize: {}}}", 
+            type_name::<Self>(), 
+            self.index(), 
+            self.sub(), 
+            self.bitsize())
+	}
+}
 
 
 /**
@@ -504,7 +570,11 @@ impl SyncChannel {
 }
 impl fmt::Debug for SyncChannel {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "SyncChannel {{index: 0x{:x}, direction: {:?}, capacity: {}}}", self.index, self.direction, self.capacity)
+		write!(f, "{} {{index: 0x{:x}, direction: {:?}, capacity: {}}}", 
+            type_name::<Self>(),
+            self.index, 
+            self.direction, 
+            self.capacity)
 	}
 }
 
