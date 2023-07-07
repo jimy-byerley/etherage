@@ -69,7 +69,7 @@ use core::{
 use std::{
     cell::RefCell,
     collections::{HashMap, BTreeSet},
-    sync::{Arc, Weak, Mutex, MutexGuard, RwLock, RwLockWriteGuard},
+    sync::{Arc, Weak, Mutex, RwLock, RwLockWriteGuard},
     };
 use bilge::prelude::*;
 
