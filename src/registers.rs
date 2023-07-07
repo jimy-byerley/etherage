@@ -6,6 +6,7 @@
     Some registers are partially redundant, this is because we can use some field pointing to a big struct and other fields pointing to only parts of the same struct.
 */
 
+use core::fmt;
 use bilge::prelude::*;
 use crate::data::{self, Field, BitField, Storage};
 

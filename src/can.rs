@@ -469,7 +469,7 @@ pub enum SdoAbortCode {
     UnsupportedCommand = 0x05_04_00_01,
     /// Out of memory
     OufOfMemory = 0x05_04_00_05,
-    /// Unsupported access to an object
+    /// Unsupported access to an object, this is raised when trying to access a complete SDO when complete SDO access is not supported
     UnsupportedAccess = 0x06_01_00_00,
     /// Attempt to read to a write only object
     WriteOnly = 0x06_01_00_01,

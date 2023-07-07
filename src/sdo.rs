@@ -367,11 +367,11 @@ pub mod cia402 {
             
             See ETG.6010 7.3 for more details
         */
-        pub const method: Sdo<u16> = Sdo::complete(0x6098);
+        pub const method: Sdo<u8> = Sdo::complete(0x6098);
         pub const velocity: Sdo<u32> = Sdo::complete(0x6099);
         pub const acceleration: Sdo<u32> = Sdo::complete(0x609a);
         /// list of supported homing modes
-        pub const supported: SdoList<bool> = SdoList::new(0x60e3);
+        pub const supported: SdoList<i16> = SdoList::new(0x60e3);
     }
     /// ETG.6010 7.4
     pub mod touch {
@@ -400,19 +400,19 @@ pub mod cia402 {
     
     pub const position_mode: Sdo<Positioning> = Sdo::complete(0x60f2);
     pub const position_limit: PositionLimits = PositionLimits {
-        min: Sdo::sub(0x607b, 0, 0),
-        max: Sdo::sub(0x607b, 1, 32),
+        min: Sdo::sub(0x607b, 1, 0),
+        max: Sdo::sub(0x607b, 2, 32),
         };
     pub const position_limit_software: PositionLimits = PositionLimits {
-        min: Sdo::sub(0x607d, 0, 0),
-        max: Sdo::sub(0x607d, 1, 32),
+        min: Sdo::sub(0x607d, 1, 0),
+        max: Sdo::sub(0x607d, 2, 32),
         };
     
     pub mod following_error {
         pub use super::*;
         
         pub const current: Sdo<i32> = Sdo::complete(0x60f4);
-        pub const window: Sdo<> = Sdo::complete(0x6065);
+        pub const window: Sdo<u32> = Sdo::complete(0x6065);
         pub const timeout: Sdo<> = Sdo::complete(0x6066);
     }
     
@@ -995,6 +995,6 @@ pub struct PositioningMode {
 
 #[derive(Debug, Clone)]
 pub struct PositionLimits {
-    pub min: Sdo<u16>,
-    pub max: Sdo<u16>,
+    pub min: Sdo<i32>,
+    pub max: Sdo<i32>,
 }

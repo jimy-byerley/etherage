@@ -4,10 +4,7 @@
 	It wraps an ethercat socket to schedule, send and receive ethercat frames containing data or commands.
 */
 
-use std::{
-    time::Instant,
-    sync::{Mutex, Condvar},
-    };
+use std::sync::{Mutex, Condvar};
 use core::{
     ops::DerefMut,
     time::Duration,
@@ -350,7 +347,7 @@ impl RawMaster {
 	}
 	
 	/// trigger sending the buffered PDUs, they will be sent as soon as possible by [Self::send] instead of waiting for the frame to be full or for the timeout
-	fn flush(&self) {
+	pub fn flush(&self) {
         let mut state = self.pdu_state.lock().unwrap();
         state.ready = true;
         self.sendable.notify_one();

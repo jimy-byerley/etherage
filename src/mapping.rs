@@ -138,9 +138,11 @@ impl Allocator {
                     new
                 });
         }
-        // create
+        // create initial buffers
+        let mut buffer = mapping.default.borrow().clone();
+        buffer.extend((buffer.len() .. size as usize).map(|_| 0));
+        // create group
         Group {
-            master,
             allocator: self,
             allocated: slot.size,
             offset: slot.position,
@@ -150,9 +152,8 @@ impl Allocator {
             data: tokio::sync::Mutex::new(GroupData {
                 master,
                 offset: slot.position,
-                size,
-                read: vec![0; size as usize],
-                write: vec![0; size as usize],
+                read: buffer.clone(),
+                write: buffer,
             }),
         }
     }
@@ -212,10 +213,12 @@ impl fmt::Debug for Allocator {
     This can typically be though to as a group of slaves, except this only manage logical memory data without any assumption on its content. It is hence unable to perform any multi-slave exception management.
 */
 pub struct Group<'a> {
-    master: &'a RawMaster,
     allocator: &'a Allocator,
+    /// byte size of the allocated region of the logical memory
     allocated: u32,
+    /// byte offset of this data group in the logical memory
     offset: u32,
+    /// byte size of this data group in the logical memory
     size: u32,
     
     /// configuration per slave
@@ -226,8 +229,6 @@ pub struct GroupData<'a> {
     master: &'a RawMaster,
     /// byte offset of this data group in the logical memory
     offset: u32,
-    /// byte size of this data group in the logical memory
-    size: u32,
     /// data duplex: data to read from slave
     read: Vec<u8>,
     /// data duplex: data to write to slave
@@ -445,10 +446,15 @@ impl Config {
 pub struct Mapping<'a> {
     config: &'a Config,
     offset: RefCell<u32>,
+    default: RefCell<Vec<u8>>,
 }
 impl<'a> Mapping<'a> {
     pub fn new(config: &'a Config) -> Self {
-        Self { config, offset: RefCell::new(0) }
+        Self { 
+            config, 
+            offset: RefCell::new(0), 
+            default: RefCell::new(Vec::new()),
+        }
     }
     /// reference to the devices configuration actually worked on by this mapping
     pub fn config(&self) -> &'a Config {
@@ -529,6 +535,12 @@ impl<'a> MappingSlave<'a> {
         let inserted = offset.clone().try_into().unwrap();
         *offset += length as u32;
         inserted
+    }
+    fn default<T: PduData>(&self, field: Field<T>, value: T) {
+        let mut default = self.mapping.default.borrow_mut();
+        let range = default.len() .. field.byte + field.len;
+        default.extend(range.map(|_| 0));
+        field.set(&mut default, value);
     }
     /// increment the value offset with the reserved additional size
     /// this is typically for counting the reserved size of channels triple buffers
@@ -623,6 +635,15 @@ impl<'a> MappingPdo<'a> {
         // so the first thier is reserved using `slave.insert`, and the 2 last using `slave.additional`
         self.slave.additional += 2*len as u16;
         Field::new(self.slave.insert(self.direction, len, None), len)
+    }
+    /** 
+        same as [Self::push] but also set an initial value for this SDO in the group buffer. 
+        This is useful when using a PDO that has more fields than the only desired ones, so we can set them a value and forget them.
+    */
+    pub fn set<T: PduData>(&mut self, sdo: Sdo<T>, initial: T) -> Field<T> {
+        let offset = self.push(sdo);
+        self.slave.default(offset, initial);
+        offset
     }
 }
 

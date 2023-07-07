@@ -39,9 +39,10 @@ This crate aims to bring yet a other implementation of an Ethercat master, The [
 
 ## non-goals
 
-- no-std  *(atm)*
+- no-std  *(at the moment)*
 - adapt to vendor-specific implementations of ethercat, or to vendor-specific devices
 - make abstraction of what the Ethercat protocol really does
+- fit the OSI model
 
 ##   Current complete feature list
 
@@ -94,5 +95,18 @@ Then compile and run:
 ```shell
 cargo build --example slaves_discovery
 sudo target/debug/examples/slaves_discovery
+```
+
+typical output:
+
+```
+  slave 7: "R88D-1SN01H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
+  slave 0: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
+  slave 6: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.01" software "V1.04.00"
+  slave 3: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
+  slave 5: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
+  slave 4: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
+  slave 1: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
+  slave 2: "R88D-1SN04H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.01" software "V1.04.00"
 ```
 

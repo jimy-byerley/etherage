@@ -39,8 +39,8 @@ async fn main() -> std::io::Result<()> {
                 let torque = pdo.push(Sdo::<i16>::complete(0x6077));
     println!("done {:#?}", config);
     
-    let mut allocator = mapping::Allocator::new();
-    let mut group = allocator.group(&master, &mapping);
+    let allocator = mapping::Allocator::new();
+    let group = allocator.group(&master, &mapping);
     
     println!("group {:#?}", group);
     println!("fields  {:#?}", (control, status, error, position));
@@ -56,6 +56,7 @@ async fn main() -> std::io::Result<()> {
     slave.switch(CommunicationState::Operational).await;
     
     for _ in 0 .. 20 {
+        let mut group = group.data().await;
         group.exchange().await;
         println!("received {:?}  {}  {}  {}  {}", 
             group.get(restatus),
@@ -65,12 +66,6 @@ async fn main() -> std::io::Result<()> {
             group.get(torque),
             );
     }
-    
-//     let sdo = Sdo::<u32>::complete(0x1c12);
-//     
-//     // test read/write
-//     let received = slave.coe().await.sdo_read(&sdo, u2::new(1)).await;
-//     slave.coe().await.sdo_write(&sdo, u2::new(1), received).await;
     
     Ok(())
 }

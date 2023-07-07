@@ -67,7 +67,7 @@ pub use crate::socket::*;
 pub use crate::rawmaster::{RawMaster, SlaveAddress};
 pub use crate::master::Master;
 pub use crate::slave::{Slave, CommunicationState};
-pub use crate::mapping::{Mapping, Group};
+pub use crate::mapping::{Mapping, Group, Config};
 
 
 use std::sync::Arc;
