@@ -54,6 +54,7 @@ pub mod sdo;
 
 pub mod socket;
 pub mod rawmaster;
+pub mod sii;
 pub mod mailbox;
 pub mod can;
 pub mod master;

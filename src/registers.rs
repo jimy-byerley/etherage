@@ -88,6 +88,11 @@ pub mod sii {
 	pub const address: Field<u16> = Field::simple(0x0504);
 	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
 	pub const data: Field<[u8; 8]> = Field::simple(0x0508);
+	
+	/// agregates [control] and [address] for optimized bandwith
+	pub const control_address: Field<SiiControlAddress> = Field::simple(control.byte);
+	/// agregates [control] and [address] and [data] for optimized bandwith
+	pub const control_address_data: Field<SiiControlAddressData> = Field::simple(control.byte);
 }
 	
 // TODO: MII (Media Independent Interface)
@@ -683,7 +688,7 @@ pub struct SiiAccess {
 data::bilge_pdudata!(SiiAccess, u16);
 
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SiiOwner {
 	EthercatDL = 0,
 	Pdi = 1,
@@ -754,17 +759,35 @@ pub struct SiiControl {
 data::bilge_pdudata!(SiiControl, u16);
 
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SiiTransaction {
 	Bytes4 = 0,
 	Bytes8 = 1,
 }
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SiiUnit {
 	Byte = 0,
 	Word = 1,
 }
+
+#[repr(packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct SiiControlAddress {
+    pub control: SiiControl,
+    pub address: u16,
+}
+data::packed_pdudata!(SiiControlAddress);
+
+#[repr(packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct SiiControlAddressData {
+    pub control: SiiControl,
+    pub address: u16,
+    pub reserved: u16,
+    pub data: [u8; 2],
+}
+data::packed_pdudata!(SiiControlAddressData);
 
 /// this is not a PduData but a struct transporting the address and number of FMMU registers
 /// ETG.1000.4 table 57
