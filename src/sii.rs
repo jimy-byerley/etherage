@@ -1,7 +1,7 @@
 /*!
     SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
     
-    This module expose the standard SII registers.
+    This module expose the standard EEPROM registers. registers are defined as [Field]s in the EEPROM, which content can be accessed using the instance of [Sii] (Slave Information Interface) proper to each slave.
 
     ETG.1000.6 5.4
 */
@@ -116,8 +116,9 @@ impl<'a> Sii<'a> {
             registers::SiiUnit::Byte => 1,
             registers::SiiUnit::Word => 2,
         };
-        assert!(!status.checksum_error(), "corrupted slave snformation EEPROM");
+        assert!(!status.checksum_error(), "corrupted slave information EEPROM");
         Self {master, slave, unit, writable: status.write_access()}
+        // TODO: error propagation
     }
     /// tells if the EEPROM is writable through the SII
     pub fn writable(&self) -> bool {self.writable}
@@ -155,7 +156,9 @@ impl<'a> Sii<'a> {
                             .value[.. size]).unwrap();
         }
         T::unpack(buffer.as_ref()).unwrap()
+        // TODO: error propagation
     }
+    
     /// write data to the slave's EEPROM using the SII
     pub async fn write<T: PduData>(&mut self, field: Field<T>, value: &T) {
         let mut buffer = T::Packed::uninit();
@@ -185,6 +188,7 @@ impl<'a> Sii<'a> {
             // check for errors
             assert!(!status.command_error() && !status.write_error());
         }
+        // TODO: error propagation
     }
     
     /// reload first 128 bits of data from the EEPROM
@@ -203,6 +207,7 @@ impl<'a> Sii<'a> {
         };
         // check for errors
         assert!(!status.command_error() && !status.checksum_error() && !status.device_info_error());
+        // TODO: error propagation
     }
 }
 

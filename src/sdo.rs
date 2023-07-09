@@ -2,6 +2,12 @@
     Convenient structures to address the slave's dictionnary objects (SDO).
     
     This module also provides structs and consts for every standard items in the canopen objects dictionnary. The goal is to gather all standard SDOs definitions in one place.
+    
+    SDOs are described by instances of helper structs allowing to access their content with the help of [crate::can].
+    
+    - [Sdo]  describe a Sdo (a complete SDO or a SDO subitem) with fixed-length data.
+    - [SdoList]  describe a Sdo with an arbitrary number of subitems
+    - [SdoSerie] describe a multitude of similar consecutive SDOs
 */
 
 use crate::{
@@ -121,7 +127,11 @@ impl<T: PduData> Copy for Sdo<T> {}
 
 
 
-/// SDO behaving like a list
+/** 
+    SDO behaving like a list
+
+    subitem 0 is its length, other subitems are list elements and have the same type.
+*/
 #[derive(Eq, PartialEq)]
 pub struct SdoList<T> {
     /// index of the SDO to be considered as a list
@@ -176,9 +186,15 @@ impl<T> Clone for SdoList<T> {
 }
 impl<T> Copy for SdoList<T> {}
 
+
+/**
+    serie of similar consecutive SDOs
+*/
 #[derive(Debug, Eq, PartialEq)]
 pub struct SdoSerie<T> {
+    /// index of first SDO of the serie
     pub index: u16,
+    /// number of similar SDOs in the serie
     pub len: u16,
     data: PhantomData<T>,
 }
@@ -188,6 +204,7 @@ impl<T: From<u16>> SdoSerie<T> {
         len,
         data: PhantomData,
     }}
+    /// get the nth SDO
     pub fn slot(&self, i: u16) -> T  {
         assert!(i < self.len);
         T::from(self.index + i)

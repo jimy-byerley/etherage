@@ -71,13 +71,6 @@ pub mod sync_manager {
 	pub const interface: SyncManager = SyncManager {address: 0x0800, num: 16};
 }
 
-pub const mailbox_buffers: [Field<[u8; 0x100]>; 3] = [
-	Field::simple(0x1000),
-	Field::simple(0x1100),
-	Field::simple(0x1200),
-];
-
-
 /// SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
 pub mod sii {
     use super::*;
@@ -89,9 +82,9 @@ pub mod sii {
 	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
 	pub const data: Field<[u8; 8]> = Field::simple(0x0508);
 	
-	/// agregates [control] and [address] for optimized bandwith
+	/// agregates [const@control] and [const@address] for optimized bandwith
 	pub const control_address: Field<SiiControlAddress> = Field::simple(control.byte);
-	/// agregates [control] and [address] and [data] for optimized bandwith
+	/// agregates [const@control] and [const@address] and [const@data] for optimized bandwith
 	pub const control_address_data: Field<SiiControlAddressData> = Field::simple(control.byte);
 }
 	
