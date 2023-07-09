@@ -94,31 +94,55 @@ const version: Field<u16> = Field::simple(WORD*0x003f);
 /// implementation of the Slave Information Interface (SII) to communicate with a slave's EEPROM memory
 struct Sii<'a> {
     master: &'a RawMaster,
-    slave: u16,
+    slave: SlaveAddress,
     /// address unit (number of bytes) to use for communication
     unit: u16,
+    /// whether the EEPROM is writable through the SII
+    writable: bool,
 }
 impl Sii<'_> {
     pub async fn new(master: &'a RawMaster, slave: u16) -> Self {
-        let control = master.fprd(slave, registers::sii::control).await;
-        let unit = match control.address_unit {
+        let status = master.read(slave, registers::sii::control).await.one();
+        let unit = match status.address_unit {
             Byte => 1,
             Word => 2,
         };
-        Self {master, slave, unit}
+        assert!(!status.checksum_error(), "corrupted slave snformation EEPROM");
+        Self {master, slave, unit, status.write_access()}
     }
+    /// tells if the EEPROM is writable through the SII
+    pub fn writable(&self) -> bool {self.writable}
+    
     /// read data from the slave's EEPROM using the SII
     pub async fn read<T>(&mut self, field: Field<T>) -> T {
         let buffer = T::Packed::uninit();
         let mut cursor = Cursor::new(buffer.as_mut());
         while cursor.remain().len() {
-            // TODO: wait for interface to become available
-            self.master.fpwr(self.slave, registers::sii::address, ((field.byte + cursor.position()) as u16)/unit).await;
-            cursor.pack(&self.master.fprd(self.slave, registers::sii::data).await).unwrap();
+            // send request
+            [
+                self.master.write(self.slave, registers::sii::address, ((field.byte + cursor.position()) as u16)/self.unit),
+                self.master.write(self.slave, registers::sii::control, {
+                    let mut control = registers::SiiControl::default();
+                    control.set_read_operation(true);
+                    control
+                }),
+            ].join().await
+                .map(|request|  request.one());
+            
+            // wait for interface to become available
+            let status = loop {
+                let answer = self.master.read(self.slave, registers::sii::control).await;
+                if answer.answers == 1 && ! answer.value.busy()  && ! answer.value.read_operation()
+                    {break answer.value}
+            };
+            // check for errors
+            assert!(!status.command_error() && !status.device_info_error());
+            // buffer the result
+            let size = if status.read_size() == registers::SiiTransaction::Bytes4 {4} else {8};
+            cursor.pack(&self.master.read(self.slave, registers::sii::data).await
+                            .value[.. size]).unwrap();
         }
         T::unpack(buffer.as_ref())
-        
-        // TODO:  change the segment size using read_size
     }
     /// write data to the slave's EEPROM using the SII
     pub async fn write<T>(&mut self, field: Field<T>, value: &T) {
@@ -126,12 +150,42 @@ impl Sii<'_> {
         value.pack(buffer.as_mut());
         let mut cursor = Cursor::new(buffer.as_mut());
         while cursor.remain().len() {
-            // TODO: wait for interface to become available
-            self.master.fpwr(self.slave, registers::sii::address, ((field.byte + cursor.position()) as u16)/unit).await;
-            self.master.fpwr(self.slave, registers::sii::data, cursor.unpack().unwrap()).await;
+            // write operation is forced to be 2 bytes (ETG.1000.4 6.4.5)
+            type Word = [u8; 2];
+            let data = Field::<Word>::simple(registers::sii::data.byte);
+            // send request
+            [
+                self.master.write(self.slave, data, cursor.unpack::<Word>().unwrap()),
+                self.master.write(self.slave, registers::sii::address, ((field.byte + cursor.position()) as u16)/self.unit),
+                self.master.write(self.slave, registers::sii::control, {
+                    let mut control = registers::SiiControl::default();
+                    control.set_write_operation(true);
+                    control
+                }),
+            ].join().await
+                .map(|request|  request.one());
+            
+            // check for errors
+            assert!(!status.command_error() && !status.write_error());
         }
+    }
+    
+    /// reload first 128 bits of data from the EEPROM
+    pub async fn reload(&mut self) {
+        self.master.write(self.slave, registers::sii::control, {
+            let mut control = registers::SiiControl::default();
+            control.set_reload_operation(true);
+            control
+        }).await.one();
         
-        // TODO:  check possible write errors
+        // wait for interface to become available
+        let status = loop {
+            let answer = self.master.read(self.slave, registers::sii::control).await;
+            if answer.answers == 1 && ! answer.value.busy() && ! answer.value.reload_operation()  
+                {break answer.value}
+        };
+        // check for errors
+        assert!(!status.command_error() && !status.checksum_error() && !status.device_info_error());
     }
 }
 

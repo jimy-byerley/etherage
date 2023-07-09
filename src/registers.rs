@@ -87,7 +87,7 @@ pub mod sii {
 	/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
 	pub const address: Field<u16> = Field::simple(0x0504);
 	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
-	pub const data: Field<[u8;4]> = Field::simple(0x0508);
+	pub const data: Field<[u8; 8]> = Field::simple(0x0508);
 }
 	
 // TODO: MII (Media Independent Interface)
@@ -696,34 +696,42 @@ data::bilge_pdudata!(SiiOwner, u1);
 	ETG.1000.4 table 49
 */
 #[bitsize(16)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct SiiControl {
-	/// true if SOO is writable
+	/// true if SII is writable
 	pub write_access: bool,
 	reserved: u4,
 	/**
 		- false: Normal operation (DL interfaces to SII)
 		- true: DL-user emulates SII
+		
+		cannot be set by the master
 	*/
 	pub eeprom_emulation: bool,
-	/// number of bytes per read transaction
+	/// number of bytes per read transaction, cannot be set by master
 	pub read_size: SiiTransaction,
-	/// unit of SII addresses
+	/// unit of SII addresses, cannot be set by master
 	pub address_unit: SiiUnit,
 	
 	/**
 		read operation requested (parameter write) or read operation busy (parameter read)
 		To start a new read operation there must be a positive edge on this parameter
+		
+		This parameter will be written from the master to start the read operation of 32 bits/64 bits in the slave information interface. This parameter will be read from the master to check if the read operation is finished. 
 	*/
 	pub read_operation: bool,
 	/**
 		write operation requested (parameter write) or write operation busy (parameter read)
 		To start a new write operation there must be a positive edge on this parameter
+		
+		This parameter will be written from the master to start the write operation of 16 bits in the slave information interface. This parameter will be read from the master to check if the write operation is finished. There is no consistence gu arantee for write operation. A break down during write can produce inconsistent values and should be avoided. 
 	*/
 	pub write_operation: bool,
 	/**
 		reload operation requested (parameter write) or reload operation busy (parameter read)
 		To start a new reload operation there must be a positive edge on this parameter
+		
+		This parameter will be written from the master to start the reload operation of the first 128 bits in the slave information interface. This parameter will be read from the master to check if the reload operation is finished
 	*/
 	pub reload_operation: bool,
 	
@@ -731,7 +739,11 @@ pub struct SiiControl {
 	pub checksum_error: bool,
 	/// error on reading Device Information
 	pub device_info_error: bool,
-	/// error on last command PDI Write only in SII emulation mode
+	/**
+        error on last SII request
+        
+        writable only in SII emulation mode
+    */
 	pub command_error: bool,
 	/// error on last write operation
 	pub write_error: bool,
