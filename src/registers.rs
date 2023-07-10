@@ -786,159 +786,199 @@ pub enum SyncDirection {
     Write = 1,
 }
 
-// Distribution clock - Physical addr:
-// - ReceiveTimePort0 :    0x0900 - 32bits
-// - ReceiveTimePort1 :    0x0904 - 32bits
-// - ReceiveTimePort2 :    0x0908 - 32bits
-// - ReceiveTimePort3 :    0x090C - 32bits
-// - SystemTime :          0x0910 - 64bits
-// - ReceivingTimePU :     0x0918 - 64bits
-// - ReceivingTimeOffset : 0x0920 - 64bits
-// - ReceivingTimeDelay :  0x0928 - 32bits
-// - ReceivingTimeDiff :   0x092C - 32bits
-// - ReceivingTimeLoop0 :  0x0930 - 16bits
-// - ReceivingTimeLoop1 :  0x0932 - 16bits
-// - ReceivingTimeLoop2 :  0x0934 - 16bits
+pub mod Dc {
+    use bilge::{DebugBits, bitsize, prelude::{*}};
+    use crate::registers::data;
 
-pub mod PduDC {
     //DC parameter offset
-    pub const clock: crate::Field<crate::registers::DistributedClock> = crate::Field::simple(0x0900);
-    pub const clock_brw: crate::Field<u32> = crate::Field::simple(0x0900);
+    pub const clock: crate::Field<crate::registers::Dc::DistributedClock> = crate::Field::simple(0x0900);
+    pub const rcv_time_brw: crate::Field<u32> = crate::Field::simple(0x0900);
     pub const system_clock: crate::Field<u64> = crate::Field::simple(0x0910);
+    pub const rcv_time_offset : crate::Field<u64> = crate::Field::simple(0x920);
     pub const rcv_clock_diff: crate::Field<u32> = crate::Field::simple(0x092C);
-    pub const clock_loop: crate::Field<[u8;6]> = crate::Field::simple(0x0930);
-    pub const clock_speed : crate::Field<u16> = crate::Field::simple(0x930);
+    pub const rcv_time_loop_1: crate::Field<u16> = crate::Field::simple(0x0930);
+    pub const rcv_time_loop_3: crate::Field<u16> = crate::Field::simple(0x0934);
 
-    //Iso chronous PDI offset
-    pub const dc_control_unit : crate::Field<crate::registers::IsochronouAccess> = crate::Field::simple(0x980);
-    pub const dc_activation : crate::Field<crate::registers::IsochronousSync> = crate::Field::simple(0x981);
-    pub const dc_latch0 : crate::Field<crate::registers::IsochronousLatch> = crate::Field::simple(0x9a8);
-    pub const dc_latch1 : crate::Field<crate::registers::IsochronousLatch> = crate::Field::simple(0x9a9);
-}
+    /// ETG.1000.4 table 60
+    #[repr(packed)]
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct DistributedClock {
+        /**
+            A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
+            This array contains the latched receival time on each port.
+        */
+        pub received_time: [u32;4],
+        /// A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
+        pub system_time: u64,
+        /// Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
+        pub receive_time_unit: u64,
+        /// Offset between the local time (in ns) and the local system time (in ns)
+        pub system_offset: u64,
+        /// Offset between the reference system time (in ns) and the local system time (in ns)
+        pub system_delay: u32,
+        /**
+            Bits 30..0: Mean difference between local copy of "system time" and "received system time" values.
+            Bit 31: 0 - Local copy of "system time" > "received system time". 1 - Othercase
+        */
+        pub system_difference: TimeDifference,
+        /// Implementation specific
+        reserved: [u32; 3],
+    }
+    data::packed_pdudata!(DistributedClock);
 
-/// ETG1000.6 table 27
-#[repr(packed)]
-#[derive(Clone, Debug, PartialEq)]
-pub struct Isochronous {
-    pub reserved1: IsochronouAccess,          // DC Cyclic unit control
-    pub sync: IsochronousSync,              // Taken from SII: CyclicOperationTime + Sync0 + Sync1 + u5
-    pub sync_pulse: u16,                    // Optional multiple of 10ns
-    reserved10: [u8; 10],
-    pub interrupt1: IsochronousInterrupt,
-    pub interrupt2: IsochronousInterrupt,
-    pub cyclic_op_start_time: u32,          //The interrupt generation will start when the lower 32bits of the the system time will reach this value (ns)
-    reserved12: [u8; 12],
-    pub sync_0_cycle_time: u32,
-    pub sync_1_cycle_time: u32,
-    pub latch_0_edge : IsochronousLatch,
-    reserved2_a: u8,
-    pub latch_1_edge : IsochronousLatch,
-    reserved2_b: u8,
-    pub reserved3: [u8;4],
-    pub latch_0_event : IsochronousLatch,
-    pub latch_1_event : IsochronousLatch,
-    pub latch_0_pos_edge_value: u32,        // latch0 value + event
-    reserved4: [u8; 4],
-    pub latch_0_neg_edge_value: u32,        // latch0 value - event
-    reserved5: [u8; 4],
-    pub latch_1_pos_edge_value: u32,        // latch1 value + event
-    reserved6: [u8; 4],
-    pub latch_1_neg_edge_value: u32,        // latch1 value - event
-    reserved7: [u8; 4],
-}
-
-#[bitsize(8)]
-#[derive(Clone, DebugBits, PartialEq)]
-pub struct IsochronouAccess{
-    pub write_access_cyclic : u1,
-    reserved : u3,
-    pub write_access_latch0 : u1,
-    pub write_access_latch1 : u1,
-    reserved : u2,
-}
-data::bilge_pdudata!(IsochronouAccess, u8);
-
-#[bitsize(8)]
-#[derive(Clone, DebugBits, PartialEq)]
-pub struct IsochronousSync{
-    pub enable_cyclic : u1,
-    pub generate_sync0 : u1,
-    pub generate_sync1 : u1,
-    pub auto_activation : u1,
-    pub start_time_ext : u1,
-    pub start_time_check : u1,
-    pub half_range : u1,
-    pub debug_pulse : u1,
-}
-data::bilge_pdudata!(IsochronousSync, u8);
-
-#[bitsize(8)]
-#[derive(Clone, DebugBits, PartialEq)]
-pub struct IsochronousInterrupt{
-    pub interrupt : u1,
-    reserved : u7
-}
-data::bilge_pdudata!(IsochronousInterrupt, u8);
-
-#[bitsize(8)]
-#[derive(Clone, DebugBits, PartialEq)]
-pub struct IsochronousLatch{
-    pub latch_pos : u1,
-    pub latch_neg : u1,
-    reserved : u6
-}
-data::bilge_pdudata!(IsochronousLatch, u8);
-
-/// ETG.1000.4 table 60
-#[repr(packed)]
-#[derive(Clone, Debug, PartialEq)]
-pub struct DistributedClock {
-    /**
-        A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
-        This array contains the latched receival time on each port.
-    */
-    pub received_time: [u32;4],
-    /// A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
-    pub system_time: u64,
-    /// Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
-    pub receive_time_unit: u64,
-    /// Offset between the local time (in ns) and the local system time (in ns)
-    pub system_offset: u64,
-    /// Offset between the reference system time (in ns) and the local system time (in ns)
-    pub system_delay: u32,
-    /**
-        Bits 30..0: Mean difference between local copy of "system time" and "received system time" values.
-        Bit 31: 0 - Local copy of "system time" > "received system time". 1 - Othercase
-    */
-    pub system_difference: TimeDifference,
-    /// Implementation specific
-    reserved: [u32; 3],
-}
-data::packed_pdudata!(DistributedClock);
-
-impl DistributedClock {
-    pub fn new() -> Self{
-        Self{
-            received_time : [0;4] ,
-            system_time : 0,
-            receive_time_unit : 0,
-            system_offset : 0,
-            system_delay : 0,
-            system_difference : TimeDifference { value: 0 },
-            reserved : [0;3]
+    impl DistributedClock {
+        pub fn new() -> Self{
+            Self{
+                received_time : [0;4] ,
+                system_time : 0,
+                receive_time_unit : 0,
+                system_offset : 0,
+                system_delay : 0,
+                system_difference : TimeDifference { value: 0 },
+                reserved : [0;3]
+            }
         }
     }
+
+    #[bitsize(32)]
+    #[derive(TryFromBits, DebugBits, Copy, Clone, PartialEq)]
+    pub struct TimeDifference {
+        /// Mean difference between local copy of System Time and received System Time values
+        pub mean: u31,
+        /// true if local copy of system time smaller than received system time
+        pub sign: bool,
+    }
+    data::bilge_pdudata!(TimeDifference, u32);
+
 }
 
-#[bitsize(32)]
-#[derive(TryFromBits, DebugBits, Copy, Clone, PartialEq)]
-pub struct TimeDifference {
-    /// Mean difference between local copy of System Time and received System Time values
-    pub mean: u31,
-    /// true if local copy of system time smaller than received system time
-    pub sign: bool,
+pub mod Isochronous {
+    use bilge::{DebugBits, bitsize, prelude::{*}};
+    use crate::registers::data;
+
+    //Iso chronous PDI offset
+    pub const slave_cfg : crate::Field<crate::registers::Isochronous::Isochronous> = crate::Field::simple(0x980);
+    pub const slave_acces : crate::Field<crate::registers::Isochronous::Isochronous> = crate::Field::simple(0x980);
+    pub const slave_sync : crate::Field<crate::registers::Isochronous::IsochronousSync> = crate::Field::simple(0x981);
+    pub const slave_pulse : crate::Field<u16> = crate::Field::simple(0x983);
+    pub const slave_interrupt : crate::Field<crate::registers::Isochronous::IsochronousInterrupt> = crate::Field::simple(0x98E);
+    pub const slave_start_time : crate::Field<u32> = crate::Field::simple(0x990);
+    pub const slave_sync_time : crate::Field<u32> = crate::Field::simple(0x9A0);
+    pub const slave_latch_edge : crate::Field<crate::registers::Isochronous::IsochronousLatchEdge> = crate::Field::simple(0x9A8);
+    pub const slave_latch_event : crate::Field<crate::registers::Isochronous::IsochronousLatchEvent> = crate::Field::simple(0x9AE);
+    pub const slave_latch_value : crate::Field<u32> = crate::Field::simple(0x09B0);
+
+    /// ETG1000.6 table 27
+    #[repr(packed)]
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Isochronous {
+        pub reserved1: IsochronouAccess,                // DC Cyclic unit control
+        pub sync: IsochronousSync,                      // Taken from SII: CyclicOperationTime + Sync0 + Sync1 + u5
+        pub sync_pulse: u16,                            // Optional multiple of 10ns
+        reserved2: [u8; 10],
+        pub interrupt1: IsochronousInterrupt,           // Interrupt enable/disable struct
+        pub interrupt2: IsochronousInterrupt,           // Interrupt enable/disable struct
+        pub cyclic_op_start_time: u32,                  // The interrupt generation will start when the lower 32bits of the the system time will reach this value (ns)
+        reserved3: [u8; 12],
+        pub sync_0_cycle_time: u32,                     // SYNC 0 cycle time. Optional multiple of 1ns
+        pub sync_1_cycle_time: u32,                     // SYNC 1 cycle time. Optional multiple of 1ns
+        pub latch_0_edge : IsochronousLatchEdge,        // Latch 0:
+        pub latch_1_edge : IsochronousLatchEdge,        // Latch 1:
+        pub reserved4: u32,                             // Reserved equivalent to [u8;4]
+        pub latch_0_event : IsochronousLatchEvent,      // Enable or disable event storage for SYNC 0
+        pub latch_1_event : IsochronousLatchEvent,      // Enable or disable event storage for SYNC 1
+        pub latch_0_pos_edge_value: u32,                // latch0 value + event
+        reserved5: u32,                                 // Reserved equivalent to [u8;4]
+        pub latch_0_neg_edge_value: u32,                // latch0 value - event
+        reserved6: u32,                                 // Reserved equivalent to [u8;4]
+        pub latch_1_pos_edge_value: u32,                // latch1 value + event
+        reserved7: u32,                                 // Reserved equivalent to [u8;4]
+        pub latch_1_neg_edge_value: u32,                // latch1 value - event
+        reserved8: u32,                                 // Reserved equivalent to [u8;4]
+    }
+    data::packed_pdudata!(Isochronous);
+
+    impl Isochronous {
+        pub fn new() -> Self {
+            Self{
+                reserved1 : IsochronouAccess { value: 0 },
+                sync : IsochronousSync { value: 0 },
+                sync_pulse : 0,
+                reserved2 : [0u8;10],
+                interrupt1 : IsochronousInterrupt { value: 0 },
+                interrupt2 : IsochronousInterrupt { value: 0 },
+                cyclic_op_start_time: 0,
+                reserved3: [0u8;12],
+                sync_0_cycle_time: 0,
+                sync_1_cycle_time: 0,
+                latch_0_edge: IsochronousLatchEdge { value: 0 },
+                latch_1_edge: IsochronousLatchEdge { value: 0 },
+                reserved4: 0,
+                latch_0_event: IsochronousLatchEvent { value: 0 },
+                latch_1_event: IsochronousLatchEvent { value: 0 },
+                latch_0_pos_edge_value: 0,
+                reserved5: 0,
+                latch_0_neg_edge_value: 0,
+                reserved6: 0,
+                latch_1_pos_edge_value: 0,
+                reserved7: 0,
+                latch_1_neg_edge_value: 0,
+                reserved8: 0,
+            }
+        }
+    }
+
+    #[bitsize(8)]
+    #[derive(Clone, DebugBits, PartialEq)]
+    pub struct IsochronouAccess{
+        pub write_access_cyclic : u1,
+        reserved : u3,
+        pub write_access_latch0 : u1,
+        pub write_access_latch1 : u1,
+        reserved : u2,
+    }
+    data::bilge_pdudata!(IsochronouAccess, u8);
+
+    #[bitsize(8)]
+    #[derive(Clone, DebugBits, PartialEq)]
+    pub struct IsochronousSync{
+        pub enable_cyclic : u1,
+        pub generate_sync0 : u1,
+        pub generate_sync1 : u1,
+        pub auto_activation : u1,
+        pub start_time_ext : u1,
+        pub start_time_check : u1,
+        pub half_range : u1,
+        pub debug_pulse : u1,
+    }
+    data::bilge_pdudata!(IsochronousSync, u8);
+
+    #[bitsize(8)]
+    #[derive(Clone, DebugBits, PartialEq)]
+    pub struct IsochronousInterrupt{
+        pub interrupt : u1,
+        reserved : u7
+    }
+    data::bilge_pdudata!(IsochronousInterrupt, u8);
+
+    #[bitsize(16)]
+    #[derive(Clone, DebugBits, PartialEq)]
+    pub struct IsochronousLatchEdge{
+        pub latch_pos : u1,
+        pub latch_neg : u1,
+        reserved : u14
+    }
+    data::bilge_pdudata!(IsochronousLatchEdge, u16);
+
+    #[bitsize(8)]
+    #[derive(Clone, DebugBits, PartialEq)]
+    pub struct IsochronousLatchEvent{
+        pub latch_pos : u1,
+        pub latch_neg : u1,
+        reserved : u6
+    }
+    data::bilge_pdudata!(IsochronousLatchEvent, u8);
 }
-data::bilge_pdudata!(TimeDifference, u32);
 
 // /** registers in physical memory of a slave
 //

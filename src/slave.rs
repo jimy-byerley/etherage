@@ -146,7 +146,7 @@ impl<'a> Slave<'a> {
         self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
     }
 
-    pub fn get_state(&self) -> Init{
+    pub fn get_state(&self) -> Init {
         return self.state;
     }
 
