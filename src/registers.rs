@@ -909,12 +909,12 @@ pub enum SyncDirection {
     Write = 1,
 }
 
-pub mod Dc {
+pub mod dc {
     use bilge::{DebugBits, bitsize, prelude::{*}};
     use crate::registers::data;
 
     //DC parameter offset
-    pub const clock: crate::Field<crate::registers::Dc::DistributedClock> = crate::Field::simple(0x0900);
+    pub const clock: crate::Field<crate::registers::dc::DistributedClock> = crate::Field::simple(0x0900);
     pub const rcv_time_brw: crate::Field<u32> = crate::Field::simple(0x0900);
     pub const system_clock: crate::Field<u64> = crate::Field::simple(0x0910);
     pub const rcv_time_offset : crate::Field<u64> = crate::Field::simple(0x920);
@@ -972,23 +972,28 @@ pub mod Dc {
         pub sign: bool,
     }
     data::bilge_pdudata!(TimeDifference, u32);
+    impl TimeDifference {
+        pub fn new_value(v : u32) -> Self {
+            Self { value : v }
+        }
+    }
 
 }
 
-pub mod Isochronous {
+pub mod isochronous {
     use bilge::{DebugBits, bitsize, prelude::{*}};
     use crate::registers::data;
 
     //Iso chronous PDI offset
-    pub const slave_cfg : crate::Field<crate::registers::Isochronous::Isochronous> = crate::Field::simple(0x980);
-    pub const slave_acces : crate::Field<crate::registers::Isochronous::Isochronous> = crate::Field::simple(0x980);
-    pub const slave_sync : crate::Field<crate::registers::Isochronous::IsochronousSync> = crate::Field::simple(0x981);
+    pub const slave_cfg : crate::Field<crate::registers::isochronous::Isochronous> = crate::Field::simple(0x980);
+    pub const slave_acces : crate::Field<crate::registers::isochronous::Isochronous> = crate::Field::simple(0x980);
+    pub const slave_sync : crate::Field<crate::registers::isochronous::IsochronousSync> = crate::Field::simple(0x981);
     pub const slave_pulse : crate::Field<u16> = crate::Field::simple(0x983);
-    pub const slave_interrupt : crate::Field<crate::registers::Isochronous::IsochronousInterrupt> = crate::Field::simple(0x98E);
+    pub const slave_interrupt : crate::Field<crate::registers::isochronous::IsochronousInterrupt> = crate::Field::simple(0x98E);
     pub const slave_start_time : crate::Field<u32> = crate::Field::simple(0x990);
     pub const slave_sync_time : crate::Field<u32> = crate::Field::simple(0x9A0);
-    pub const slave_latch_edge : crate::Field<crate::registers::Isochronous::IsochronousLatchEdge> = crate::Field::simple(0x9A8);
-    pub const slave_latch_event : crate::Field<crate::registers::Isochronous::IsochronousLatchEvent> = crate::Field::simple(0x9AE);
+    pub const slave_latch_edge : crate::Field<crate::registers::isochronous::IsochronousLatchEdge> = crate::Field::simple(0x9A8);
+    pub const slave_latch_event : crate::Field<crate::registers::isochronous::IsochronousLatchEvent> = crate::Field::simple(0x9AE);
     pub const slave_latch_value : crate::Field<u32> = crate::Field::simple(0x09B0);
 
     /// ETG1000.6 table 27
@@ -1052,7 +1057,7 @@ pub mod Isochronous {
     }
 
     #[bitsize(8)]
-    #[derive(Clone, DebugBits, PartialEq)]
+    #[derive(Copy, Clone, DebugBits, PartialEq)]
     pub struct IsochronouAccess{
         pub write_access_cyclic : u1,
         reserved : u3,
@@ -1063,7 +1068,7 @@ pub mod Isochronous {
     data::bilge_pdudata!(IsochronouAccess, u8);
 
     #[bitsize(8)]
-    #[derive(Clone, DebugBits, PartialEq)]
+    #[derive(Copy, Clone, DebugBits, PartialEq, Default)]
     pub struct IsochronousSync{
         pub enable_cyclic : u1,
         pub generate_sync0 : u1,
@@ -1077,7 +1082,7 @@ pub mod Isochronous {
     data::bilge_pdudata!(IsochronousSync, u8);
 
     #[bitsize(8)]
-    #[derive(Clone, DebugBits, PartialEq)]
+    #[derive(Copy, Clone, DebugBits, PartialEq)]
     pub struct IsochronousInterrupt{
         pub interrupt : u1,
         reserved : u7
@@ -1085,7 +1090,7 @@ pub mod Isochronous {
     data::bilge_pdudata!(IsochronousInterrupt, u8);
 
     #[bitsize(16)]
-    #[derive(Clone, DebugBits, PartialEq)]
+    #[derive(Copy, Clone, DebugBits, PartialEq)]
     pub struct IsochronousLatchEdge{
         pub latch_pos : u1,
         pub latch_neg : u1,
@@ -1094,7 +1099,7 @@ pub mod Isochronous {
     data::bilge_pdudata!(IsochronousLatchEdge, u16);
 
     #[bitsize(8)]
-    #[derive(Clone, DebugBits, PartialEq)]
+    #[derive(Copy, Clone, DebugBits, PartialEq)]
     pub struct IsochronousLatchEvent{
         pub latch_pos : u1,
         pub latch_neg : u1,
@@ -1102,65 +1107,3 @@ pub mod Isochronous {
     }
     data::bilge_pdudata!(IsochronousLatchEvent, u8);
 }
-
-// /** registers in physical memory of a slave
-//
-// 	this struct does not intend to match any structure defined in the ETG specs, it is only sorting fields pointing to the physical memory of a slave. according to the ETG specs, most of these fields shall exist in each slave's physical memory, others might be optional and the user must check for this before using them.
-// */
-// const registers = Registers {
-// 	address: {
-// 		fixed: Field::<u16>::new(0x0010),
-// 		alias: Field::<u16>::new(0x0012),
-// 	},
-// 	dl_control: Field::<DLControl>::new(0x0101),
-// 	dl_status: Field::<DLStatus>::new(0x0110),
-//
-// 	dls_user: {
-// 		r1: Field::<u8>::simple(0x0120),
-// 		r2: Field::<u8>::simple(0x0121),
-// 		r3: Field::<u8>::simple(0x0130),
-// 		r4: Field::<u8>::simple(0x0131),
-// 		r5: Field::<u16>::simple(0x0132),
-// 		r6: Field::<u16>::simple(0x0134),
-// 		r7: Field::<u8>::simple(0x0140),
-// 		copy_r1_r3: BitField::<bool>::new(0x0141*8, 1),
-// 		r9: BitField::<u8>::new(0x0141*8+1, 7),
-// 		r8: Field::<u8>::simple(0x0150),
-//
-// 		event: Field::<DLSUserEvents>::simple(0x0220),
-// 		event_mask: Field::<DLSUserEvents>::simple(0x0202),
-// 		watchdog: Field::<u16>::simple(0x0410),
-// 	},
-//
-// 	external_event: Field::<ExternalEvent>::simple(0x0210),
-// 	external_event_mask: Field::<ExternalEvent>::simple(0x0200),
-//
-// 	ports_errors: Field::<PortsErrorCount>::simple(0x0300),
-// 	lost_link_count: Field::<LostLinkCount>::simple(0x0310),
-// 	frame_error_count: Field::<FrameErrorCount>::simple(0x0308),
-// 	watchdog_divider: Field::<u16>::simple(0x0400),
-// 	watchdog_counter: Field::<WatchdogCounter>::simple(0x0442),
-//
-// 	sync_manager: {
-// 		/// ETG.1000.6 table 45
-// 		watchdog: Field::<u16>::simple(0x0420),
-// 		/// ETG.1000.6 table 46
-// 		watchdog_status: Field::<bool>::simple(0x0440),
-// 	},
-//
-// 	sii: {
-// 		access: Field::<SiiAccess>::simple(0x0500),
-// 		control: Field::<SiiControl>::simple(0x0502),
-// 		/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
-// 		address: Field::<u32>::simple(0x0504),
-// 		/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
-// 		data: Field::<u32>::simple(0x0508),
-// 	},
-//
-// 	// TODO: MII (Media Independent Interface)
-//
-// 	fmmus: FMMU {address: 0x0600, num: 16},
-// 	sync_manager: SyncManager {address: 0x0800, num: 16},
-// 	clock: Field::<DistributedClock>::simple(0x0900),
-// 	clock_latch: Field::<u32>::simple(0x0900),
-// };

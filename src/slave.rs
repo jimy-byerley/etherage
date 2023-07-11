@@ -51,7 +51,7 @@ const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100}
 
     In this example, `group` is a tool to manage the logical memory and mappings from [crate::mapping].
 */
-#[derive(Debug, PartialEq)]
+
 pub struct Slave<'a> {
     master: &'a RawMaster,
     /// current address in use, fixed or topological

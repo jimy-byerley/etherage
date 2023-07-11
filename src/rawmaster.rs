@@ -56,7 +56,6 @@ const MAX_ETHERCAT_PDU: usize = MAX_ETHERCAT_FRAME / MIN_PDU;
 	![ethercat sub protocols](/etherage/schemes/ethercat-protocols.svg)
 */
 
-#[derive(Debug)]
 pub struct RawMaster {
 	/// (µs) acceptable delay time before sending buffered PDUs
 	pdu_merge_time: Duration,
