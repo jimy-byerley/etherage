@@ -43,4 +43,6 @@ pub trait EthercatSocket {
         The implentor of this trait is responsible of encapsulating the data into the specific socket by adding the necessary specific headers, footers, checks, fragmentation ...
     */
     fn send(&self, data: &[u8]) -> io::Result<()>;
+    /// maximum frame size tolerated for sending by this socket
+    fn max_frame(&self) -> usize;
 }

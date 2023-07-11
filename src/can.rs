@@ -59,11 +59,10 @@ impl<'a> Can<'a> {
     /// read an SDO, any size
     pub async fn sdo_read<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2) -> T {
 		let mut data = T::Packed::uninit();
-		self.sdo_read_slice(sdo, priority, data.as_mut()).await;
-        T::unpack(data.as_ref()).unwrap()
+        T::unpack(self.sdo_read_slice(&sdo.downcast(), priority, data.as_mut()).await).unwrap()
     }
         
-	pub async fn sdo_read_slice<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: &mut [u8])   {
+	pub async fn sdo_read_slice<'b>(&mut self, sdo: &Sdo, priority: u2, data: &'b mut [u8]) -> &'b mut [u8]   {
         let mut mailbox = self.mailbox.lock().await;
         let mut buffer = [0; MAILBOX_MAX_SIZE];
         
@@ -99,20 +98,21 @@ impl<'a> Can<'a> {
             data.copy_from_slice(Cursor::new(frame)
                 .read(EXPEDITED_MAX_SIZE - u8::from(header.size()) as usize).unwrap()
                 );
+            data
         }
         else {
             // normal transfer, eventually segmented
             let mut frame = Cursor::new(frame);
-            let total = frame.unpack::<u32>().unwrap().try_into().expect("SDO is too big for memory");
-            assert_eq!(total, T::Packed::LEN);
+            let total = frame.unpack::<u32>().unwrap().try_into().expect("SDO is too big for master memory");
+            assert!(total <= data.len());
             
             let mut received = Cursor::new(&mut data.as_mut()[.. total]);
-            let mut toggle = true;
+            let mut toggle = false;
             received.write(frame.remain()).unwrap();
             
             // receive more data from segments
             // TODO check for possible SDO error
-            loop {
+            while received.remain().len() != 0 {
 				// send segment request
                 {
                     let mut frame = Cursor::new(buffer.as_mut_slice());
@@ -123,6 +123,7 @@ impl<'a> Can<'a> {
                             toggle, 
                             u3::from(SdoCommandRequest::UploadSegment),
                         )).unwrap();
+                    frame.write(&[0; 7]).unwrap();
                     mailbox.write(MailboxType::Can, priority, frame.finish()).await;
                 }
             
@@ -136,16 +137,14 @@ impl<'a> Can<'a> {
                             toggle,
                             ).await.unwrap();
                     let segment = &segment[.. received.remain().len()];
-                    received.write(segment).unwrap();
+                    received.write(segment).expect("received more than expected");
                     
-					if received.position() > T::Packed::LEN 
-                        {panic!("received more data than expected")}
 					if ! header.more () {break}
                 }
                 
 				toggle = ! toggle;
             }
-            assert_eq!(received.position(), T::Packed::LEN);
+            received.finish()
         }
         
         // TODO: error propagation instead of asserts
@@ -155,9 +154,9 @@ impl<'a> Can<'a> {
 	pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)  {
         let mut packed = T::Packed::uninit();
         data.pack(packed.as_mut()).unwrap();
-        self.sdo_write_slice(sdo, priority, &packed.as_ref()).await;
+        self.sdo_write_slice(&sdo.downcast(), priority, packed.as_ref()).await;
 	}
-	pub async fn sdo_write_slice<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: &[u8])  {
+	pub async fn sdo_write_slice(&mut self, sdo: &Sdo, priority: u2, data: &[u8])  {
         let mut mailbox = self.mailbox.lock().await;		
         let mut buffer = [0; MAILBOX_MAX_SIZE];
 		if data.len() <= EXPEDITED_MAX_SIZE {
@@ -176,6 +175,7 @@ impl<'a> Can<'a> {
                             sdo.sub.unwrap(),
                         )).unwrap();
                 frame.write(data).unwrap();
+                frame.write(&[0; 4][data.len() ..]).unwrap();
                 mailbox.write(MailboxType::Can, priority, frame.finish()).await;
             }
             
@@ -232,7 +232,7 @@ impl<'a> Can<'a> {
                             data.remain().len() != 0, 
                             u3::new(0), 
                             toggle, 
-                            u3::from(SdoCommandRequest::Download),
+                            u3::from(SdoCommandRequest::DownloadSegment),
                         )).unwrap();
                     frame.write(data.read(segment).unwrap()).unwrap();
                     mailbox.write(MailboxType::Can, priority, frame.finish()).await;
@@ -337,10 +337,10 @@ impl<'a> Can<'a> {
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct CoeHeader {
     /// present in the Can protocol, but not used in CoE
-    number: u9,
+    pub number: u9,
     reserved: u3,
     /// Can command
-    service: CanService,
+    pub service: CanService,
 }
 data::bilge_pdudata!(CoeHeader, u16);
 
@@ -398,35 +398,35 @@ data::bilge_pdudata!(CanService, u4);
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct SdoHeader {
     /// true if field `size` is used
-    sized: bool,
+    pub sized: bool,
     /// true in case of an expedited transfer (the data size specified by `size`)
-    expedited: bool,
+    pub expedited: bool,
     /// indicate the data size but not as an integer.
-    /// this value shall be `SDO_REQUESTS_SIZES[sizeof]`
-    size: u2,
+    /// this value shall be `4 - data.len()`
+    pub size: u2,
     /// true if a complete SDO is accessed
-    complete: bool,
+    pub complete: bool,
     /// operation to perform with the indexed SDO, this should be a value of [SdoCommandRequest] or [SdoCommandResponse]
-    command: u3,
+    pub command: u3,
     /// SDO index
-    index: u16,
+    pub index: u16,
     /**
     - if subitem is accessed: SDO subindex
     - if complete item is accessed:
         + put 0 to include subindex 0 in transmission
         + put 1 to exclude subindex 0 from transmission
     */
-    sub: u8,
+    pub sub: u8,
 }
 data::bilge_pdudata!(SdoHeader, u32);
 
 #[bitsize(8)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct SdoSegmentHeader {
-    more: bool,
-    size: u3,
-    toggle: bool,
-    command: u3,
+    pub more: bool,
+    pub size: u3,
+    pub toggle: bool,
+    pub command: u3,
 }
 data::bilge_pdudata!(SdoSegmentHeader, u8);
 
@@ -469,7 +469,7 @@ pub enum SdoAbortCode {
     UnsupportedCommand = 0x05_04_00_01,
     /// Out of memory
     OufOfMemory = 0x05_04_00_05,
-    /// Unsupported access to an object
+    /// Unsupported access to an object, this is raised when trying to access a complete SDO when complete SDO access is not supported
     UnsupportedAccess = 0x06_01_00_00,
     /// Attempt to read to a write only object
     WriteOnly = 0x06_01_00_01,

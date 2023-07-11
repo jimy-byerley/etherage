@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use core::time::Duration;
 use etherage::{
-    PduData, Field, PduAnswer, EthernetSocket, RawMaster, Sdo,
+    EthernetSocket, RawMaster, Sdo,
     mailbox::Mailbox,
     can::Can,
     registers,
     };
+use tokio::sync::Mutex;
 use bilge::prelude::u2;
 
 #[tokio::main]
@@ -30,8 +31,8 @@ async fn main() -> std::io::Result<()> {
     let slave = 1;
 
     // initialize mailbox
-    let mut mailbox = Mailbox::new(&master, 1, 0x1000 .. 0x1103, 0x1104 .. 0x1200).await;
-    let mut can = Can::new(&mut mailbox);
+    let mailbox = Arc::new(Mutex::new(Mailbox::new(&master, 1, 0x1000 .. 0x1103, 0x1104 .. 0x1200).await));
+    let mut can = Can::new(mailbox);
     
     master.fpwr(slave, registers::sii::access, {
         let mut config = registers::SiiAccess::default();
@@ -42,7 +43,7 @@ async fn main() -> std::io::Result<()> {
     // switch to preop
     master.fpwr(slave, registers::al::control, {
         let mut config = registers::AlControlRequest::default();
-        config.set_state(registers::AlState::PreOperational);
+        config.set_state(registers::AlState::PreOperational.into());
         config.set_ack(true);
         config
     }).await.one();
@@ -55,7 +56,7 @@ async fn main() -> std::io::Result<()> {
             assert_eq!(received.answers, 1);
             panic!("error on state change: {:?}", received.value);
         }
-        if received.value.state() == registers::AlState::PreOperational  {break}
+        if received.value.state() == registers::AlState::PreOperational.into()  {break}
     }
     
     let sdo = Sdo::<u16>::complete(0x6041);

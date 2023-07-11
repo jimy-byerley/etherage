@@ -6,6 +6,7 @@
     Some registers are partially redundant, this is because we can use some field pointing to a big struct and other fields pointing to only parts of the same struct.
 */
 
+use core::fmt;
 use bilge::prelude::*;
 use crate::data::{self, Field, BitField, Storage};
 
@@ -103,16 +104,18 @@ pub mod al {
     pub const response: Field<AlControlResponse> = Field::simple(dls_user::r3.byte);
     pub const error: Field<AlError> = Field::simple(dls_user::r6.byte);
     pub const status: Field<AlStatus> = Field::simple(dls_user::r3.byte);
+    pub const pdi: Field<AlPdiControlType> = Field::simple(dls_user::r7.byte);
+    pub const sync_config: Field<AlSyncConfig> = Field::simple(dls_user::r8.byte);
 }
 
 
 
 /// ETG.1000.6 table 9
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
 pub struct AlControlRequest {
     /// requested state of communication
-    pub state: AlState,
+    pub state: AlMixedState,
     /// if true, parameter change of the [AlStatus::changed] will be reset
     pub ack: bool,
     /// request of id instead of error code in [al::error]
@@ -123,10 +126,10 @@ data::bilge_pdudata!(AlControlRequest, u8);
 
 /// ETG.1000.6 table 10
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct AlControlResponse {
     /// formerly requested state of communication
-    pub state: AlState,
+    pub state: AlMixedState,
     /**
     - false: State transition successful
     - true: State transition not successful
@@ -140,25 +143,115 @@ data::bilge_pdudata!(AlControlResponse, u8);
 
 /// ETG.1000.6 table 12
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct AlStatus {
     /// current state of communication
-    pub state: AlState,
+    pub state: AlMixedState,
     /// true if requested by [AlControlRequest::ack]
     pub changed: bool,
     reserved: u3,
 }
 data::bilge_pdudata!(AlStatus, u8);
 
-/// ETG.1000.6 table 9
+/**
+    the current operation state on one device.
+
+    This is the enum version, useful when communicating with one slave only
+
+    Except [Self::Bootstrap], changing to any mode can be requested from any upper mode or from the preceding one.
+
+    ETG.1000.6 table 9
+*/
 #[bitsize(4)]
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AlState {
-    Init = 1,
-    PreOperational = 2,
+    /**
+        Transitional state meaning the slave is booting up and ready for nothing yet. The slave should normally reach the [Self::Init] state within seconds.
+
+        It cannot be requested, nor changed while it is active.
+    */
     Bootstrap = 3,
+    /**
+        The init mode allows to set many communication registers, like the salve address, the mailbox setup, etc.
+
+        This mode should be used at the beginning of a communication. Only registers can be used.
+    */
+    Init = 1,
+    /**
+        the pre operational mode allows mailbox communication, which is mendatory to configure some slaves before realtime operations. Most functions are enabled but not realtime.
+
+        Communication setup via registers is no more allowed in this mode.
+    */
+    PreOperational = 2,
+    /**
+        Mode allowing realtime operations, except that commands sent to the slaves via its mapping will not be executed.
+
+        This is a kind of read-only temporary mode before [Self::Operational], that can be useful for initializing control loops on the master side while their outputs are ignored.
+
+        Mapping is no more allowed in this state, nor communication setup via registers.
+    */
     SafeOperational = 4,
+    /**
+        Realtime operations running
+
+        The master has full access to the slave's effector functions. slaves might expect the master to regularly refresh its commands.
+
+        Mapping is no more allowed in this state, nor communication setup via registers.
+    */
     Operational = 8,
+}
+
+/**
+	gather the current operation states on several devices
+	this struct does not provide any way to know which slave is in which state
+
+	This is the bitfield version, useful when communicating with multiple slaves (broadcast PDUs)
+
+    ETG.1000.6 table 9
+*/
+#[bitsize(4)]
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct AlMixedState {
+    /// one slave at least is in [AlState::Init]
+	pub init: bool,
+	/// one slave at least is in [AlState::PreOperational]
+	pub pre_operational: bool,
+	/// one slave at least is in [AlState::SafeOperational]
+	pub safe_operational: bool,
+	/// one slave at least is in [AlState::Operational]
+	pub operational: bool,
+}
+
+impl fmt::Display for AlMixedState {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}{{", core::any::type_name::<Self>()) ?;
+		for (active, mark) in [ (self.init(), "init"),
+								(self.pre_operational(), "pre"),
+								(self.safe_operational(), "safe"),
+								(self.operational(), "op"),
+								] {
+			write!(f, " ")?;
+			if active {
+				write!(f, "{}", mark)?;
+			} else {
+				for _ in 0 .. mark.len() {write!(f, " ")?;}
+			}
+		}
+		write!(f, "}}")?;
+		Ok(())
+	}
+}
+
+impl TryFrom<AlMixedState> for AlState {
+    type Error = &'static str;
+    fn try_from(state: AlMixedState) -> Result<Self, Self::Error> {
+        Self::try_from(u4::from(state)).map_err(|e|  "cannot unwrap when not only 1 state in mix")
+    }
+}
+impl From<AlState> for AlMixedState {
+    fn from(state: AlState) -> Self {
+        Self::from(u4::from(state))
+    }
 }
 
 /// ETG.1000.6 table 11
@@ -236,16 +329,16 @@ pub enum AlError {
     InvalidDcConfig = 0x0030,
     ///  Invalid DC Latch Configuration
     InvalidLatchConfig = 0x0031,
-    ///  PLL Error
+    ///  Phase Link Lock Error
     PLL = 0x0032,
-    ///  DC Sync IO Error
+    ///  Distributed Clock Sync IO Error
     DCSyncIO = 0x0033,
-    ///  DC Sync Timeout Error
+    ///  Distributed Clock Sync Timeout Error
     DCSyncTimeout = 0x0034,
-    ///  DC Invalid Sync Cycle Time
+    ///  Distributed Clock Invalid Sync Cycle Time
     DCInvalidPeriod = 0x0035,
-    // 0x0036 DC Sync0 Cycle Time
-    // 0x0037 DC Sync1 Cycle Time
+// 0x0036 Distributed Clock Sync0 Cycle Time
+// 0x0037 Distributed Clock Sync1 Cycle Time
     ///  MBX_AOE
     MailboxAOE = 0x0041,
     ///  MBX_EOE
@@ -275,6 +368,35 @@ pub enum AlError {
 }
 data::bilge_pdudata!(AlError, u16);
 
+/// ETG.1000.6 table 13
+#[bitsize(9)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct AlPdiControlType {
+    /// Type specific (see ETG.1000.3 DL information parameter)
+    pub pdi: u8,
+    /**
+        - false: AL Management will be done by an application Controller
+        - true: AL Management will be emulated (AL status follows directly AL control)
+    */
+    pub strict: bool,
+}
+data::bilge_pdudata!(AlPdiControlType, u9);
+
+/// ETG.1000.6 table 15
+#[bitsize(8)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct AlSyncConfig {
+    /// controller specific
+    pub signal_conditioning_sync0: u2,
+    pub enable_signal_sync0: bool,
+    pub enable_interrupt_sync0: bool,
+
+    /// controller specific
+    pub signal_conditioning_sync1: u2,
+    pub enable_signal_sync1: bool,
+    pub enable_interrupt_sync1: bool,
+}
+data::bilge_pdudata!(AlSyncConfig, u8);
 
 
 /// ETG.1000.4 table 31
@@ -315,7 +437,7 @@ pub struct DLInformation {
     pub mii_enhanced_link_detection: bool,
     /// if true, frames with modified FCS (additional nibble) should be counted separately in RX-Error Previous counter
     pub separate_fcs_errors: bool,
-    /// true if available. This feature refers to registers 0x981[7:3], 0x0984
+    /// true if available. This feature refers to registers 0x981\[7:3\], 0x0984
     pub dc_sync_activation_enhanced: bool,
 
     /// if true, `LRW` is not supported
@@ -402,7 +524,7 @@ data::bilge_pdudata!(DLControl, u32);
 pub enum Forwarding {
 	/// EtherCAT frames are processed, non-EtherCAT frames are forwarded without modification, The source MAC address is not changed for any frame
 	Transmit = 0,
-	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC[1] is set to 1 – locally administered address).
+	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC\[1\] is set to 1 – locally administered address).
 	Filter = 1,
 }
 data::bilge_pdudata!(Forwarding, u1);
@@ -486,15 +608,16 @@ pub struct ExternalEvent {
 data::bilge_pdudata!(ExternalEvent, u16);
 
 /// A write to one counter will reset all counters of the group
+/// ETG.1000.4 table 40
 #[repr(packed)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PortsErrorCount {
 	pub port: [PortErrorCount; 4],
 }
 data::packed_pdudata!(PortsErrorCount);
 
 #[bitsize(16)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct PortErrorCount {
 	/// counts the occurrences of frame errors (including RX errors within frame)
 	pub frame: u8,
@@ -641,7 +764,7 @@ pub struct FMMU {
 
 impl FMMU {
     /// return an entry of the FMMU
-    pub fn entry(&self, index: u8) -> Field<FMMUEntry>  {
+    pub fn entry(&self, index: u8) -> Field<FmmuEntry>  {
         assert!(index < self.num, "index out of range");
         Field::simple(usize::from(self.address + u16::from(index)*0x10))
     }
@@ -655,8 +778,8 @@ impl FMMU {
 	ETG.1000.4 table 56
 */
 #[bitsize(128)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
-pub struct FMMUEntry {
+#[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
+pub struct FmmuEntry {
 	/// start byte in the logical memory
 	pub logical_start_byte: u32,
 	/// byte size of the data (rounded to lower value in case of bit-sized data ?)
@@ -685,7 +808,7 @@ pub struct FMMUEntry {
 	reserved: u7,
 	reserved: u24,
 }
-data::bilge_pdudata!(FMMUEntry, u128);
+data::bilge_pdudata!(FmmuEntry, u128);
 
 /// this is not a PduData but a convenience struct transporting the addresses of a sync manager
 /// ETG.1000.4 table 59
@@ -699,7 +822,7 @@ pub struct SyncManager {
 impl SyncManager {
     pub fn channel(&self, index: u8) -> Field<SyncManagerChannel> {
         assert!(index < self.num, "index out of range");
-        Field::simple(usize::from(self.address + u16::from(index)*0x8))
+        Field::simple(usize::from(self.address + u16::from(index) * (core::mem::size_of::<SyncManagerChannel>() as u16) ))
     }
     // return the sync manager channel reserved for mailbox in
     pub fn mailbox_write(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
@@ -771,14 +894,14 @@ data::bilge_pdudata!(SyncManagerChannel, u64);
 
 /// ETG.1000.4 table 58
 #[bitsize(2)]
-#[derive(TryFromBits, Debug)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SyncMode {
     Buffered = 0,
     Mailbox = 2,
 }
 /// ETG.1000.4 table 58
 #[bitsize(2)]
-#[derive(TryFromBits, Debug)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SyncDirection {
     /// sync manager buffer is read by the master
     Read = 0,

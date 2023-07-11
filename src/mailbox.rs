@@ -1,9 +1,9 @@
 //! implementation of communication with a slave's mailbox
 
 use crate::{
-	rawmaster::{RawMaster, PduCommand},
+	rawmaster::{RawMaster, PduCommand, SlaveAddress},
 	registers,
-    data::{self, PduData, Field, Storage, Cursor},
+    data::{self, PduData, Cursor},
 	};
 use core::ops::Range;
 use bilge::prelude::*;
@@ -42,8 +42,9 @@ impl<'b> Mailbox<'b> {
             panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
         }
         
+        use futures_concurrency::future::Join;
         // configure sync manager
-        futures::join!(
+        (
             async { master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
                 let mut config = registers::SyncManagerChannel::default();
                 config.set_address(write.start);
@@ -67,7 +68,7 @@ impl<'b> Mailbox<'b> {
                 config.set_enable(true);
                 config
             }).await.one() },
-        );
+        ).join().await;
         
         assert!(usize::from(read.end - read.start) < MAILBOX_MAX_SIZE);
         assert!(usize::from(write.end - write.start) < MAILBOX_MAX_SIZE);
@@ -96,12 +97,14 @@ impl<'b> Mailbox<'b> {
         `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
     
         return the slice of data received.
+        
+        - 0 is lowest priority, 3 is highest
     */
-	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
+	pub async fn read<'a>(&mut self, ty: MailboxType, _priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         
-        self.read.count = (self.read.count % 6)+1;
+        self.read.count = (self.read.count % 7)+1;
         
 		// wait for data
 		let mut state = loop {
@@ -116,7 +119,7 @@ impl<'b> Mailbox<'b> {
         let buffer = &mut allocated[range];
 		// read the mailbox content
 		loop {
-            if self.master.pdu(PduCommand::FPRD, self.slave, self.read.address, buffer).await == 1 
+            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer).await == 1 
                 {break}
             
             // trigger repeat
@@ -145,13 +148,15 @@ impl<'b> Mailbox<'b> {
 	}
 	/**
         write the given frame in the mailbox, wait for it first if already busy
+        
+        - 0 is lowest priority, 3 is highest
     */
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
 		let mailbox_control = registers::sync_manager::interface.mailbox_write();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         let buffer = &mut allocated[.. self.write.max];
         
-        self.write.count = (self.write.count % 6)+1;
+        self.write.count = (self.write.count % 7)+1;
         
         let mut frame = Cursor::new(buffer.as_mut());
         frame.pack(&MailboxHeader::new(
@@ -172,6 +177,7 @@ impl<'b> Mailbox<'b> {
             break
         }
         // write data
+        // TODO: retry this solution with writing the last word instead of the last byte
         // we are forced to write the whole buffer (even if much bigger than data) because the slave will notice the data sent only if writing the complete buffer
         // and writing the last byte instead does not work trick it.
 //         if mailbox_size - data.len() > 32 {
@@ -188,7 +194,7 @@ impl<'b> Mailbox<'b> {
 //         }
 //         else {
             // write the full buffer
-            while self.master.pdu(PduCommand::FPWR, self.slave, self.write.address, buffer.as_mut()).await != 1
+            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut()).await != 1
                 {}
 //         }
 	}
@@ -242,14 +248,23 @@ data::bilge_pdudata!(MailboxErrorFrame, u32);
 #[bitsize(16)]
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum MailboxError {
+    /// Syntax of 6 octet Mailbox Header is wrong
     Syntax = 0x1,
+    /// The Mailbox protocol is not supported
     UnsupportedProtocol = 0x2,
+    /// Channel Field contains wrong value (a slave can ignore the channel field)
     InvalidChannel = 0x3,
+    /// the service in the Mailbox protocol is not supported
     ServiceNotSupported = 0x4,
+    /// The mailbox protocol header of the mailbox protocol is wrong (without the 6 octet mailbox header)
     InvalidHeader = 0x5,
+    /// length of received mailbox data is too short for slave's expectations
     SizeTooShort = 0x6,
+    /// Mailbox protocol cannot be processed because of limited ressources
     NoMoreMemory = 0x7,
+    /// the length of data is inconsistent
     InvalidSize = 0x8,
+    /// Mailbox service already in use
     ServiceInWork = 0x9,
 }
 

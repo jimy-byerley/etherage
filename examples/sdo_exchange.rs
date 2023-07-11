@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use core::time::Duration;
+use futures_concurrency::future::Join;
 use etherage::{
-    PduData, Field, PduAnswer, EthernetSocket, RawMaster, 
+    EthernetSocket, RawMaster, 
     Sdo, SlaveAddress, Slave, CommunicationState,
-    registers,
     };
 use bilge::prelude::u2;
 
@@ -22,7 +22,7 @@ async fn main() -> std::io::Result<()> {
     })};
     std::thread::sleep(Duration::from_millis(500));
     
-    let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0));
+    let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await;
     slave.set_address(1).await;
     slave.init_mailbox().await;
@@ -30,28 +30,29 @@ async fn main() -> std::io::Result<()> {
     slave.switch(CommunicationState::PreOperational).await;
     
     let sdo = Sdo::<u32>::complete(0x1c12);
+    let priority = u2::new(1);
     
     // test read/write
-    let received = slave.coe().await.sdo_read(&sdo, u2::new(1)).await;
-    slave.coe().await.sdo_write(&sdo, u2::new(1), received).await;
+    let received = slave.coe().await.sdo_read(&sdo, priority).await;
+    slave.coe().await.sdo_write(&sdo, priority, received).await;
     
     // test concurrent read/write
-    futures::join!(
+    (
         async {
             println!("begin");
-            let received = slave.coe().await.sdo_read(&sdo, u2::new(1)).await;
+            let received = slave.coe().await.sdo_read(&sdo, priority).await;
             println!("between");
-            slave.coe().await.sdo_write(&sdo, u2::new(1), received).await;
+            slave.coe().await.sdo_write(&sdo, priority, received).await;
             println!("end");
         },
         async {
             println!("begin");
-            let received = slave.coe().await.sdo_read(&sdo, u2::new(1)).await;
+            let received = slave.coe().await.sdo_read(&sdo, priority).await;
             println!("between");
-            slave.coe().await.sdo_write(&sdo, u2::new(1), received).await;
+            slave.coe().await.sdo_write(&sdo, priority, received).await;
             println!("end");
         },
-    );
+    ).join().await;
     
     Ok(())
 }
