@@ -424,7 +424,22 @@ pub mod cia402 {
     pub const sensor_velocity: Sdo<i32> = Sdo::complete(0x6069);
     
     pub const motion_profile: Sdo<> = Sdo::complete(0x6086);
-    pub const interpolation_time_period: Sdo<> = Sdo::complete(0x60c2);
+    /*
+        duration of the interpolated ramp between the last target point and the next one received.
+        The duration value is `digits * 10^exponent [seconds]` 
+        
+        This is a 1st order interpolation done by the servodrive every of its position-control loop in [CSP] that converts the ethercat received PDO target positions into a position command.
+        
+        By default this duration is `0` so the new targets are converted to stairs, the recommended value is the communication period or above if the period is uncertain.
+    
+        not in ETG, but in canopen specs
+    */
+    pub mod interpolation_period {
+        use super::*;
+        
+        pub const digits: Sdo<u8> = Sdo::sub(0x60c2, 1, 16);
+        pub const exponent: Sdo<i8> = Sdo::sub(0x60c2, 2, 24);
+    }
     
     /**
         motor resolution (steps/revolution) for stepper motors
