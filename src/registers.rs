@@ -987,7 +987,7 @@ pub mod isochronous {
 
     //Iso chronous PDI offset
     pub const slave_cfg : crate::Field<crate::registers::isochronous::Isochronous> = crate::Field::simple(0x980);
-    pub const slave_acces : crate::Field<crate::registers::isochronous::Isochronous> = crate::Field::simple(0x980);
+    pub const slave_access : crate::Field<crate::registers::isochronous::Isochronous> = crate::Field::simple(0x980);
     pub const slave_sync : crate::Field<crate::registers::isochronous::IsochronousSync> = crate::Field::simple(0x981);
     pub const slave_pulse : crate::Field<u16> = crate::Field::simple(0x983);
     pub const slave_interrupt : crate::Field<crate::registers::isochronous::IsochronousInterrupt> = crate::Field::simple(0x98E);

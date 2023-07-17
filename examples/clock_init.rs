@@ -3,7 +3,7 @@ use core::time::Duration;
 use etherage::{
     EthernetSocket,
     RawMaster,
-    synchro::{SyncClock},
+    synchro::{SyncClock, SlaveClockConfigHelper},
     SlaveAddress,
     Slave,
     CommunicationState, Master};
@@ -37,14 +37,15 @@ async fn main() -> std::io::Result<()> {
         slaves.push(i + 1);
     }
 
-    //Init clock
+    // 1. Init clock
     let raw : &RawMaster = unsafe { master.get_raw() };
     let mut sc: SyncClock<'_> = SyncClock::new(raw);
-    sc.slaves_register(&slaves).expect("Error on register");
+    // 2. Registers slaves with DC configuration
+    sc.slaves_register(&slaves, SlaveClockConfigHelper::default()).expect("Error on register");
+    // 3. Initiliate clock: - Compute offset to reference clock and transmittion delay, for each registered slave
     sc.init(*slaves.first().unwrap()).await.expect("Error on init");
+    // 4. Start DC
     sc.sync().await.expect("Error on start sync");
-
-    //slave.switch(CommunicationState::PreOperational).await;
 
     println!("{}",slaves.len());
     Ok(())

@@ -111,6 +111,29 @@ impl SlaveInfo {
     }
 }
 
+/// Helper to configurate to configurate **basic** DC synchronisation <br>
+/// To use more **advanced** clock use SDO with 1xC32 index on SM2 channel and 1xC33 index on SM3 channel
+#[derive(Debug, Clone, Copy)]
+pub struct SlaveClockConfigHelper {
+    /// The interrupt generation will start when the lower 32bits of the system time will reach this value (ns)
+    pub cyclic_op_time : Option<u32>,
+    /// Sync 0 cyclic time (ns) - if *Option::None*, disable Sync0 pulse generation
+    pub sync_0_time : Option<u32>,
+    /// Sync 1 cyclic time (ns) - if *Option::None*, disable Sync1 pulse generation
+    pub sync_1_time : Option<u32>,
+    /// Pulse debug time option - Taken from SII (Slave Information Interface) - Multiple of **10ns**
+    pub pulse : Option<u16>,
+}
+impl SlaveClockConfigHelper {
+    pub fn new(cyclic_op_time: Option<u32>, sync_0_time : Option<u32>, sync_1_time : Option<u32>, pulse : Option<u16>) -> Self {
+        Self { cyclic_op_time, sync_0_time, sync_1_time, pulse }
+    }
+    /// Default implementation: cyclic_op_time = 2000, sync_0_time = 1, sync_1_time = none, pulse : none,
+    pub fn default() -> Self {
+        Self { sync_0_time: Some(1), sync_1_time: Option::None, cyclic_op_time: Some(2000), pulse: Some(1) }
+    }
+}
+
 pub struct SyncClock<'a> {
     mode : SlaveSyncDetailType,
     master: &'a RawMaster,
@@ -200,31 +223,25 @@ impl<'a> SyncClock<'a> {
         return self.status.clone();
     }
 
-    /// Configure DC for the specific slave. See Isochronous struct for more detail <br>
-    /// - slave:  Slave address<br>
-    /// - enable_dc : Toggle DC on or off <br>
-    /// - sync_0_time : Synchronization cycle time (in ns) for SYNC 0 - None = SYNC 0 disable<br>
-    /// - sync_1_time : Synchronization cycle time (in ns) for SYNC 1 - None = SYNC 1 disable<br>
-    /// - start_time : Cycle operation start time (in ns)<br>
-    /// - pulse : Cycle operation start time (in ns)<br>
-    /// TODO: Config latch
-    pub fn set_dc_slave_config(&mut self, slave : u16, enable_cyclic : bool, sync_0_time : Option<u32>, sync_1_time : Option<u32>, start_time : u32, pulse : u16) {
+    /// Configure DC for the specific slave. See Isochronous struct for more detail 981 register <br>
+    /// - *slave* :  Slave address<br>
+    /// - *config* : Slave configuration struct <br>
+    pub fn set_dc_slave_config(&mut self, slave : u16, config  : SlaveClockConfigHelper) {
         for slv in self.slaves.iter_mut() {
             if slave != slv.index { continue; }
-            slv.isochronous.sync.set_enable_cyclic(bilge::prelude::u1::from(enable_cyclic));
-            if sync_0_time != Option::None {
+            slv.isochronous.sync.set_enable_cyclic(bilge::prelude::u1::from(config.cyclic_op_time != Option::None));
+            slv.isochronous.cyclic_op_start_time = config.cyclic_op_time.unwrap_or_default();
+            if config.sync_0_time != Option::None {
                 slv.isochronous.sync.set_generate_sync0(bilge::prelude::u1::from(slv.index == self.slave_ref_index));
                 slv.isochronous.interrupt1.set_interrupt(bilge::prelude::u1::from(slv.index != self.slave_ref_index));
-                slv.isochronous.sync_0_cycle_time = sync_0_time.unwrap();
+                slv.isochronous.sync_0_cycle_time = config.sync_0_time.unwrap();
             }
-            if sync_1_time != Option::None {
+            if config.sync_1_time != Option::None {
                 slv.isochronous.sync.set_generate_sync1(bilge::prelude::u1::from(slv.index == self.slave_ref_index));
                 slv.isochronous.interrupt2.set_interrupt(bilge::prelude::u1::from(slv.index != self.slave_ref_index));
-                slv.isochronous.sync_1_cycle_time = sync_1_time.unwrap();
+                slv.isochronous.sync_1_cycle_time = config.sync_1_time.unwrap();
             }
-
-            slv.isochronous.cyclic_op_start_time = start_time;
-            slv.isochronous.sync_pulse = pulse;
+            slv.isochronous.sync_pulse = config.pulse.unwrap_or_default();
         }
     }
 
@@ -260,9 +277,10 @@ impl<'a> SyncClock<'a> {
     }
 
     /// Register many slave to this synchronisation instance<br>
-    /// - slvs: Slaves to register into a slice. We assume that slaves are sort by croissant order<br>
+    /// - *slvs*: Slaves to register into a slice. We assume that slaves are sort by croissant order<br>
+    /// - *config* : DC basic configuration used for each slave
     /// Return: Number of slave currently register
-    pub fn slaves_register(&mut self, slvs : &[u16] ) -> Result<usize, EthercatError<&'static str>> {
+    pub fn slaves_register(&mut self, slvs : &[u16], config : SlaveClockConfigHelper ) -> Result<usize, EthercatError<&'static str>> {
         if self.status != ClockStatus::Register {
             return Err(crate::EthercatError::Slave("Cannot register slaves if clock is initialzed or running")); }
         let mut i : usize = match self.slaves.is_empty() {
@@ -271,12 +289,33 @@ impl<'a> SyncClock<'a> {
         };
         for slv in slvs.iter() {
             self.slaves.push(SlaveInfo::new(*slv));
+            self.set_dc_slave_config(*slv, config.clone());
             i += 1;
         }
         return Ok(i);
     }
 
-    /// Design a slave reference for distributed clock, compute delay and notify all the ethercat loop <br>
+    /// Unregister slave if  exist and it's not the reference slave
+    /// This function can only be done in init **init** and **register** clock status
+    /// - *slave* : Index of the slave to remove (index in EtherCAT loop)
+    pub fn slave_unregister(&mut self, slave : u16) {
+        if slave == self.slave_ref_index || self.status != ClockStatus::Run {
+            return;
+        }
+
+        // Search index of the slave in the registers list and remove it
+        let mut idx: Option<usize> = Option::None;
+        let mut i : usize = 0;
+        for slv in self.slaves.iter() {
+            if slv.index == slave { idx = Some(i); }
+            i += 1;
+        }
+        if idx.is_some() {
+            self.slaves.remove(idx.unwrap());
+        }
+    }
+
+    /// Set a slave reference for distributed clock, compute delay and notify all the ethercat loop <br>
     /// *slv_ref_index*: Index of the slave used as reference (must be the first slave of the physical loop)<br>
     /// Return an error:
     ///     - In case of slave reference doesn't register in this DC instance
@@ -302,7 +341,7 @@ impl<'a> SyncClock<'a> {
         // Compute offset between localtime and slave reference local time
         self.update_offset().await;
 
-        // Configure slave
+        // Send slave configuration - Access + sync + other param
         for slv in self.slaves.iter() {
             let ans = self.master.fpwr(slv.index, isochronous::slave_cfg, slv.isochronous.clone()).await;
             assert_eq!(ans.answers, 1);
@@ -450,7 +489,7 @@ impl<'a> SyncClock<'a> {
             slv.clock.system_difference = TimeDifference::new_value(ans.value);
             let buff: TimeDifference = slv.clock.system_difference;
             let is_prv_desync: bool = slv.is_desync;
-            slv.is_desync = u32::from(buff.mean().value()) > 1000;
+            slv.is_desync = u32::from(buff.mean().value()) > 500;
             dbg!( u32::from(buff.mean().value()) as i32 * match bool::from(buff.sign()) { true => -1, false => 1 });
             if slv.is_desync && !is_prv_desync {
                 return Err(crate::EthercatError::Slave("DC deviation detected for the slave"));
