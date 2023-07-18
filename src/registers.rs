@@ -916,10 +916,10 @@ pub mod dc {
     //DC parameter offset
     pub const clock: crate::Field<crate::registers::dc::DistributedClock> = crate::Field::simple(0x0900);
     pub const rcv_time_brw: crate::Field<u32> = crate::Field::simple(0x0900);
-    pub const system_clock: crate::Field<u64> = crate::Field::simple(0x0910);
-    pub const system_clock_unit: crate::Field<u64> = crate::Field::simple(0x0918);
+    pub const rcv_system_time: crate::Field<u64> = crate::Field::simple(0x0910);
+    pub const system_time_unit: crate::Field<u64> = crate::Field::simple(0x0918);
     pub const rcv_time_offset : crate::Field<u64> = crate::Field::simple(0x920);
-    pub const rcv_clock_diff: crate::Field<u32> = crate::Field::simple(0x092C);
+    pub const rcv_time_diff: crate::Field<u32> = crate::Field::simple(0x092C);
     pub const rcv_time_loop_1: crate::Field<u16> = crate::Field::simple(0x0930);
     pub const rcv_time_loop_3: crate::Field<u16> = crate::Field::simple(0x0934);
 
@@ -987,7 +987,6 @@ pub mod isochronous {
 
     //Iso chronous PDI offset
     pub const slave_cfg : crate::Field<crate::registers::isochronous::Isochronous> = crate::Field::simple(0x980);
-    pub const slave_access : crate::Field<crate::registers::isochronous::Isochronous> = crate::Field::simple(0x980);
     pub const slave_sync : crate::Field<crate::registers::isochronous::IsochronousSync> = crate::Field::simple(0x981);
     pub const slave_pulse : crate::Field<u16> = crate::Field::simple(0x983);
     pub const slave_interrupt : crate::Field<crate::registers::isochronous::IsochronousInterrupt> = crate::Field::simple(0x98E);
