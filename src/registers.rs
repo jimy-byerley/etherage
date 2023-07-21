@@ -920,8 +920,8 @@ pub mod dc {
     pub const system_time_unit: crate::Field<u64> = crate::Field::simple(0x0918);
     pub const rcv_time_offset : crate::Field<u64> = crate::Field::simple(0x920);
     pub const rcv_time_diff: crate::Field<u32> = crate::Field::simple(0x092C);
-    pub const rcv_time_loop_1: crate::Field<u16> = crate::Field::simple(0x0930);
-    pub const rcv_time_loop_3: crate::Field<u16> = crate::Field::simple(0x0934);
+    pub const rcv_time_loop_0: crate::Field<u16> = crate::Field::simple(0x0930);
+    pub const rcv_time_loop_2: crate::Field<u16> = crate::Field::simple(0x0934);
 
     /// ETG.1000.4 table 60
     #[repr(packed)]
@@ -946,7 +946,7 @@ pub mod dc {
         */
         pub system_difference: TimeDifference,
         /// Implementation specific
-        reserved: [u32; 3],
+        pub control_loop_params: [u16; 3],
     }
     data::packed_pdudata!(DistributedClock);
 
@@ -959,7 +959,7 @@ pub mod dc {
                 system_offset : 0,
                 system_delay : 0,
                 system_difference : TimeDifference { value: 0 },
-                reserved : [0;3]
+                control_loop_params : [0;3]
             }
         }
     }
