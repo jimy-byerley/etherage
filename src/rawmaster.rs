@@ -353,8 +353,10 @@ impl RawMaster {
 	/// trigger sending the buffered PDUs, they will be sent as soon as possible by [Self::send] instead of waiting for the frame to be full or for the timeout
 	pub fn flush(&self) {
         let mut state = self.pdu_state.lock().unwrap();
-        state.ready = true;
-        self.sendable.notify_one();
+        if state.last_end != 0 {
+            state.ready = true;
+            self.sendable.notify_one();
+        }
 	}
 	
 	/// extract a received frame of PDUs and buffer each for reception by an eventual `self.pdu()` future waiting for it.

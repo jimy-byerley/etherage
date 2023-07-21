@@ -292,9 +292,17 @@ pub enum AlError {
     SyncWatchdog = 0x001B, 
     ///  Invalid Sync Manager Types
     InvalidSyncTypes = 0x001C, 
-    ///  Invalid Output Configuration
+    /**  
+        Invalid Output Configuration
+        
+        raise when a something is wrong in a sync channel or PDO mapping that should be written by the master
+    */
     InvalidOutputConfig = 0x001D, 
-    ///  Invalid Input Configuration
+    /**  
+        Invalid Input Configuration
+        
+        raise when a something is wrong in a sync channel or PDO mapping that should be read by the master
+    */
     InvalidInputConfig = 0x001E, 
     ///  Invalid Watchdog Configuration
     InvalidWatchdogConfig = 0x001F, 

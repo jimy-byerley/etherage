@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use core::time::Duration;
 use futures_concurrency::future::Join;
 use etherage::{
     EthernetSocket, SlaveAddress, CommunicationState,
@@ -22,7 +21,6 @@ async fn main() -> std::io::Result<()> {
         std::thread::spawn(move || loop {
             unsafe {master.get_raw()}.send();
     })};
-//     std::thread::sleep(Duration::from_millis(500));
     
     master.reset_addresses().await;
     

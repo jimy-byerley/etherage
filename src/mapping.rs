@@ -64,11 +64,10 @@ use crate::{
 use core::{
     fmt,
     ops::{Range, Deref},
-    cell::Ref,
+    cell::RefCell,
     };
 use std::{
-    cell::RefCell,
-    collections::{HashMap, BTreeSet},
+    collections::{HashMap, HashSet, BTreeSet},
     sync::{Arc, Weak, Mutex, RwLock, RwLockWriteGuard},
     };
 use bilge::prelude::*;
@@ -127,13 +126,14 @@ impl Allocator {
         }
         // update global config
         let mut slaves = HashMap::<u16, Arc<ConfigSlave>>::new();
-        for (&k, slave) in mapping.config.slaves.lock().unwrap().iter() {
+        let config = mapping.config.slaves.lock().unwrap();
+        for &k in mapping.slaves.borrow().iter() {
             slaves.insert(k, 
                 if let Some(value) = internal.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
                     // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()` 
                     {value}
                 else {
-                    let new = Arc::new(slave.try_read().expect("a slave is still in mapping").clone());
+                    let new = Arc::new(config[&k].try_read().expect("a slave is still in mapping").clone());
                     internal.slaves.insert(k, Arc::downgrade(&new));
                     new
                 });
@@ -438,9 +438,14 @@ pub struct ConfigFmmu {
     - The FMMU (Fieldbux Memory Mapping Unit) is hidden from the user and is used to adjust variables order.
 */
 pub struct Mapping<'a> {
+    /// configuration to modify
     config: &'a Config,
+    /// offset in the physical memory
     offset: RefCell<u32>,
+    /// default value for logical memory segment (initial value for [GrouData])
     default: RefCell<Vec<u8>>,
+    /// keep trace of which slaves are used in this mapping
+    slaves: RefCell<HashSet<u16>>,
 }
 impl<'a> Mapping<'a> {
     pub fn new(config: &'a Config) -> Self {
@@ -448,6 +453,7 @@ impl<'a> Mapping<'a> {
             config, 
             offset: RefCell::new(0), 
             default: RefCell::new(Vec::new()),
+            slaves: RefCell::new(HashSet::new()),
         }
     }
     /// reference to the devices configuration actually worked on by this mapping
@@ -458,6 +464,7 @@ impl<'a> Mapping<'a> {
     ///
     /// data coming for different slaves can interlace, hence multiple slave mapping instances can exist at the same time
     pub fn slave(&self, address: u16) -> MappingSlave<'_>  {
+        self.slaves.borrow_mut().insert(address);
         let mut slaves = self.config.slaves.lock().unwrap();
         slaves
             .entry(address)
