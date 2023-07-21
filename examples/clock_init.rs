@@ -4,7 +4,6 @@ use etherage::{
     RawMaster,
     synchro::{SyncClock, SlaveClockConfigHelper},
     SlaveAddress,
-    Slave,
     CommunicationState, Master};
 
 pub const SOCKET_NAME : &'static str = "eno1";
@@ -46,6 +45,5 @@ async fn main() -> std::io::Result<()> {
     // 4. Start DC
     sc.sync().await.expect("Error on start sync");
 
-    println!("{}",slaves.len());
     Ok(())
 }
