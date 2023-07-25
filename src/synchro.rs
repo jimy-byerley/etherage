@@ -13,6 +13,7 @@ use crate::{
 };
 
 use chrono;
+use futures_concurrency::future::Join;
 use core::option::Option;
 use tokio::time::{Duration, self};
 
@@ -126,21 +127,29 @@ impl SlaveClockConfigHelper {
     pub fn new(cyclic_op_time: Option<u32>, sync_0_time : Option<u32>, sync_1_time : Option<u32>, pulse : Option<u16>) -> Self {
         Self { cyclic_start_time: cyclic_op_time, sync_0_time, sync_1_time, pulse }
     }
-    /// Default implementation: cyclic_op_time = 2000000, sync_0_time = 20000000, sync_1_time = none, pulse : none,
+    /// Default implementation: sync_0_time = 20000, sync_1_time = none, pulse : none,
     pub fn default() -> Self {
-        Self { sync_0_time: Some(2000000), sync_1_time: Option::None, cyclic_start_time: None, pulse: Some(1) }
+        Self { sync_0_time: Some(20000), sync_1_time: Option::None, cyclic_start_time: None, pulse: Some(1) }
     }
 }
 
 pub struct SyncClock<'a> {
     mode : SlaveSyncDetailType,
+    // Raw master reference
     master: &'a RawMaster,
-    slave_ref_index: u16,
-    //slave_ref : Option<&'b SlaveInfo>,
+    // Index of the reference slave in the "physical" loop
+    ref_p_idx: u16,
+    // Index of the reference slave in the internal array
+    ref_l_idx : Option<usize>,
+    // Type of DC used
     dc_correction_typ : DCCorrectionType,
+    // Array of registerd slave
     slaves: Vec<SlaveInfo>,
+    // DC cycle time
     cycle_time: usize,
+    // Number of frame used to prevent static drift
     drift_frm : usize,
+    // Current status of the SyncClock structure
     status : ClockStatus,
 }
 
@@ -151,8 +160,8 @@ impl<'a> SyncClock<'a> {
         Self {
             mode : SlaveSyncDetailType::Dc,
             master,
-            slave_ref_index: 0,
-            //slave_ref : Option::None,
+            ref_p_idx: 0,
+            ref_l_idx: Option::None,
             dc_correction_typ : DCCorrectionType::Continuous,
             slaves: Vec::new(),
             drift_frm : FRM_DRIFT_DEFAULT,
@@ -234,7 +243,7 @@ impl<'a> SyncClock<'a> {
             slv.clock_type = SlaveSyncType::Free;
             if config.sync_0_time != Option::None {
                 slv.isochronous.sync.set_generate_sync0(bilge::prelude::u1::from(true));
-                slv.isochronous.interrupt1.set_interrupt(bilge::prelude::u1::from(true));//slv.index != self.slave_ref_index
+                slv.isochronous.interrupt1.set_interrupt(bilge::prelude::u1::from(true));
                 slv.isochronous.sync_0_cycle_time = config.sync_0_time.unwrap();
                 slv.clock_type = SlaveSyncType::Dc;
             }
@@ -249,9 +258,14 @@ impl<'a> SyncClock<'a> {
         }
     }
 
-    /// Get a system time formatted in 64bit or 32bit
-    fn get_time(&self) -> u64 {
+    /// Get a system time in nanaoeconds
+    fn get_local_time(&self) -> u64 {
         return chrono::offset::Local::now().timestamp_nanos().unsigned_abs();
+    }
+
+    fn get_global_time(&self) -> u64 {
+        if self.get_slave_ref().is_some() { return self.get_local_time() - self.get_slave_ref().unwrap().clock.system_offset; }
+        else { return self.get_local_time(); }
     }
 
 // ============================== Other function ==============================
@@ -290,7 +304,7 @@ impl<'a> SyncClock<'a> {
     /// This function can only be done in init **init** and **register** clock status
     /// - *slave* : Index of the slave to remove (index in EtherCAT loop)
     pub fn slave_unregister(&mut self, slave : u16) {
-        if slave == self.slave_ref_index || self.status != ClockStatus::Active {
+        if slave == self.ref_p_idx || self.status != ClockStatus::Active {
             return;
         }
 
@@ -304,39 +318,51 @@ impl<'a> SyncClock<'a> {
         if idx.is_some() {
             self.slaves.remove(idx.unwrap());
         }
+
+        //Update reference index in the the vector slaves
+
+    }
+
+    // Store slave index (reguard to the physical loop) in the 'slv_ref_index' attribute
+    // Search and store index of the reference slave reguard to vector 'slaves'
+    fn search_vector_ref_index(&mut self, phys_index : u16) {
+        self.ref_l_idx = Option::None;
+        self.ref_p_idx = phys_index;
+        let mut lidx : usize = 0;
+        while lidx < self.slaves.len() {
+            if self.slaves[lidx].index == phys_index {
+                self.ref_l_idx = Some(lidx);
+            }
+            lidx += 1;
+        }
     }
 
     /// Set a slave reference for distributed clock, compute delay and notify all the ethercat loop <br>
-    /// *slv_ref_index*: Index of the slave used as reference (must be the first slave of the physical loop)<br>
+    /// *index*: Index of the slave used as reference (must be the first slave of the physical loop)<br>
     /// Return an error:
     ///     - In case of slave reference doesn't register in this DC instance
     ///     - In case of command execution fail
-    pub async fn init(&mut self, slv_ref_index : u16) -> Result<(), EthercatError<&'static str>> {
-        if usize::from(slv_ref_index) > self.slaves.len() {
+    pub async fn init(&mut self, index : u16) -> Result<(), EthercatError<&'static str>> {
+        if usize::from(index) > self.slaves.len() {
             return Err(crate::EthercatError::Slave("Reference doesn't register in this DC instance")); }
         if self.status == ClockStatus::Active {
             return Err(crate::EthercatError::Slave("Cannot initialize a clack that active")); }
 
-        self.slave_ref_index = slv_ref_index;
-        //self.attr_slv_ref(self.slave_ref_index);
+        // Store reference index
+        self.search_vector_ref_index(index);
+        assert_ne!(self.ref_l_idx, Option::None);
 
         //Force a reset before offset and delay computation
         self.reset().await;
 
-        //ETG 1020 - 22.2.4 Master Control loop - Initialize loop parameter for all DC node
-        //self.master.brw(dc::rcv_time_loop_3, u16::from_be_bytes([0x4u8, 0x0cu8])).await;
-        //let ans = self.master.fpwr(self.slave_ref_index, dc::rcv_time_loop_3, u16::from_be_bytes([0x04u8, 0x00u8])).await;
-        //assert_eq!(ans.answers, 1);
-        //self.master.brw(dc::rcv_time_loop_1, 0x1000u16).await;
-
         //Brodcast clock command to store rcv_port time
-        let local_time : u64 = self.get_time();
+        let local_time : u64 = self.get_local_time();
         if self.master.brw(dc::rcv_time_brw, 0).await.answers == 0 {
             return Err(EthercatError::Protocol("DC initialisation - No slave found"));
         }
 
         //For each engine read rcv local time, port rcv time and status
-        for slv in self.slaves.iter_mut() {
+        self.slaves.iter_mut().map(|slv| async {
             let dc: PduAnswer<DistributedClock> = self.master.fprd(slv.index, dc::clock).await;
             let status : PduAnswer<DLStatus> = self.master.fprd(slv.index, dl::status).await;
             if dc.answers != 0 && status.answers != 0 {
@@ -347,7 +373,14 @@ impl<'a> SyncClock<'a> {
                 if slv.clock.received_time[2] < slv.clock.received_time[0] || !status.value.port_link_status()[2] { slv.clock.received_time[2] = 0; }
                 if slv.clock.received_time[1] < slv.clock.received_time[0] || !status.value.port_link_status()[1] { slv.clock.received_time[1] = 0; }
             }
-        }
+
+        }).collect::<Vec<_>>().join().await;
+
+        //ETG 1020 - 22.2.4 Master Control loop - Initialize loop parameter for all DC node
+        // Disable sync unit
+        self.slaves.iter().map(|slv| async {
+            self.master.fpwr(slv.index, crate::registers::isochronous::slave_sync, IsochronousSync::default()).await;
+        }).collect::<Vec<_>>().join().await;
 
         // Compute delay between slave (ordered by index)
         self.update_delay().await?;
@@ -355,11 +388,35 @@ impl<'a> SyncClock<'a> {
         // Compute offset between localtime and slave reference local time
         self.update_offset(local_time).await;
 
-        // Send slave configuration - Access + sync + other param
-        for slv in self.slaves.iter() {
-            dbg!(&slv.clock);
-            let ans = self.master.fpwr(slv.index, isochronous::slave_cfg, slv.isochronous.clone()).await;
-            assert_eq!(ans.answers, 1);
+        // Send in // transmission delay, offset and isochronous conig
+        self.slaves.iter().map(|slv| async {
+            //Ignore reference and non active slave
+            if slv.index > self.ref_p_idx {
+                //Send offset and delay
+                let ans = self.master.fpwr(slv.index, dc::clock, slv.clock.clone()).await;
+                assert_eq!(ans.answers, 1);
+                let ans = self.master.fpwr(slv.index, isochronous::slave_cfg, slv.isochronous.clone()).await;
+                assert_eq!(ans.answers, 1);
+            }
+
+            //Ignore only non active slave
+            if slv.index >= self.ref_p_idx{
+                let ans = self.master.fpwr(slv.index, dc::rcv_time_loop_0, slv.clock.control_loop_params[0]).await;
+                // Enable sync unit
+                assert_eq!(ans.answers, 1);
+                let ans = self.master.fpwr(slv.index, dc::rcv_time_loop_2, slv.clock.control_loop_params[2]).await;
+                assert_eq!(ans.answers, 1);
+            }
+        }).collect::<Vec<_>>().join().await;
+
+        if cfg!(debug_assertions) {
+            for slv in self.slaves.iter() {
+                let s : String = String::from("Slave: ") + slv.index.to_string().as_str();
+                dbg!(s);
+                dbg!(slv.index);
+                dbg!(slv.clock.clone());
+                dbg!(slv.isochronous.sync.clone());
+            }
         }
 
         self.status = ClockStatus::Initialized;
@@ -381,33 +438,32 @@ impl<'a> SyncClock<'a> {
         println!("Static drif correction");
         for _i in [0..self.drift_frm] {
             drift_interval.tick().await;
-            //let t = self.master.fprd(self.slave_ref_index, dc::rcv_system_time).await;
-            //assert_eq!(t.answers, 1);
-            //self.master.bwr(dc::rcv_system_time, t.value).await;
-            self.master.bwr(dc::rcv_system_time, self.get_time() - self.get_slave_ref().unwrap().clock.system_offset).await;
+            self.master.bwr(dc::rcv_system_time, self.get_local_time() - self.get_slave_ref().unwrap().clock.system_offset).await;
         }
 
         //Continuous drift correction
         println!("Static drif continous");
-
         if self.status == ClockStatus::Active && self.dc_correction_typ == DCCorrectionType::Continuous {
-            for slv in self.slaves.iter() {
-                let t: u32 = (self.get_time() - self.get_slave_ref().unwrap().clock.system_offset) as u32;
-                self.master.fpwr(slv.index, dc::rcv_time_loop_0, slv.clock.control_loop_params[0]).await;
-
+            self.slaves.iter().map(|slv| async {
                 //Start DC
-                self.master.fpwr(slv.index, isochronous::slave_start_time, t).await;
-            }
+                let t: u64 = self.get_local_time()
+                    - self.get_slave_ref().unwrap().clock.system_offset
+                    + Duration::from_nanos(0).as_nanos() as u64;
+                self.master.fpwr(slv.index, dc::rcv_time_loop_0, slv.clock.control_loop_params[0]).await;
+                self.master.fpwr(slv.index, isochronous::slave_start_time, t as u32).await;
+            }).collect::<Vec<_>>().join().await;
 
+            // Get constante offset
+
+
+            //Continous drift
             let mut lim = 0;
             while self.status == ClockStatus::Active {
                 interval.tick().await;
-
-                //let t = self.master.fprd(self.slave_ref_index, dc::rcv_system_time).await;
-                //assert_eq!(t.answers, 1);
-                //self.master.bwr(dc::rcv_system_time, t.value).await;
-                self.master.bwr(dc::rcv_system_time, self.get_time() - self.get_slave_ref().unwrap().clock.system_offset).await;
-
+                // self.master.bwr(dc::rcv_system_time, self.get_time()
+                //      - self.get_slave_ref().unwrap().clock.system_offset
+                //      - Duration::from_nanos(500).as_nanos() as u64).await;
+                self.master.bwr(dc::rcv_system_time, self.get_global_time()).await;
                 let ans: Result<(), EthercatError<&'static str>> = self.survey_time_sync().await;
                 if ans.is_err() {
                     println!("{:?}", ans.err());
@@ -434,8 +490,10 @@ impl<'a> SyncClock<'a> {
                 slv.isochronous = Isochronous::new();
             }
         }
-        self.master.bwr(dc::clock, DistributedClock::new()).await;
-        self.master.bwr(isochronous::slave_cfg, Isochronous::new()).await;
+        (
+            async { self.master.bwr(dc::clock, DistributedClock::new()).await; },
+            async { self.master.bwr(isochronous::slave_cfg, Isochronous::new()).await; }
+        ).join().await;
     }
 
     /// Compute for each slave of the current group the system time latency between local clock and reference,
@@ -447,8 +505,8 @@ impl<'a> SyncClock<'a> {
         //Compute delay between two successive master/slave - begin from the last slave of the loop
         let mut prv_slave: Option<&SlaveInfo> = Option::None;
         for slv in self.slaves.iter_mut().rev() {
-            if slv.index < self.slave_ref_index {
-                // Ignore slave before the reference
+            //Ignore slave before reference
+            if slv.index < self.ref_p_idx {
                 continue;
             }
 
@@ -473,17 +531,10 @@ impl<'a> SyncClock<'a> {
         //Compute transmition latence with the reference + notify slave from delay
         let ref_delay : u32 = self.get_slave_ref().unwrap().clock.system_delay;
         for slv in self.slaves.iter_mut() {
-            if slv.index != self.slave_ref_index && ref_delay > slv.clock.system_delay {
+            if slv.index != self.ref_p_idx && ref_delay > slv.clock.system_delay {
                 slv.clock.system_delay = ref_delay - slv.clock.system_delay;
-                if self.master.fpwr(slv.index, dc::clock, slv.clock.clone()).await.answers == 0 {
-                    return Err(crate::EthercatError::Slave("Cannot send delay and time out offset to slave}"));
-                }
             }
         }
-
-
-
-
         return Ok(());
     }
 
@@ -491,49 +542,37 @@ impl<'a> SyncClock<'a> {
     /// This operation must be done after delay computation
     /// - *local_time*: Local time when BRW 900 was set
     async fn update_offset(&mut self, local_time : u64) {
-        let zero : IsochronousSync = Default::default();
-
         //Get ref time
         let ref_time : u64 = self.get_slave_ref().unwrap().clock.system_time;
         let delay_ref : u64 = u64::from(self.get_slave_ref().unwrap().clock.system_delay);
-        self.get_slave_mut_ref().unwrap().clock.system_offset = local_time - ref_time - u64::from(delay_ref);
+        //In this case it's the offset between master and reference, but it store in ref object
+        // Except if PC is started is started in 1970... local time is always greater than global time
+        self.get_slave_mut_ref().unwrap().clock.system_offset = local_time - ref_time - delay_ref;
 
         // Compute offset
         for slv in self.slaves.iter_mut() {
-            // Disable sync unit & apply offset
-            self.master.fpwr(slv.index, crate::registers::isochronous::slave_sync, zero.clone()).await;
-            if slv.index != self.slave_ref_index && slv.clock_type == SlaveSyncType::Dc {
-                slv.clock.system_offset = if ref_time > slv.clock.system_time - u64::from(slv.clock.system_delay)
-                    { ref_time - slv.clock.system_time - u64::from(slv.clock.system_delay) } else
-                    { slv.clock.system_time - u64::from(slv.clock.system_delay) - ref_time };
-                slv.clock.control_loop_params[0] = 0x1000;
-                slv.clock.control_loop_params[2] = u16::from_be_bytes([0x04u8, 0x0cu8]);
-
-                self.master.fpwr(slv.index, dc::rcv_time_offset, slv.clock.system_offset).await;
-                self.master.fpwr(slv.index, isochronous::slave_start_time, slv.isochronous.cyclic_op_start_time).await;
-
-            } else if slv.index == self.slave_ref_index {
-                slv.clock.control_loop_params[0] = 0x1000;
-                slv.clock.control_loop_params[2] = u16::from_be_bytes([0x04u8, 0x00u8]);
+            //Ignore slave before reference
+            if slv.index <= self.ref_p_idx {
+                continue;
             }
-            // Enable sync unit
-            self.master.fpwr(slv.index, dc::rcv_time_loop_0, slv.clock.control_loop_params[0]).await;
-            self.master.fpwr(slv.index, dc::rcv_time_loop_2, slv.clock.control_loop_params[2]).await;
-            self.master.fpwr(slv.index, isochronous::slave_sync, slv.isochronous.sync.clone()).await;
+
+            if slv.index != self.ref_p_idx && slv.clock_type == SlaveSyncType::Dc {
+                slv.clock.system_offset =  ref_time.abs_diff(slv.clock.system_time - u64::from(slv.clock.system_delay));
+            }
         }
     }
 
     /// Check clock synchronization for each slave
     /// If one clock is divergent
     async fn survey_time_sync(&mut self) -> Result<(), EthercatError<&'static str>> {
-        for slv in self.slaves.iter_mut() {
-            let ans: PduAnswer<u32> = self.master.fprd(slv.index, dc::rcv_time_diff).await;
-            if ans.answers == 0  {
-                //_ = self.update_offset(local_time);
-                return Err(EthercatError::Protocol("Survey time - Data reception fail"));
-            }
-
+        //Execution in //
+        self.slaves.iter_mut().map(|slv| async {
+            let ans = self.master.fprd(slv.index, dc::rcv_time_diff).await;
+            assert_eq!(ans.answers, 1);
             slv.clock.system_difference = TimeDifference::new_value(ans.value);
+        }).collect::<Vec<_>>().join().await;
+
+        for slv in self.slaves.iter_mut() {
             let buff: TimeDifference = slv.clock.system_difference;
             let is_prv_desync: bool = slv.is_desync;
             slv.is_desync = u32::from(buff.mean().value()) > 500;
@@ -541,28 +580,24 @@ impl<'a> SyncClock<'a> {
                 let desync = u32::from(buff.mean().value()) as i32 * match bool::from(buff.sign()) { true => -1, false => 1 };
                 println!("{desync}"); }
             //Disable temp
-            // if slv.is_desync && !is_prv_desync {
+            if slv.is_desync && !is_prv_desync {
             //     return Err(crate::EthercatError::Slave("DC deviation detected for the slave"));
-            // }
+            }
         }
         return Ok(());
     }
 
     //Get slave ref
     fn get_slave_ref(&self) -> Option<&SlaveInfo>{
-        for slv in self.slaves.iter() {
-            if slv.index == self.slave_ref_index {
-                return Some(&slv);
-            }
+        if self.ref_l_idx.is_some() {
+            return Some(&self.slaves[self.ref_l_idx.unwrap()]);
         }
         return Option::None;
     }
 
     fn get_slave_mut_ref(&mut self) -> Option<&mut SlaveInfo>{
-        for slv in self.slaves.iter_mut() {
-            if slv.index == self.slave_ref_index {
-                return Some(slv);
-            }
+        if self.ref_l_idx.is_some() {
+            return Some(&mut self.slaves[self.ref_l_idx.unwrap()]);
         }
         return Option::None;
     }
