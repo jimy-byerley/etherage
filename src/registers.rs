@@ -936,7 +936,7 @@ pub mod dc {
         /// A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
         pub system_time: u64,
         /// Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
-        pub receive_time_unit: u64,
+        pub local_time: u64,
         /// Offset between the local time (in ns) and the local system time (in ns)
         pub system_offset: u64,
         /// Offset between the reference system time (in ns) and the local system time (in ns)
@@ -956,7 +956,7 @@ pub mod dc {
             Self{
                 received_time : [0;4] ,
                 system_time : 0,
-                receive_time_unit : 0,
+                local_time : 0,
                 system_offset : 0,
                 system_delay : 0,
                 system_difference : TimeDifference { value: 0 },
