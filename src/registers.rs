@@ -992,8 +992,10 @@ pub mod isochronous {
     pub const slave_pulse : crate::Field<u16> = crate::Field::simple(0x983);
     pub const slave_interrupt : crate::Field<crate::registers::isochronous::IsochronousInterrupt> = crate::Field::simple(0x98E);
     pub const slave_start_time : crate::Field<u32> = crate::Field::simple(0x990);
-    pub const slave_sync_time : crate::Field<u32> = crate::Field::simple(0x9A0);
-    pub const slave_latch_edge : crate::Field<crate::registers::isochronous::IsochronousLatchEdge> = crate::Field::simple(0x9A8);
+    pub const slave_sync_time_0 : crate::Field<u32> = crate::Field::simple(0x9A0);
+    pub const slave_sync_time_1 : crate::Field<u32> = crate::Field::simple(0x9A0);
+    pub const slave_latch_edge_0 : crate::Field<crate::registers::isochronous::IsochronousLatchEdge> = crate::Field::simple(0x9A8);
+    pub const slave_latch_edge_1 : crate::Field<crate::registers::isochronous::IsochronousLatchEdge> = crate::Field::simple(0x9A9);
     pub const slave_latch_event : crate::Field<crate::registers::isochronous::IsochronousLatchEvent> = crate::Field::simple(0x9AE);
     pub const slave_latch_value : crate::Field<u32> = crate::Field::simple(0x09B0);
 
