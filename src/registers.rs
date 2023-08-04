@@ -926,7 +926,7 @@ pub mod dc {
 
     /// ETG.1000.4 table 60
     #[repr(packed)]
-    #[derive(Clone, Debug, PartialEq)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct DistributedClock {
         /**
             A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
