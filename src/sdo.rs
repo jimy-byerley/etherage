@@ -645,6 +645,77 @@ impl SyncType {
 }
 data::packed_pdudata!(SyncType);
 
+/** ETG 1020 table 86 and 87 - `0x1C32` or `0x1C33`
+
+| Var                  | Free |SM 2/3 | SM 2/3 Shift | DC  | DC shift | DC shift SYNC 1 | DC SYNC1 | DC subordinate|
+|----------------------|------|-------|--------------|-----|----------|-----------------|----------|---------------|
+| sync_type	           | C    | M     | M            | M   | M        | M               | M        | M             |
+| cycle_time	       | O    | O     | O            | O   | M        | M               | O        | M             |
+| shift_time	       | -    | -     | - M          | -   | M        | -               | -        | O             |
+| supported_sync_type  | C    | M     | M            | M   | M        | M               | M        | M             |
+| min_cycle_time	   | C    | M     | M            | M   | M        | M               | M        | M             |
+| calc_copy_time	   | -    | -     | -            | M   | M        | M               | M        | M             |
+| min_delay_time	   | -    | -     | -            | -   | -        | -               | -        | -             |
+| get_cycle_time	   | -    | C     | C            | C   | C        | C               | C        | C             |
+| delay_time	       | -    | -     | -            | M - | M -      | M               | M -      | M             |
+| sync0_cycle_time	   | -    | -     | -            | -   | -        | -               | -        | M             |
+| sm_evt_cnt	       | -    | O     | O            | O   | O        | O               | O        | O             |
+| cycle_time_evt_small | -    | M     | M            | M   | M        | M               | M        | M             |
+| shift_time_evt_small | -    | -     | -            | O   | O        | O               | O -      | O             |
+| toggle_failure_cnt   | -    | O     | O            | O   | O        | O               | O        | O             |
+| min_cycle_dist	   | -    | O -   | O -          | O - | O -      | O               | O -      | O             |
+| max_cycle_dist	   | -    | O -   | O -          | O - | O -      | O               | O -      | O             |
+| min_sm_sync_dist	   | -    | -     | -            | O - | O -      | O               | O -      | O             |
+| max_sm_sync_dist	   | -    | -     | -            | O - | O -      | O               | O -      | O             |
+| sync_error	       | -    | C     | C            | C   | C        | C               | C        | C             |
+*/
+#[repr(packed)]
+#[derive(Default,Clone, PartialEq, Eq)]
+pub struct SyncMangerFull {
+    pub nb_sync_params : u8,
+    pub sync_type : u16,
+    pub cycle_time : u32,
+    pub shift_time : u32,
+    pub supported_sync_type : SynchronizationCapabilties,
+    pub min_cycle_time : u32,
+    pub calc_copy_time : u32,
+    pub min_delay_time : u32,
+    pub get_cycle_time : u16,
+    pub delay_time : u32,
+    pub sync0_cycle_time : u32,
+    pub sm_evt_cnt : u16,
+    pub cycle_time_evt_small : u16,
+    pub shift_time_evt_small : u16,
+    pub toggle_failure_cnt : u16,
+    pub min_cycle_dist : u32,       //Reserved on table 87
+    pub max_cycle_dist : u32,       //Reserved on table 87
+    pub min_sm_sync_dist : u32,     //Reserved on table 87
+    pub max_sm_sync_dist : u32,     //Reserved on table 87
+    reserved_1 : u32,               //Reserved 4 bytes
+    reserved_2 : u64,               //Reserved 8 bytes
+    pub sync_error : bool
+}
+data::packed_pdudata!(SyncMangerFull);
+
+#[bitsize(16)]
+#[derive(Default,Clone, PartialEq, Eq)]
+pub struct SynchronizationCapabilties {
+    pub free : u1,
+    pub sm : u1,
+    pub dc_sync0 : u1,
+    pub dc_sync1 : u1,
+    pub dc_fixed : u1,
+    pub shift : u1,
+    pub shift_local_tim : u1,
+    reserved1 : u3,
+    pub delay_time_compute : u1,
+    pub delay_time_fixed : u1,
+    reserved_2 : u3,
+    pub dynamic_cycle_time : u1,
+    reserved_3 : u1
+}
+data::bilge_pdudata!(SyncMode, u8);
+
 /// ETG.1000.6 table 76
 #[bitsize(8)]
 pub enum SyncMode {
@@ -655,8 +726,6 @@ pub enum SyncMode {
     ProcessDataInput = 4,
 }
 data::bilge_pdudata!(SyncMode, u8);
-
-
 
 /// ETG.1000.6 table 68, ETG.6010 table 84
 #[bitsize(32)]
@@ -713,23 +782,23 @@ data::bilge_pdudata!(DeviceError, u8);
 /**
 bit structure of a status word
 
-| Bit |  Meaning | Presence |
-|-----|----------|----------|
-| 0	| Ready to switch on	| M
-| 1	| Switched on	| M
-| 2	| Operation enabled	| M
-| 3	| Fault	| M
-| 4	| Voltage enabled	| O
-| 5	| Quick stop	| O
-| 6	| Switch on disabled	| M
-| 7	| Warning	| O
-| 8	| Manufacturer specific	| O
-| 9	| Remote	| O
-| 10	| Operation mode specific	| O
-| 11	| Internal limit active	| C
-| 12	| Operation mode specific (Mandatory for csp, csv, cst mode)	| O
-| 13	| Operation mode specific	| O
-| 14-15	| Manufacturer specific	| O
+| Bit   |  Meaning                                                      | Presence |
+|-------|---------------------------------------------------------------|----------|
+| 0	    | Ready to switch on	                                        | M        |
+| 1	    | Switched on	                                                | M        |
+| 2	    | Operation enabled	                                            | M        |
+| 3	    | Fault	                                                        | M        |
+| 4	    | Voltage enabled	                                            | O        |
+| 5	    | Quick stop	                                                | O        |
+| 6	    | Switch on disabled	                                        | M        |
+| 7	    | Warning	                                                    | O        |
+| 8	    | Manufacturer specific                                         | O        |
+| 9	    | Remote	                                                    | O        |
+| 10	| Operation mode specific                                       | O        |
+| 11	| Internal limit active	                                        | C        |
+| 12	| Operation mode specific (Mandatory for csp, csv, cst mode)    | O        |
+| 13	| Operation mode specific                                       | O        |
+| 14-15	| Manufacturer specific	                                        | O        |
 
 bit 10 `reached_command`, bit 12 `following_command`, bit 13 `cycle`  are operation specific, so do not rely on it in modes that do not use them. See [OperationMode] for more details.
 */

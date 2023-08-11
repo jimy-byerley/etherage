@@ -1,10 +1,10 @@
-use std::{sync::Arc};
+use std::{sync::Arc, collections::HashMap};
 use etherage::{
     EthernetSocket,
     RawMaster,
     synchro::{SyncClock, SlaveClockConfigHelper},
     SlaveAddress,
-    CommunicationState, Master, mapping, Mapping, sdo::{SyncDirection, self}, registers};
+    CommunicationState, Master, mapping, Mapping, sdo::{SyncDirection, self}, registers, Slave};
 pub const SOCKET_NAME : &'static str = "eno1";
 
 #[tokio::main]
@@ -12,8 +12,8 @@ async fn main() -> std::io::Result<()> {
     //Init master
     let master: Arc<Master> = Arc::new(Master::new(EthernetSocket::new(&SOCKET_NAME)?));
     {
-        let master = master.clone();
-        let handle = std::thread::spawn(move || loop { unsafe {master.get_raw()}.receive(); });
+        let m : Arc<Master> = master.clone();
+        let _handle = std::thread::spawn(move || loop { unsafe {m.get_raw()}.receive(); });
 
         #[cfg(target_os = "linux")]
         {
@@ -25,8 +25,8 @@ async fn main() -> std::io::Result<()> {
         }
     };
     {
-        let master = master.clone();
-        let handle = std::thread::spawn(move || loop { unsafe { master.get_raw().send();} });
+        let m: Arc<Master> = master.clone();
+        let _handle = std::thread::spawn(move || loop { unsafe { m.get_raw().send();} });
         #[cfg(target_os = "linux")]
         {
             // let res = thread_priority::set_thread_priority_and_policy(
@@ -38,7 +38,8 @@ async fn main() -> std::io::Result<()> {
     };
     master.reset_addresses().await;
 
-    let config = mapping::Config::default();
+    //Mapping
+    let config: etherage::Config = mapping::Config::default();
     let mapping = Mapping::new(&config);
     let mut slavemap = mapping.slave(1);
         let _statuscom = slavemap.register(SyncDirection::Read, registers::al::status);
@@ -58,11 +59,40 @@ async fn main() -> std::io::Result<()> {
                 let _current_velocity = pdo.push(sdo::cia402::current::velocity);
                 let _current_torque  = pdo.push(sdo::cia402::current::torque);
 
-    // Search slave
-    let mut iter = master.discover().await;
-    let mut slaves : Vec<u16> = Vec::new();
-    let mut slaves_items : Vec<etherage::Slave<'_>> = Vec::new();
+    // 1. Init clock and search slave
+    let slaves : HashMap<u16, Slave> = fill_slave(&master).await;
+    let notify : tokio::sync::Notify = tokio::sync::Notify::new();
+    //let raw : &RawMaster = unsafe { master.get_raw() };
+    // let mut sc: SyncClock = SyncClock::new_with_ptr(raw, &notify as *const tokio::sync::Notify);
+    let mut sc : SyncClock = unsafe { SyncClock::new(master.get_raw(), &notify) };
 
+    // 2. Registers slaves with DC configuration
+    //let r: usize = sc.slaves_register( &slaves as *const  HashMap<u16, Slave<'_>>, SlaveClockConfigHelper::default()).expect("Error on register");
+    let r: Result<usize, etherage::EthercatError<&str>> = sc.slaves_register(&slaves, SlaveClockConfigHelper::default());
+    println!("{} slave register in dc", r.unwrap());
+
+    // 3. Initiliate clock: - Compute offset to reference clock and transmittion delay, for each registered slave
+    sc.init(1).await.expect("Error on init");
+    //sc.advanced_init(sm);
+
+    master.switch(registers::AlState::PreOperational).await;
+    master.group(&mapping);
+    master.switch(registers::AlState::Operational).await;
+    // 4. Start DC
+    sc.sync().await.expect("Error on start sync");
+
+    drop(sc);
+
+    for s in slaves.iter() {
+        println!("{}",s.0);
+    }
+    Ok(())
+}
+
+/// Search slave and attribute address
+async fn fill_slave(master : &Master) -> HashMap<u16, Slave> {
+    let mut slaves : HashMap<u16, Slave> = HashMap::new();
+    let mut iter: etherage::master::SlaveDiscovery = master.discover().await;
     while let Some(mut s ) = iter.next().await  {
         let SlaveAddress::AutoIncremented(i) = s.address()
         else { panic!("slave already has a fixed address") };
@@ -71,25 +101,8 @@ async fn main() -> std::io::Result<()> {
         s.init_mailbox().await;
         s.init_coe().await;
         if i < 3 {
-            slaves.push(i + 1);
-            slaves_items.push(s);
+            slaves.insert(i + 1,s);
         }
     }
-
-    // 1. Init clock
-    let raw : &RawMaster = unsafe { master.get_raw() };
-    let mut sc: SyncClock<'_> = SyncClock::new(raw);
-    // 2. Registers slaves with DC configuration
-    sc.slaves_register(&slaves, SlaveClockConfigHelper::default()).expect("Error on register");
-
-    // 3. Initiliate clock: - Compute offset to reference clock and transmittion delay, for each registered slave
-    sc.init(*slaves.first().unwrap()).await.expect("Error on init");
-
-    master.switch(registers::AlState::PreOperational).await;
-    master.group(&mapping);
-    master.switch(registers::AlState::Operational).await;
-
-    // 4. Start DC
-    sc.sync().await.expect("Error on start sync");
-    Ok(())
+    slaves
 }
