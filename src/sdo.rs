@@ -619,6 +619,8 @@ impl Synchronization {
     pub fn period(&self) -> Sdo<u32>  {Sdo::sub(self.index, 2, 40)}
     /// time between related AL event and the associated action in ns
     pub fn shift(&self) -> Sdo<u32>  {Sdo::sub(self.index, 3, 72)}
+    /// toggle measurement for the local time and allow event counter reset (couter for time)
+    pub fn toggle_lt(&self) -> Sdo<SyncCycleTimeDsc> { Sdo::sub(self.index, 8, 184) }
 }
 
 /** Like an enum, but with a serie of value matching sync managers indices
@@ -676,11 +678,11 @@ pub struct SyncMangerFull {
     pub sync_type : u16,
     pub cycle_time : u32,
     pub shift_time : u32,
-    pub supported_sync_type : SynchronizationCapabilties,
+    pub supported_sync_type : SyncSupportedMode,
     pub min_cycle_time : u32,
     pub calc_copy_time : u32,
     pub min_delay_time : u32,
-    pub get_cycle_time : u16,
+    pub get_cycle_time : SyncCycleTimeDsc,
     pub delay_time : u32,
     pub sync0_cycle_time : u32,
     pub sm_evt_cnt : u16,
@@ -698,23 +700,32 @@ pub struct SyncMangerFull {
 data::packed_pdudata!(SyncMangerFull);
 
 #[bitsize(16)]
-#[derive(Default,Clone, PartialEq, Eq)]
-pub struct SynchronizationCapabilties {
+#[derive(Default,Clone, Copy, PartialEq, Eq)]
+pub struct SyncSupportedMode {
     pub free : u1,
     pub sm : u1,
     pub dc_sync0 : u1,
     pub dc_sync1 : u1,
     pub dc_fixed : u1,
     pub shift : u1,
-    pub shift_local_tim : u1,
+    pub shift_local_time : u1,
     reserved1 : u3,
     pub delay_time_compute : u1,
     pub delay_time_fixed : u1,
-    reserved_2 : u3,
+    reserved_2 : u2,
     pub dynamic_cycle_time : u1,
-    reserved_3 : u1
+    reserved_3 : u1,
 }
-data::bilge_pdudata!(SyncMode, u8);
+data::bilge_pdudata!(SyncSupportedMode, u16);
+
+#[bitsize(16)]
+#[derive(Default,Clone, Copy, PartialEq, Eq)]
+pub struct SyncCycleTimeDsc{
+    pub measure_local_time : u1,
+    pub reset_event_counter : u1,
+    reserved : u14
+}
+data::bilge_pdudata!(SyncCycleTimeDsc, u16);
 
 /// ETG.1000.6 table 76
 #[bitsize(8)]

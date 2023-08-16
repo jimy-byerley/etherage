@@ -1,7 +1,6 @@
 use std::{sync::Arc, collections::HashMap};
 use etherage::{
     EthernetSocket,
-    RawMaster,
     synchro::{SyncClock, SlaveClockConfigHelper},
     SlaveAddress,
     CommunicationState, Master, mapping, Mapping, sdo::{SyncDirection, self}, registers, Slave};

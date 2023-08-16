@@ -20,7 +20,7 @@ async fn main() -> std::io::Result<()> {
     // 2. Registers slaves with DC configuration
     //sc.slaves_register(&slaves, SlaveClockConfigHelper::default());
     let mut f: Foo = Foo::new();
-    'a : {  f.slaves_register(&slaves); }
+    //'a : {  f.slaves_register(&slaves); }
 
     Ok(())
 }
