@@ -254,7 +254,7 @@ pub struct SyncClock<'a> {
     // Current status of the SyncClock structure
     status : ClockStatus,
     // Allow master to send message on DC clock tick
-    event : &'a tokio::sync::Notify,
+    //event : &'a tokio::sync::Notify,
     // Current master synchronization type
     typ : MasterSyncType,
 }
@@ -262,7 +262,7 @@ pub struct SyncClock<'a> {
 impl<'a> SyncClock<'a> {
 // ================================    Ctor   =================================
     /// Initialize a new disribution clock
-    pub fn new(master: &'a RawMaster, event : &'a tokio::sync::Notify) -> Self {
+    pub fn new(master: &'a RawMaster) -> Self {
         Self {
             master,
             ref_p_idx: 0,
@@ -275,7 +275,7 @@ impl<'a> SyncClock<'a> {
             cycle_time: CONTINOUS_TIMELAPS,
             drift_frm_count : STATIC_FRAME_COUNT,
             status : ClockStatus::Registering,
-            event,
+            //event,
             typ : MasterSyncType::Cyclic
         }
     }
@@ -292,7 +292,7 @@ impl<'a> SyncClock<'a> {
                 cycle_time: CONTINOUS_TIMELAPS,
                 drift_frm_count : STATIC_FRAME_COUNT,
                 status : ClockStatus::Registering,
-                event : &*(event_ptr),
+                //event : &*(event_ptr),
                 typ : MasterSyncType::Cyclic
             }
         }
@@ -390,7 +390,7 @@ impl<'a> SyncClock<'a> {
             return self.get_local_time()
             - self.offset
             - u64::from(self.get_slave_ref().unwrap().clock.system_delay)
-            - Duration::from_nanos(100000).as_nanos() as u64; }
+            - Duration::from_nanos(50000).as_nanos() as u64; }
         else { return self.get_local_time(); }
     }
 
@@ -602,8 +602,8 @@ impl<'a> SyncClock<'a> {
         //     self.master.bwr(dc::rcv_system_time, self.get_global_time()).await;
         // }
 
-        //Start sync
-        let t: u64 = self.get_global_time() + Duration::from_nanos(0).as_nanos() as u64;
+        //Start sync - Wait that all slave obtains the frame
+        let t: u64 = self.get_global_time() + Duration::from_micros(1000).as_nanos() as u64;
         self.slaves.iter_mut().map(|slv| async {
             self.master.fpwr(slv.index, isochronous::slave_sync, slv.isochronous.sync).await;
             self.master.fpwr(slv.index, isochronous::slave_start_time, t as u32).await;
@@ -620,6 +620,9 @@ impl<'a> SyncClock<'a> {
         let mut dbg_lim: i32 = 0;
         let mut interval: time::Interval = time::interval(Duration::from_nanos(self.cycle_time));
         let mut watched_slave_idx : usize = 0;
+        //Wait the DC synchro start
+        while self.get_global_time() < t {}
+        interval.reset();
         while self.status == ClockStatus::Active {
             //Wait tick
             interval.tick().await;
@@ -631,18 +634,18 @@ impl<'a> SyncClock<'a> {
                 //Send data in the same frame
                 (
                     async {self.master.bwr(dc::rcv_system_time, dt).await; },
-                    // async {
-                    //     self.slaves.iter_mut().map(|slv| async {
-                    //         let ans = self.master.fprd(slv.index, dc::rcv_time_diff).await;
-                    //         assert_eq!(ans.answers, 1);
-                    //         slv.clock.system_difference = TimeDifference::new_value(ans.value);
-                    //     }).collect::<Vec<_>>().join().await;
-                    // },
                     async {
-                        let ans = self.master.fprd(self.slaves[watched_slave_idx].index, dc::rcv_time_diff).await;
-                        assert_eq!(ans.answers, 1);
-                        self.slaves[watched_slave_idx].clock.system_difference = TimeDifference::new_value(ans.value);
+                        self.slaves.iter_mut().map(|slv| async {
+                            let ans = self.master.fprd(slv.index, dc::rcv_time_diff).await;
+                            assert_eq!(ans.answers, 1);
+                            slv.clock.system_difference = TimeDifference::new_value(ans.value);
+                        }).collect::<Vec<_>>().join().await;
                     },
+                    // async {
+                    //     let ans = self.master.fprd(self.slaves[watched_slave_idx].index, dc::rcv_time_diff).await;
+                    //     assert_eq!(ans.answers, 1);
+                    //     self.slaves[watched_slave_idx].clock.system_difference = TimeDifference::new_value(ans.value);
+                    // },
                     async { alstatus = self.master.brd(dls_user::r3).await.value }
                 ).join().await;
                 _ = self.survey_time_sync().await; //At the moment we don't care about error
@@ -663,7 +666,8 @@ impl<'a> SyncClock<'a> {
             }
 
             //Notify main thread that IO operation can be performed
-            self.event.notify_one();
+            //self.event.notify_one();
+            self.master.flush();
         }
         return Ok(());
     }
@@ -743,8 +747,7 @@ impl<'a> SyncClock<'a> {
         for slv in self.slaves.iter_mut() {
             //Ignore slave before reference
             if slv.clock_type >= SlaveSyncType::DcSync0 {
-                slv.clock.system_offset = (i128::from(slv.clock.local_time as u32) - i128::from(ref_time as u32)) as u64;
-                //slv.clock.system_offset = (i128::from(slv.clock.received_time[0] as u32) - i128::from(ref_time as u32)) as u64;
+                slv.clock.system_offset = (i128::from(ref_time) - i128::from(slv.clock.local_time) - i128::from(slv.clock.system_delay)) as u64;
             }
         }
     }
@@ -781,7 +784,7 @@ impl Drop for SyncClock<'_> {
     fn drop(&mut self) {
         while self.slaves.len() != 0 {
            self.slaves.remove(self.slaves.len() - 1usize);
-           drop(self.event);
+           //drop(self.event);
         }
     }
 }
