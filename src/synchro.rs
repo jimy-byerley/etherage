@@ -50,11 +50,11 @@ pub enum SlaveSyncType {
     Sm2,
     /// Synchronize to SM3 event channel
     Sm3,
-    /// SM2, Shift Input Latch
+    /// SM2 + Shift Input Latch
     Sm2Shif,
-    /// SM3, Shift Input Latch
+    /// SM3 + Shift Output Latch
     Sm3Shift,
-    /// DC
+    /// DC - Standard
     DcSync0,
     /// DC, Shift of Outputs Valid with shift
     DcSyncShift,
@@ -85,6 +85,7 @@ impl SlaveSyncType {
         }
     }
 
+    #[cfg(deprecate)]
     fn from_field(v : u16) -> SlaveSyncType {
         let dc_sm: crate::BitField<u8> = crate::data::BitField::new(1,1);
         let dc_typ: crate::BitField<u8> = crate::data::BitField::new(2,4);
@@ -143,17 +144,20 @@ pub struct SlaveClockConfigHelper {
     pub sync_0_time : Option<u32>,
     /// Sync 1 cyclic time (ns) - if *Option::None*, disable Sync1 pulse generation
     pub sync_1_time : Option<u32>,
-    /// Pulse debug time option - Taken from SII (Slave Information Interface) - Multiple of **10ns**
-    pub pulse : Option<u16>,
+    /// Enable positive single edge (P7) - Activate it for SYNC 0 or SYNC 1
+    pub pos_latch_flg : Option<bool>,
+    /// Enable negative single edge (P7) - Activate it for SYNC 0 or SYNC 1
+    pub neg_latch_flg : Option<bool>,
 }
 
 impl SlaveClockConfigHelper {
-    pub fn new(cyclic_op_time: Option<u32>, sync_0_time : Option<u32>, sync_1_time : Option<u32>, pulse : Option<u16>) -> Self {
-        Self { cyclic_start_time: cyclic_op_time, sync_0_time, sync_1_time, pulse }
+    // Full ctor
+    pub fn new(cyclic_start_time: Option<u32>, sync_0_time: Option<u32>, sync_1_time: Option<u32>, pos_latch_flg: Option<bool>, neg_latch_flg: Option<bool>) -> Self {
+        Self { cyclic_start_time, sync_0_time, sync_1_time, pos_latch_flg, neg_latch_flg }
     }
     /// Default implementation: sync_0_time = 20000ns [0x1e8480], sync_1_time = none, pulse : none,
     pub fn default() -> Self {
-        Self { sync_0_time: Some(2000000), sync_1_time: Option::None, cyclic_start_time: None, pulse: Some(1) }
+        Self { sync_0_time: Some(2000000), sync_1_time: Option::None, cyclic_start_time: None, pos_latch_flg : Option::None, neg_latch_flg : Option::None}
     }
 }
 
@@ -191,7 +195,7 @@ impl SynchronizationSdoHelper {
             //Check capability or return error
             let smf : SyncMangerFull = Self::receive(slv, channel).await.expect("Error channel not available");
             let capability : sdo::SyncSupportedMode = sdo::SyncSupportedMode::from(smf.supported_sync_type);
-            if bool::from(capability.sm())  && sync_type == SlaveSyncType::Sm2 {
+            if bool::from(capability.sm())  && (sync_type == SlaveSyncType::Sm2 && sync_type == SlaveSyncType::Sm3 ) {
                 return Err(EthercatError::Protocol("Synchronization not supported by this slave"));
             }
             if bool::from(capability.dc_sync0()) && sync_type == SlaveSyncType::DcSync0 {
@@ -200,7 +204,7 @@ impl SynchronizationSdoHelper {
             if bool::from(capability.dc_sync1()) && sync_type == SlaveSyncType::DcSync1 {
                 return Err(EthercatError::Protocol("Synchronization not supported by this slave"));
             }
-            if bool::from(capability.dc_fixed()) && sync_type == SlaveSyncType::DcSyncShiftSync1 {
+            if bool::from(capability.dc_fixed()) && sync_type == SlaveSyncType::Subordinate {
                 return Err(EthercatError::Protocol("Synchronization not supported by this slave"));
             }
 
@@ -367,15 +371,18 @@ impl<'a> SyncClock<'a> {
                 slv.isochronous.interrupt1.set_interrupt(u1::from(true));
                 slv.isochronous.sync_0_cycle_time = config.sync_0_time.unwrap();
                 slv.clock_type = SlaveSyncType::DcSync0;
+                slv.isochronous.latch_0_pos_edge_value = u32::from(config.pos_latch_flg.unwrap_or_default());
+                slv.isochronous.latch_0_neg_edge_value = u32::from(config.neg_latch_flg.unwrap_or_default());
             }
             if config.sync_1_time != Option::None {
                 slv.isochronous.sync.set_generate_sync1(u1::from(true));
                 slv.isochronous.interrupt2.set_interrupt(u1::from(true));
                 slv.isochronous.sync_1_cycle_time = config.sync_1_time.unwrap();
                 slv.clock_type = SlaveSyncType::DcSync1;
+                slv.isochronous.latch_1_pos_edge_value = u32::from(config.pos_latch_flg.unwrap_or_default());
+                slv.isochronous.latch_1_neg_edge_value = u32::from(config.neg_latch_flg.unwrap_or_default());
             }
             slv.isochronous.sync.set_enable_cyclic(u1::from(slv.clock_type >= SlaveSyncType::DcSync0));
-            slv.isochronous.sync_pulse = config.pulse.unwrap_or_default();
         }
     }
 
@@ -634,18 +641,18 @@ impl<'a> SyncClock<'a> {
                 //Send data in the same frame
                 (
                     async {self.master.bwr(dc::rcv_system_time, dt).await; },
-                    async {
-                        self.slaves.iter_mut().map(|slv| async {
-                            let ans = self.master.fprd(slv.index, dc::rcv_time_diff).await;
-                            assert_eq!(ans.answers, 1);
-                            slv.clock.system_difference = TimeDifference::new_value(ans.value);
-                        }).collect::<Vec<_>>().join().await;
-                    },
                     // async {
-                    //     let ans = self.master.fprd(self.slaves[watched_slave_idx].index, dc::rcv_time_diff).await;
-                    //     assert_eq!(ans.answers, 1);
-                    //     self.slaves[watched_slave_idx].clock.system_difference = TimeDifference::new_value(ans.value);
+                    //     self.slaves.iter_mut().map(|slv| async {
+                    //         let ans = self.master.fprd(slv.index, dc::rcv_time_diff).await;
+                    //         assert_eq!(ans.answers, 1);
+                    //         slv.clock.system_difference = TimeDifference::new_value(ans.value);
+                    //     }).collect::<Vec<_>>().join().await;
                     // },
+                    async {
+                        let ans = self.master.fprd(self.slaves[watched_slave_idx].index, dc::rcv_time_diff).await;
+                        assert_eq!(ans.answers, 1);
+                        self.slaves[watched_slave_idx].clock.system_difference = TimeDifference::new_value(ans.value);
+                    },
                     async { alstatus = self.master.brd(dls_user::r3).await.value }
                 ).join().await;
                 _ = self.survey_time_sync().await; //At the moment we don't care about error
@@ -788,58 +795,3 @@ impl Drop for SyncClock<'_> {
         }
     }
 }
-
-
-///// OBSOLETE CODE
-// pub fn build_free_clock(cycle_time : Option<u32>) -> SyncMangerFull {
-//     let mut sdo: SyncMangerFull = SyncMangerFull ::default();
-//     sdo.cycle_time = cycle_time.unwrap_or_default();
-//     sdo.supported_sync_type |= 0b1;
-//     sdo.min_cycle_time = 1000; // TODO! Given from slave hardware
-//     return sdo;
-// }
-
-// pub fn build_sm_clock(cycle_time : Option<u32>, shift_time : Option<u32>, min_cycle_time : u32, get_cycle_time : Option<u16>) -> SyncMangerFull {
-//     let mut sdo: SyncMangerFull = SyncMangerFull ::default();
-//     sdo.sync_type = 0x01;
-//     sdo.cycle_time = cycle_time.unwrap_or_default();
-//     if shift_time.is_some(){
-//         sdo.shift_time = shift_time.unwrap();
-//         sdo.sync_type = 0x22;
-//     }
-//     sdo.supported_sync_type |= 0b10;
-//     if get_cycle_time.is_some() {
-//         sdo.supported_sync_type |= 0b01000000_00000000;
-//         sdo.get_cycle_time = get_cycle_time.unwrap();
-//     }
-//     return sdo;
-// }
-
-// pub fn build_dc_clock(evt_cycle_time : u16, delay_time : u32, c_c_time : u32,
-//         cycle_time : Option<u32> ,shift_time : Option<u32>, evt_cnt : Option<u16>, evt_shift_time : Option<u16>,
-//         enable_faillure_cnt : Option<bool>, min_cycle : Option<u32>, max_cycle : Option<u32>, sync_typ : SlaveSyncType ) -> SyncMangerFull {
-//     let mut sm = SyncMangerFull ::default();
-//     sm.sync_type = 0x02u16;
-//     sm.cycle_time = cycle_time.unwrap_or_default();
-
-//     let b1: BitField<u16> = data::BitField::new(2,3);
-//     let b2: BitField<u16> = data::BitField::new(5,1);
-//     let mut array : [u8;2] = sm.supported_sync_type.to_le_bytes();
-//     b1.set(&mut array[0..], if sync_typ == SlaveSyncType::DcSync1 { 0x10 } else { 0x01 });
-//     b2.set(&mut array[0..], if shift_time.is_none() { 0x00 } else { 0x01 });
-//     sm.supported_sync_type = u16::from_le_bytes(array);
-
-//     sm.shift_time = shift_time.unwrap_or_default();
-//     if shift_time.is_some() {
-//         //check if sync 1 is none
-//     }
-//     sm.delay_time = delay_time;
-//     sm.cycle_time_evt_small = evt_cycle_time;
-//     sm.calc_copy_time = c_c_time;
-//     sm.sm_evt_cnt = evt_cnt.unwrap_or_default();
-//     sm.shift_time_evt_small = evt_shift_time.unwrap_or_default();
-//     sm.toggle_failure_cnt = if enable_faillure_cnt.is_some() { 0x01u16 } else { 0x00u16 } ;
-//     sm.min_cycle_dist = min_cycle.unwrap_or_default();
-//     sm.max_cycle_dist = max_cycle.unwrap_or_default();
-//     return  sm;
-// }
