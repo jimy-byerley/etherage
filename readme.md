@@ -2,10 +2,10 @@
 
 This crate aims to bring yet a other implementation of an Ethercat master, The [Ethercat communication protocol](https://en.wikipedia.org/wiki/EtherCAT) is a network protocol working on top of the [Ethernet](https://en.wikipedia.org/wiki/Ethernet) layer, designed for realtime industrial applications (like robotics). It is standardized by [ETG (Ethercat Technology Group)](https://www.ethercat.org/default.htm)
 
-**NOTE:** At the moment, this crate is in its early development.
-
 [![Crates.io](https://img.shields.io/crates/v/etherage.svg)](https://crates.io/crates/etherage)
 [![Docs.rs](https://docs.rs/etherage/badge.svg)](https://docs.rs/etherage)
+
+<img src="logo/etherage.svg" width=300/>
 
 ## goals
 

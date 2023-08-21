@@ -34,9 +34,9 @@
     - [ ] distributed clock
         + [ ] static drift
         + [ ] dynamic drift
-	- convenience
-		+ [x] logical memory & slave group management tools
-		+ [x] mapping tools
+    - convenience
+        + [x] logical memory & slave group management tools
+        + [x] mapping tools
     - optimization features
         + [x] multiple PDUs per ethercat frame (speed up and compress transmissions)
         + [x] tasks for different slaves or for same slave are parallelized whenever possible
