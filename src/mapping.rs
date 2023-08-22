@@ -63,13 +63,12 @@ use crate::{
     };
 use core::{
     fmt,
-    ops::Range,
-    cell::Ref,
+    ops::{Range, Deref},
+    cell::RefCell,
     };
 use std::{
-    cell::RefCell,
-    collections::{HashMap, BTreeSet},
-    sync::{Arc, Weak, Mutex},
+    collections::{HashMap, HashSet, BTreeSet},
+    sync::{Arc, Weak, Mutex, RwLock, RwLockWriteGuard},
     };
 use bilge::prelude::*;
 
@@ -79,10 +78,12 @@ const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1000, end: 0x1300};
 
 
 /// convenient object to manage slaves configurations and logical memory
-pub struct Allocator<'a> {
-    master: &'a RawMaster,
+pub struct Allocator {
+    internal: Mutex<AllocatorInternal>,
+}
+pub struct AllocatorInternal {
     slaves: HashMap<u16, Weak<ConfigSlave>>,
-    free: Mutex<BTreeSet<LogicalSlot>>,
+    free: BTreeSet<LogicalSlot>,
 }
 /// allocator slot in logical memory
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
@@ -90,33 +91,34 @@ struct LogicalSlot {
     size: u32,
     position: u32,
 }
-impl<'a> Allocator<'a> {
-    pub fn new(master: &'a RawMaster) -> Self { 
+impl Allocator {
+    pub fn new() -> Self { 
         let mut free = BTreeSet::new();
         free.insert(LogicalSlot {size: u32::MAX, position: 0});
-        Self {
-            master,
+        let internal = Mutex::new(AllocatorInternal {
             slaves: HashMap::new(),
-            free: Mutex::new(free),
-        }
+            free,
+        });
+        Self {internal}
     }
     /// allocate the memory area and the slaves for the given mapping.
     /// returning a [Group] for using that memory and communicate with the slaves
-    pub fn group(&mut self, mapping: &Mapping) -> Group<'_> {
-        // check that new mapping has not conflict with current config
-        assert!(self.compatible(&mapping));
+    pub fn group<'a>(&'a self, master: &'a RawMaster, mapping: &Mapping) -> Group<'a> {
         // compute mapping size
         let size = mapping.offset.borrow().clone();
+        
+        let mut internal = self.internal.lock().unwrap();
+        // check that new mapping has not conflict with current config
+        assert!(internal.compatible(&mapping));
         // reserve memory
         let slot;
         {
-            let mut free = self.free.lock().unwrap();
-            slot = free.range(LogicalSlot {size, position: 0} ..)
+            slot = internal.free.range(LogicalSlot {size, position: 0} ..)
                         .next().expect("no more logical memory")
                         .clone();
-            free.remove(&slot);
+            internal.free.remove(&slot);
             if slot.size > size {
-                free.insert(LogicalSlot {
+                internal.free.insert(LogicalSlot {
                     position: slot.position + size, 
                     size: slot.size - size,
                 });
@@ -124,36 +126,59 @@ impl<'a> Allocator<'a> {
         }
         // update global config
         let mut slaves = HashMap::<u16, Arc<ConfigSlave>>::new();
-        for (&k, slave) in mapping.config.slaves.borrow().iter() {
+        let config = mapping.config.slaves.lock().unwrap();
+        for &k in mapping.slaves.borrow().iter() {
             slaves.insert(k, 
-                if let Some(value) = self.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
+                if let Some(value) = internal.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
                     // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()` 
                     {value}
                 else {
-                    let new = Arc::new(slave.as_ref().clone());
-                    self.slaves.insert(k, Arc::downgrade(&new));
+                    let new = Arc::new(config[&k].try_read().expect("a slave is still in mapping").clone());
+                    internal.slaves.insert(k, Arc::downgrade(&new));
                     new
                 });
         }
-        // create
+        // create initial buffers
+        let mut buffer = mapping.default.borrow().clone();
+        buffer.extend((buffer.len() .. size as usize).map(|_| 0));
+        // create group
         Group {
-            master: self.master,
             allocator: self,
             allocated: slot.size,
-            config: slaves,
             offset: slot.position,
             size,
-            read: vec![0; size as usize],
-            write: vec![0; size as usize],
+            
+            config: slaves,
+            data: tokio::sync::Mutex::new(GroupData {
+                master,
+                offset: slot.position,
+                read: buffer.clone(),
+                write: buffer,
+            }),
         }
     }
     /// check that a given mapping is compatible with the already configured slaves in the allocator
     /// if true, a group can be initialized from the mapping
     pub fn compatible(&self, mapping: &Mapping) -> bool {
-        for (address, slave) in mapping.config.slaves.borrow().iter() {
+        self.internal.lock().unwrap().compatible(mapping)
+    }
+    /// return the amount of allocated memory in the logical memory
+    pub fn allocated(&self) -> u32 {
+        self.internal.lock().unwrap().allocated()
+    }
+    /// return the amount of free (potentially fragmented) memory in the logical memory
+    pub fn free(&self) -> u32 {
+        self.internal.lock().unwrap().free()
+    }
+}
+impl AllocatorInternal {
+    /// check that a given mapping is compatible with the already configured slaves in the allocator
+    /// if true, a group can be initialized from the mapping
+    fn compatible(&self, mapping: &Mapping) -> bool {
+        for (address, slave) in mapping.config.slaves.lock().unwrap().iter() {
             if let Some(alter) = self.slaves.get(address) {
                 if let Some(alter) = alter.upgrade() {
-                    if slave.as_ref() != alter.as_ref()
+                    if slave.try_read().expect("a slave is still in mapping").deref() != alter.as_ref()
                         {return false}
                 }
             }
@@ -161,21 +186,22 @@ impl<'a> Allocator<'a> {
         true
     }
     /// return the amount of allocated memory in the logical memory
-    pub fn allocated(&self) -> u32 {
+    fn allocated(&self) -> u32 {
         u32::MAX - self.free()
     }
     /// return the amount of free (potentially fragmented) memory in the logical memory
-    pub fn free(&self) -> u32 {
-        self.free.lock().unwrap().iter()
-                .map(|s|  s.size)
-                .sum::<u32>()
+    fn free(&self) -> u32 {
+        self.free.iter()
+            .map(|s|  s.size)
+            .sum::<u32>()
     }
 }
-impl fmt::Debug for Allocator<'_> {
+impl fmt::Debug for Allocator {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let internal = self.internal.lock().unwrap();
         write!(f, "<Allocator with {} slaves using {} bytes>", 
-            self.slaves.len(), 
-            self.allocated(),
+            internal.slaves.len(), 
+            internal.allocated(),
             )
     }
 }
@@ -187,26 +213,35 @@ impl fmt::Debug for Allocator<'_> {
     This can typically be though to as a group of slaves, except this only manage logical memory data without any assumption on its content. It is hence unable to perform any multi-slave exception management.
 */
 pub struct Group<'a> {
-    master: &'a RawMaster,
-    allocator: &'a Allocator<'a>,
+    allocator: &'a Allocator,
+    /// byte size of the allocated region of the logical memory
     allocated: u32,
-    
-    /// configuration per slave
-    config: HashMap<u16, Arc<ConfigSlave>>,
     /// byte offset of this data group in the logical memory
     offset: u32,
     /// byte size of this data group in the logical memory
     size: u32,
+    
+    /// configuration per slave
+    config: HashMap<u16, Arc<ConfigSlave>>,
+    data: tokio::sync::Mutex<GroupData<'a>>,
+}
+pub struct GroupData<'a> {
+    master: &'a RawMaster,
+    /// byte offset of this data group in the logical memory
+    offset: u32,
     /// data duplex: data to read from slave
     read: Vec<u8>,
     /// data duplex: data to write to slave
     write: Vec<u8>,
 }
-impl Group<'_> {
+impl<'a> Group<'a> {
+    pub fn contains(&self, slave: u16) -> bool {
+        self.config.contains_key(&slave)
+    }
     /**
         write on the given slave the matching configuration from the mapping
     
-        the slave is assumed to be in state [CommunicationState::PreOperational], and can be switched to [CommunicationState::SafeOperational] after this step.
+        the slave is assumed to be in state [PreOperational](CommunicationState::PreOperational), and can be switched to [SafeOperational](crate::CommunicationState::SafeOperational) after this step.
     */
     pub async fn configure(&self, slave: &Slave<'_>)  {
         let master = unsafe{ slave.raw_master() };
@@ -216,39 +251,59 @@ impl Group<'_> {
             };
         let config = &self.config[&address];
         
+        assert_eq!(slave.expected(), CommunicationState::PreOperational);
+        
         // range of physical memory to be mapped
         let physical = SLAVE_PHYSICAL_MAPPABLE;
         
         let mut coe = slave.coe().await;
+        let priority = u2::new(1);
         
         // PDO mapping
         for pdo in config.pdos.values() {
-            // pdo size must be set to zero before assigning items
-            coe.sdo_write(&pdo.config.len(), u2::new(0), 0).await;
-            for (i, sdo) in pdo.sdos.iter().enumerate() {
-                // PDO mapping
-                coe.sdo_write(&pdo.config.slot(i as u8), u2::new(0), sdo::PdoEntry::new(
-                    sdo.field.len.try_into().expect("field too big for a subitem"),
-                    sdo.sub.unwrap(),
-                    sdo.index,
-                    )).await;
+            if pdo.config.fixed {
+                // check that current sdo values are the requested ones
+                for (i, sdo) in pdo.sdos.iter().enumerate() {
+                    assert_eq!(
+                        coe.sdo_read(&pdo.config.item(i), priority).await, 
+                        sdo::PdoEntry::new(
+                            sdo.field.len.try_into().expect("field too big for a subitem"),
+                            sdo.sub.unwrap(),
+                            sdo.index,
+                            ), 
+                        "slave {} fixed pdo {}", address, pdo.config.item(i));
+                }
             }
-            coe.sdo_write(&pdo.config.len(), u2::new(0), pdo.sdos.len() as u8).await;
+            else {
+                // TODO: send as a complete SDO rather than subitems
+                // pdo size must be set to zero before assigning items
+                coe.sdo_write(&pdo.config.len(), priority, 0).await;
+                for (i, sdo) in pdo.sdos.iter().enumerate() {
+                    // PDO mapping
+                    coe.sdo_write(&pdo.config.item(i), priority, sdo::PdoEntry::new(
+                        sdo.field.len.try_into().expect("field too big for a subitem"),
+                        sdo.sub.unwrap(),
+                        sdo.index,
+                        )).await;
+                }
+                coe.sdo_write(&pdo.config.len(), priority, pdo.sdos.len() as u8).await;
+            }
         }
 
         // sync mapping
         for channel in config.channels.values() {
 
             let mut size = 0;
+            // TODO: send as a complete SDO rather than subitems
             // channel size must be set to zero before assigning items
-            coe.sdo_write(&channel.config.len(), u2::new(0), 0).await;
+            coe.sdo_write(&channel.config.len(), priority, 0).await;
             for (j, &pdo) in channel.pdos.iter().enumerate() {
-                coe.sdo_write(&channel.config.slot(j as u8), u2::new(0), pdo).await;
+                coe.sdo_write(&channel.config.slot(j as u8), priority, pdo).await;
                 size += config.pdos[&pdo].sdos.iter()
                             .map(|sdo| (sdo.field.len / 8) as u16)
                             .sum::<u16>();
             }
-            coe.sdo_write(&channel.config.len(), u2::new(0), channel.pdos.len() as u8).await;
+            coe.sdo_write(&channel.config.len(), priority, channel.pdos.len() as u8).await;
             
             // enable sync channel
             master.fpwr(address, channel.config.register(), {
@@ -285,22 +340,28 @@ impl Group<'_> {
                 }).await.one();
         }
     }
+    /// obtain exclusive access (mutex) to the data buffers
+    pub async fn data(&self) -> tokio::sync::MutexGuard<GroupData<'a>> {
+        self.data.lock().await
+    }
+}
+impl<'a> GroupData<'a> {
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: add a fallback implementation in case the slave does not support *RW commands
         // TODO: offset should be passed as 32 bit address, this requires a modification of RawMaster
-        self.master.pdu(PduCommand::LRW, 0, self.offset as u16, self.write.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LRW, SlaveAddress::Logical, self.offset, self.write.as_mut_slice()).await;
         self.read.copy_from_slice(&self.write);
         self.write.as_mut_slice()
     }
     /// read data slice from segment
     pub async fn read(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LRD, 0, self.offset as u16, self.read.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LRD, SlaveAddress::Logical, self.offset, self.read.as_mut_slice()).await;
         self.read.as_mut_slice()
     }
     /// write data slice to segment
     pub async fn write(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LWR, 0, self.offset as u16, self.write.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LWR, SlaveAddress::Logical, self.offset, self.write.as_mut_slice()).await;
         self.write.as_mut_slice()
     }
     
@@ -313,7 +374,8 @@ impl Group<'_> {
 }
 impl Drop for Group<'_> {
     fn drop(&mut self) {
-        self.allocator.free.lock().unwrap().remove(&LogicalSlot {size: self.allocated, position: self.offset});
+        self.allocator.internal.lock().unwrap()
+            .free.remove(&LogicalSlot {size: self.allocated, position: self.offset});
     }
 }
 impl fmt::Debug for Group<'_> {
@@ -324,11 +386,13 @@ impl fmt::Debug for Group<'_> {
 }
 
 
+
+
 /// struct holding configuration informations for multiple slaves, that can be shared between multiple mappings
-#[derive(Clone, Default, Debug, Eq, PartialEq)]
+#[derive(Default, Debug)]
 pub struct Config {
     // slave configs are boxed so that they won't move even while inserting in the hashmap
-    slaves: RefCell<HashMap<u16, Box<ConfigSlave>>>,
+    pub slaves: Mutex<HashMap<u16, Box<RwLock<ConfigSlave>>>>,
 }
 /// configuration for one slave
 #[derive(Clone, Default, Debug, Eq, PartialEq)]
@@ -359,12 +423,6 @@ pub struct ConfigFmmu {
     pub logical: u32,
 }
 
-impl Config {
-    pub fn slaves(&self) -> Ref<'_, HashMap<u16, Box<ConfigSlave>>> {
-        self.slaves.borrow()
-    }
-}
-
 
 /**
     Convenient struct to create a memory mapping for multiple slaves to the logical memory (responsible for realtime data exchanges).
@@ -380,12 +438,23 @@ impl Config {
     - The FMMU (Fieldbux Memory Mapping Unit) is hidden from the user and is used to adjust variables order.
 */
 pub struct Mapping<'a> {
+    /// configuration to modify
     config: &'a Config,
+    /// offset in the physical memory
     offset: RefCell<u32>,
+    /// default value for logical memory segment (initial value for [GrouData])
+    default: RefCell<Vec<u8>>,
+    /// keep trace of which slaves are used in this mapping
+    slaves: RefCell<HashSet<u16>>,
 }
 impl<'a> Mapping<'a> {
     pub fn new(config: &'a Config) -> Self {
-        Self { config, offset: RefCell::new(0) }
+        Self { 
+            config, 
+            offset: RefCell::new(0), 
+            default: RefCell::new(Vec::new()),
+            slaves: RefCell::new(HashSet::new()),
+        }
     }
     /// reference to the devices configuration actually worked on by this mapping
     pub fn config(&self) -> &'a Config {
@@ -395,20 +464,23 @@ impl<'a> Mapping<'a> {
     ///
     /// data coming for different slaves can interlace, hence multiple slave mapping instances can exist at the same time
     pub fn slave(&self, address: u16) -> MappingSlave<'_>  {
-        let mut slaves = self.config.slaves.borrow_mut();
+        self.slaves.borrow_mut().insert(address);
+        let mut slaves = self.config.slaves.lock().unwrap();
         slaves
             .entry(address)
-            .or_insert_with(|| Box::new(ConfigSlave {
+            .or_insert_with(|| Box::new(RwLock::new(ConfigSlave {
                 pdos: HashMap::new(),
                 channels: HashMap::new(),
                 fmmu: Vec::new(),
-                }));
-        let slave = slaves.get(&address).unwrap().as_ref();
+                })));
+        // uncontroled reference to self and to configuration
+        // this is safe since the slave config will not be removed from the hashmap and cannot be moved since it is heap allocated
+        // the returned instance holds an immutable reference to self so it cannot be freed
+        let slave = unsafe {core::mem::transmute::<_, &Box<RwLock<_>>>( 
+                        slaves.get(&address).unwrap() 
+                        )};
         MappingSlave {
-            // uncontroled reference to self and to configuration
-            // this is safe since the config parts that will be accessed by this new slave shall be accessed only by it
-            // the returned instance holds an immutable reference to self so it cannot be freed
-            config: unsafe {&mut *(slave as *const _ as *mut _)},
+            config: slave.try_write().expect("slave already in mapping"),
             mapping: self,
             buffer: SLAVE_PHYSICAL_MAPPABLE.start,
             additional: 0,
@@ -424,7 +496,7 @@ impl<'a> Mapping<'a> {
 /// data coming from one's slave physical memory shall not interlace (this is a limitation due to this library, not ethercat) so any mapping methods in here are preventing multiple mapping instances
 pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
-    config: &'a mut ConfigSlave,
+    config: RwLockWriteGuard<'a, ConfigSlave>,
     /// position in the physical memory mapping region
     buffer: u16,
     /// increment to add to `buffer` once the current mapped channel is done.
@@ -467,6 +539,12 @@ impl<'a> MappingSlave<'a> {
         *offset += length as u32;
         inserted
     }
+    fn default<T: PduData>(&self, field: Field<T>, value: T) {
+        let mut default = self.mapping.default.borrow_mut();
+        let range = default.len() .. field.byte + field.len;
+        default.extend(range.map(|_| 0));
+        field.set(&mut default, value);
+    }
     /// increment the value offset with the reserved additional size
     /// this is typically for counting the reserved size of channels triple buffers
     fn finish(&mut self) {
@@ -506,7 +584,7 @@ impl<'a> MappingSlave<'a> {
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: unsafe {&mut *(self as *const _ as *mut _)},
             direction: sdo.direction,
-            num: sdo.num as usize,
+            capacity: sdo.capacity as usize,
         }
         
         // TODO: make possible to push an alread existing channel as long as its content is the same
@@ -516,12 +594,12 @@ pub struct MappingChannel<'a> {
     slave: &'a mut MappingSlave<'a>,
     entries: &'a mut Vec<u16>,
     direction: SyncDirection,
-    num: usize,
+    capacity: usize,
 }
 impl<'a> MappingChannel<'a> {
     /// add a pdo to this channel, and return an object to map it
     pub fn push(&'a mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
-        assert!(self.entries.len()+1 < self.num);
+        assert!(self.entries.len()+1 < self.capacity);
         
         self.entries.push(pdo.index);
         let c = ConfigPdo {
@@ -537,7 +615,7 @@ impl<'a> MappingChannel<'a> {
             entries: unsafe {&mut *(entries as *const _ as *mut _)},
             slave: self.slave,
             direction: self.direction,
-            num: pdo.num as usize,
+            capacity: pdo.capacity as usize,
         }
         
         // TODO: make possible to push an alread existing PDO as long as its content is the same
@@ -547,12 +625,12 @@ pub struct MappingPdo<'a> {
     slave: &'a mut MappingSlave<'a>,
     entries: &'a mut Vec<Sdo>,
     direction: SyncDirection,
-    num: usize,
+    capacity: usize,
 }
 impl<'a> MappingPdo<'a> {
     /// add an sdo to this channel, and return its matching field in the logical memory
     pub fn push<T: PduData>(&mut self, sdo: Sdo<T>) -> Field<T> {
-        assert!(self.entries.len()+1 < self.num);
+        assert!(self.entries.len()+1 < self.capacity);
         
         self.entries.push(sdo.clone().downcast());
         let len = (sdo.field.len + 7) / 8;
@@ -560,6 +638,15 @@ impl<'a> MappingPdo<'a> {
         // so the first thier is reserved using `slave.insert`, and the 2 last using `slave.additional`
         self.slave.additional += 2*len as u16;
         Field::new(self.slave.insert(self.direction, len, None), len)
+    }
+    /** 
+        same as [Self::push] but also set an initial value for this SDO in the group buffer. 
+        This is useful when using a PDO that has more fields than the only desired ones, so we can set them a value and forget them.
+    */
+    pub fn set<T: PduData>(&mut self, sdo: Sdo<T>, initial: T) -> Field<T> {
+        let offset = self.push(sdo);
+        self.slave.default(offset, initial);
+        offset
     }
 }
 

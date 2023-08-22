@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use core::time::Duration;
 use futures_concurrency::future::Join;
-use etherage::{PduData, Field, PduAnswer, EthernetSocket, RawMaster};
+use etherage::{Field, EthernetSocket, RawMaster};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {

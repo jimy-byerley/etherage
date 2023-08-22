@@ -1,7 +1,7 @@
 //! implementation of communication with a slave's mailbox
 
 use crate::{
-	rawmaster::{RawMaster, PduCommand},
+	rawmaster::{RawMaster, PduCommand, SlaveAddress},
 	registers,
     data::{self, PduData, Cursor},
 	};
@@ -100,7 +100,7 @@ impl<'b> Mailbox<'b> {
         
         - 0 is lowest priority, 3 is highest
     */
-	pub async fn read<'a>(&mut self, ty: MailboxType, priority: u2, data: &'a mut [u8]) -> &'a [u8] {
+	pub async fn read<'a>(&mut self, ty: MailboxType, _priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         
@@ -119,7 +119,7 @@ impl<'b> Mailbox<'b> {
         let buffer = &mut allocated[range];
 		// read the mailbox content
 		loop {
-            if self.master.pdu(PduCommand::FPRD, self.slave, self.read.address, buffer).await == 1 
+            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer).await == 1 
                 {break}
             
             // trigger repeat
@@ -177,6 +177,7 @@ impl<'b> Mailbox<'b> {
             break
         }
         // write data
+        // TODO: retry this solution with writing the last word instead of the last byte
         // we are forced to write the whole buffer (even if much bigger than data) because the slave will notice the data sent only if writing the complete buffer
         // and writing the last byte instead does not work trick it.
 //         if mailbox_size - data.len() > 32 {
@@ -193,7 +194,7 @@ impl<'b> Mailbox<'b> {
 //         }
 //         else {
             // write the full buffer
-            while self.master.pdu(PduCommand::FPWR, self.slave, self.write.address, buffer.as_mut()).await != 1
+            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut()).await != 1
                 {}
 //         }
 	}

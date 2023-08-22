@@ -50,4 +50,9 @@ impl EthercatSocket for UdpSocket {
         self.socket.send_to(data, self.address)?;
         Ok(())
     }
+    fn max_frame(&self) -> usize  { 
+        1500 // max ethernet payload in 802.3 is 1500 bytes
+        - 20 // IP header
+        - 8 // UDP header
+    }
 }

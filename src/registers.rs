@@ -6,6 +6,7 @@
     Some registers are partially redundant, this is because we can use some field pointing to a big struct and other fields pointing to only parts of the same struct.
 */
 
+use core::fmt;
 use bilge::prelude::*;
 use crate::data::{self, Field, BitField, Storage};
 
@@ -104,13 +105,15 @@ pub mod al {
     pub const response: Field<AlControlResponse> = Field::simple(dls_user::r3.byte);
     pub const error: Field<AlError> = Field::simple(dls_user::r6.byte);
     pub const status: Field<AlStatus> = Field::simple(dls_user::r3.byte);
+    pub const pdi: Field<AlPdiControlType> = Field::simple(dls_user::r7.byte);
+    pub const sync_config: Field<AlSyncConfig> = Field::simple(dls_user::r8.byte);
 }
 
 
 
 /// ETG.1000.6 table 9
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
 pub struct AlControlRequest {
     /// requested state of communication
     pub state: AlMixedState,
@@ -124,7 +127,7 @@ data::bilge_pdudata!(AlControlRequest, u8);
 
 /// ETG.1000.6 table 10
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct AlControlResponse {
     /// formerly requested state of communication
     pub state: AlMixedState,
@@ -141,7 +144,7 @@ data::bilge_pdudata!(AlControlResponse, u8);
 
 /// ETG.1000.6 table 12
 #[bitsize(8)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct AlStatus {
     /// current state of communication
     pub state: AlMixedState,
@@ -220,6 +223,26 @@ pub struct AlMixedState {
 	pub operational: bool,
 }
 
+impl fmt::Display for AlMixedState {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}{{", core::any::type_name::<Self>()) ?;
+		for (active, mark) in [ (self.init(), "init"),
+								(self.pre_operational(), "pre"),
+								(self.safe_operational(), "safe"),
+								(self.operational(), "op"),
+								] {
+			write!(f, " ")?;
+			if active {
+				write!(f, "{}", mark)?;
+			} else {
+				for _ in 0 .. mark.len() {write!(f, " ")?;}
+			}
+		}
+		write!(f, "}}")?;
+		Ok(())
+	}
+}
+
 impl TryFrom<AlMixedState> for AlState {
     type Error = &'static str;
     fn try_from(state: AlMixedState) -> Result<Self, Self::Error> {
@@ -269,9 +292,17 @@ pub enum AlError {
     SyncWatchdog = 0x001B, 
     ///  Invalid Sync Manager Types
     InvalidSyncTypes = 0x001C, 
-    ///  Invalid Output Configuration
+    /**  
+        Invalid Output Configuration
+        
+        raise when a something is wrong in a sync channel or PDO mapping that should be written by the master
+    */
     InvalidOutputConfig = 0x001D, 
-    ///  Invalid Input Configuration
+    /**  
+        Invalid Input Configuration
+        
+        raise when a something is wrong in a sync channel or PDO mapping that should be read by the master
+    */
     InvalidInputConfig = 0x001E, 
     ///  Invalid Watchdog Configuration
     InvalidWatchdogConfig = 0x001F, 
@@ -346,6 +377,35 @@ pub enum AlError {
 }
 data::bilge_pdudata!(AlError, u16);
 
+/// ETG.1000.6 table 13
+#[bitsize(9)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct AlPdiControlType {
+    /// Type specific (see ETG.1000.3 DL information parameter)
+    pub pdi: u8,
+    /**
+        - false: AL Management will be done by an application Controller
+        - true: AL Management will be emulated (AL status follows directly AL control)
+    */
+    pub strict: bool,
+}
+data::bilge_pdudata!(AlPdiControlType, u9);
+
+/// ETG.1000.6 table 15
+#[bitsize(8)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq, Default)]
+pub struct AlSyncConfig {
+    /// controller specific
+    pub signal_conditioning_sync0: u2,
+    pub enable_signal_sync0: bool,
+    pub enable_interrupt_sync0: bool,
+    
+    /// controller specific
+    pub signal_conditioning_sync1: u2,
+    pub enable_signal_sync1: bool,
+    pub enable_interrupt_sync1: bool,
+}
+data::bilge_pdudata!(AlSyncConfig, u8);
 
 
 /// ETG.1000.4 table 31
@@ -557,15 +617,16 @@ pub struct ExternalEvent {
 data::bilge_pdudata!(ExternalEvent, u16);
 
 /// A write to one counter will reset all counters of the group
+/// ETG.1000.4 table 40
 #[repr(packed)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PortsErrorCount {
 	pub port: [PortErrorCount; 4],
 }
 data::packed_pdudata!(PortsErrorCount);
 
 #[bitsize(16)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct PortErrorCount {
 	/// counts the occurrences of frame errors (including RX errors within frame)
 	pub frame: u8,
@@ -630,8 +691,9 @@ pub struct SiiAccess {
 data::bilge_pdudata!(SiiAccess, u16);
 
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone)]
+#[derive(FromBits, Debug, Copy, Clone, Default)]
 pub enum SiiOwner {
+    #[default]
 	EthercatDL = 0,
 	Pdi = 1,
 }
@@ -842,16 +904,18 @@ data::bilge_pdudata!(SyncManagerChannel, u64);
 
 /// ETG.1000.4 table 58
 #[bitsize(2)]
-#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SyncMode {
+    #[default]
     Buffered = 0,
     Mailbox = 2,
 }
 /// ETG.1000.4 table 58
 #[bitsize(2)]
-#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SyncDirection {
     /// sync manager buffer is read by the master
+    #[default]
     Read = 0,
     /// sync manager buffer is written by the master
     Write = 1,
