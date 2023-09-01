@@ -119,7 +119,7 @@ impl<'b> Mailbox<'b> {
         let buffer = &mut allocated[range];
 		// read the mailbox content
 		loop {
-            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer).await == 1 
+            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1 
                 {break}
             
             // trigger repeat
@@ -194,7 +194,7 @@ impl<'b> Mailbox<'b> {
 //         }
 //         else {
             // write the full buffer
-            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut()).await != 1
+            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut(), false).await != 1
                 {}
 //         }
 	}

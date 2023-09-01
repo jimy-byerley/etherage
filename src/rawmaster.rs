@@ -182,7 +182,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         buffer.as_mut().fill(0);
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len], false).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
     }
@@ -197,7 +197,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         data.pack(buffer.as_mut()).unwrap();
 		PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len], false).await,
 			value: (),
 			}
 	}
@@ -212,7 +212,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         data.pack(buffer.as_mut()).unwrap();
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len], false).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
 	}
@@ -230,8 +230,9 @@ impl RawMaster {
             + if slaves physical memory is accessed, it must be a 16bit address
             + if segment logical memory is accessed, it must be a 32bit address
         - `data`: buffer of data to send, and to write with the segment's answer, the answer will answer with the same data size as what was sent so the whole buffer will be sent and written back
+        - `flush`: all PDUs in the buffer will be sent together with this PDU immediately rather than withing for the buffering delay, this is helpful for time-bound applications
     */
-	pub async fn pdu(&self, command: PduCommand, slave: SlaveAddress, memory: u32, data: &mut [u8]) -> u16 {
+	pub async fn pdu(&self, command: PduCommand, slave: SlaveAddress, memory: u32, data: &mut [u8], flush: bool) -> u16 {
         // assemble the address block with slave and memory addresses
         let address = match slave {
             SlaveAddress::Broadcast => u32::from(PhysicalAddress::new(
@@ -298,7 +299,7 @@ impl RawMaster {
                         state.last_end = state.last_start;
                     }
                     
-                    // stacking the PDU in self.pdu_receive
+                    // stacking the PDU
                     let advance = {
                         let range = state.last_end ..;
                         let mut cursor = Cursor::new(&mut state.send[range]);
@@ -317,6 +318,7 @@ impl RawMaster {
                     };
                     state.last_start = state.last_end;
                     state.last_end = state.last_start + advance;
+                    state.receive[token].as_mut().unwrap().ready = flush;
                     
                     self.sendable.notify_one();
                 
@@ -350,7 +352,11 @@ impl RawMaster {
         }
 	}
 	
-	/// trigger sending the buffered PDUs, they will be sent as soon as possible by [Self::send] instead of waiting for the frame to be full or for the timeout
+	/** 
+        trigger sending the buffered PDUs, they will be sent as soon as possible by [Self::send] instead of waiting for the frame to be full or for the timeout
+        
+        Note: this method is helpful to manage the stream and make space in the buffer before sending PDUs, but does not help to make sure a PDU is sent deterministic time. To trigger the sending of a PDU, use argument `flush` of [Self::pdu]
+    */
 	pub fn flush(&self) {
         let mut state = self.pdu_state.lock().unwrap();
         if state.last_end != 0 {
