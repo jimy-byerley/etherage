@@ -9,19 +9,16 @@ use ioprio::*;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-
     // RT this_thread
-    let res = thread_priority::set_thread_priority_and_policy(
-        std::os::unix::thread::JoinHandleExt::as_pthread_t(&thread::this_thread),
-        thread_priority::ThreadPriority::Max,
-        thread_priority::ThreadSchedulePolicy::Realtime(thread_priority::RealtimeThreadSchedulePolicy::Fifo)).is_ok();
-    assert_eq!(res, true);
+    assert!(thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max).is_ok());
 
     //Init master
     let master: Arc<Master> = Arc::new(Master::new(EthernetSocket::new(&SOCKET_NAME)?));
     {
         let m : Arc<Master> = master.clone();
-        ioprio::set_priority(ioprio::Target { Process : 0, ProcessGroup : 0, User : ioprio::Uid::Current() }, ioprio::RtPriorityLevel );
+        ioprio::set_priority(
+            ioprio::Target::Process(ioprio::Pid::this()),
+            Priority::new(ioprio::Class::Realtime(ioprio::RtPriorityLevel::highest()) ));
         let handle = std::thread::spawn(move || loop { unsafe {m.get_raw()}.receive(); });
 
 
@@ -36,7 +33,7 @@ async fn main() -> std::io::Result<()> {
     };
     {
         let m: Arc<Master> = master.clone();
-        let _handle = std::thread::spawn(move || loop { unsafe { m.get_raw().send();} });
+        let handle = std::thread::spawn(move || loop { unsafe { m.get_raw().send();} });
         #[cfg(target_os = "linux")]
         {
             let res = thread_priority::set_thread_priority_and_policy(
