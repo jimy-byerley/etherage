@@ -114,7 +114,7 @@ pub enum ClockStatus {
 
 struct SlaveInfo {
     index: u16,
-    clock_range: bool,
+    //clock_range: bool,
     is_desync : bool,
     clock: DistributedClock,
     isochronous : isochronous::Isochronous,
@@ -125,7 +125,7 @@ impl SlaveInfo{
     fn new(idx: u16) -> Self {
         Self {
             index: idx,
-            clock_range: true,
+            //clock_range: true,
             is_desync : false,
             clock: DistributedClock::new(),
             isochronous : isochronous::Isochronous::new(),
@@ -283,24 +283,6 @@ impl<'a> SyncClock<'a> {
             typ : MasterSyncType::Cyclic
         }
     }
-    pub fn new_with_ptr(master: &'a RawMaster, event_ptr : *const tokio::sync::Notify) -> Self {
-       unsafe { Self {
-                master,
-                ref_p_idx: 0,
-                ref_l_idx: Option::None,
-                offset : 0,
-                delay : 0,
-                shift : 0,
-                dc_correction_typ : DCCorrectionType::Continuous,
-                slaves: Vec::new(),
-                cycle_time: CONTINOUS_TIMELAPS,
-                drift_frm_count : STATIC_FRAME_COUNT,
-                status : ClockStatus::Registering,
-                //event : &*(event_ptr),
-                typ : MasterSyncType::Cyclic
-            }
-        }
-    }
 
 // ==============================    Accessors   ==============================
 
@@ -396,8 +378,7 @@ impl<'a> SyncClock<'a> {
         if self.get_slave_ref().is_some() {
             return self.get_local_time()
             - self.offset
-            - u64::from(self.get_slave_ref().unwrap().clock.system_delay)
-            - Duration::from_nanos(50000).as_nanos() as u64; }
+            - u64::from(self.get_slave_ref().unwrap().clock.system_delay); }
         else { return self.get_local_time(); }
     }
 
@@ -588,7 +569,9 @@ impl<'a> SyncClock<'a> {
 
         //Static drif correction
         for _i in 0..self.drift_frm_count {
-            self.master.bwr(dc::rcv_system_time, self.get_global_time()).await;
+            let p = self.master.bwr(dc::rcv_system_time, self.get_global_time());
+            self.master.flush();
+            p.await;
         }
 
         self.status = ClockStatus::Initialized;
@@ -637,37 +620,30 @@ impl<'a> SyncClock<'a> {
             //Continuous drift correction and survey
             if self.status == ClockStatus::Active && self.dc_correction_typ == DCCorrectionType::Continuous {
                 let dt: u64 = self.get_global_time();
-                let mut alstatus : u8 = 0;
                 //Send data in the same frame
-                (
-                    async {self.master.bwr(dc::rcv_system_time, dt).await; },
-                    // async {
-                    //     self.slaves.iter_mut().map(|slv| async {
-                    //         let ans = self.master.fprd(slv.index, dc::rcv_time_diff).await;
-                    //         assert_eq!(ans.answers, 1);
-                    //         slv.clock.system_difference = TimeDifference::new_value(ans.value);
-                    //     }).collect::<Vec<_>>().join().await;
-                    // },
-                    async {
-                        let ans = self.master.fprd(self.slaves[watched_slave_idx].index, dc::rcv_time_diff).await;
-                        assert_eq!(ans.answers, 1);
-                        self.slaves[watched_slave_idx].clock.system_difference = TimeDifference::new_value(ans.value);
-                    },
-                    async { alstatus = self.master.brd(dls_user::r3).await.value }
-                ).join().await;
+                let f = (
+                    async { self.master.bwr(dc::rcv_system_time, dt).await },
+                    async { self.master.fprd(self.slaves[watched_slave_idx].index, dc::rcv_time_diff).await },
+                    async { self.master.brd(dls_user::r3).await },
+                ).join();
+                self.master.flush();
+
+                let res: (PduAnswer<()>, PduAnswer<u32>, PduAnswer<u8>) = f.await;
+                assert_eq!(res.1.answers, 1);
+                self.slaves[watched_slave_idx].clock.system_difference = TimeDifference::new_value(res.1.value);
                 _ = self.survey_time_sync().await; //At the moment we don't care about error
 
                 watched_slave_idx += 1;
                 watched_slave_idx %= self.slaves.len();
 
-                if alstatus > AlState::PreOperational as u8 {
+                if res.2.value > AlState::PreOperational as u8 {
                     dbg_lim += 1;
                 }
             }
 
             if cfg!(debug_assertions) {
                 // Debug tool
-                if dbg_lim >= 4000 {
+                if dbg_lim >= 12000 {
                     self.status = ClockStatus::Initialized;
                 }
             }
