@@ -344,6 +344,10 @@ impl<'a> Group<'a> {
     pub async fn data(&self) -> tokio::sync::MutexGuard<GroupData<'a>> {
         self.data.lock().await
     }
+    /// obtain access without locking, exclusivity is guaranteed by self borrowing
+    pub fn data_mut(&mut self) -> &mut GroupData<'a> {
+        self.data.get_mut()
+    }
 }
 impl<'a> GroupData<'a> {
     /// read and write relevant data from master to segment
@@ -364,6 +368,9 @@ impl<'a> GroupData<'a> {
         self.master.pdu(PduCommand::LWR, SlaveAddress::Logical, self.offset, self.write.as_mut_slice()).await;
         self.write.as_mut_slice()
     }
+    
+    pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.read.as_mut_slice()}
+    pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.write.as_mut_slice()}
     
     /// extract a mapped value from the buffer of last received data
     pub fn get<T: PduData>(&self, field: Field<T>) -> T  

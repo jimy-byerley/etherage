@@ -44,6 +44,9 @@
         + [x] async API and implementation to avoid threads context switches
 */
 
+#![doc(html_favicon_url = "/etherage/logo/etherage.svg")]
+#![doc(html_logo_url = "/etherage/logo/ethercotic.svg")]
+
 pub mod data;
 #[allow(non_upper_case_globals)] 
 #[allow(unused)]

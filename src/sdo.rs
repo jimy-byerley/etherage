@@ -799,9 +799,9 @@ impl fmt::Display for StatusWord {
 								(self.switch_on_disabled(), "sod"),
 								(self.warning(), "w"),
 								(self.remote(), "r"),
-								(self.reached_command(), "cr"),
+								(self.reached_command(), "rc"),
 								(self.limit_active(), "la"),
-								(self.following_command(), "cf"),
+								(self.following_command(), "fc"),
 								(self.following_error(), "ce"),
 								] {
 			write!(f, " ")?;
