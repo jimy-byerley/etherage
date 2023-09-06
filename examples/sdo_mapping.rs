@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use core::time::Duration;
 use etherage::{
-    EthernetSocket, RawMaster, 
+    EthernetSocket, RawMaster,
     Slave, SlaveAddress, CommunicationState,
     sdo::{self, Sdo, SyncDirection},
     mapping::{self, Mapping},
@@ -22,7 +22,7 @@ async fn main() -> std::io::Result<()> {
             master.send();
     })};
     std::thread::sleep(Duration::from_millis(500));
-    
+
     println!("create mapping");
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
@@ -38,13 +38,13 @@ async fn main() -> std::io::Result<()> {
                 let position = pdo.push(Sdo::<i32>::complete(0x6064));
                 let torque = pdo.push(Sdo::<i16>::complete(0x6077));
     println!("done {:#?}", config);
-    
+
     let allocator = mapping::Allocator::new();
     let group = allocator.group(&master, &mapping);
-    
+
     println!("group {:#?}", group);
     println!("fields  {:#?}", (control, status, error, position));
-    
+
     let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await;
     slave.set_address(1).await;
@@ -54,19 +54,18 @@ async fn main() -> std::io::Result<()> {
     group.configure(&slave).await;
     slave.switch(CommunicationState::SafeOperational).await;
     slave.switch(CommunicationState::Operational).await;
-    
+
     for _ in 0 .. 20 {
         let mut group = group.data().await;
         group.exchange().await;
-        println!("received {:?}  {}  {}  {}  {}", 
+        println!("received {:?}  {}  {}  {}  {}",
             group.get(restatus),
-            group.get(status), 
-            group.get(error), 
+            group.get(status),
+            group.get(error),
             group.get(position),
             group.get(torque),
             );
     }
-    
+
     Ok(())
 }
-

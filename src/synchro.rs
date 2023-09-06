@@ -636,11 +636,15 @@ impl<'a> SyncClock<'a> {
                 watched_slave_idx += 1;
                 watched_slave_idx %= self.slaves.len();
 
-                if res.2.value > AlState::PreOperational as u8 {
-                    dbg_lim += 1;
+                // Debug code
+                if cfg!(debug_assertions) {
+                    if res.2.value > AlState::PreOperational as u8 {
+                        dbg_lim += 1;
+                    }
                 }
             }
 
+            // Debug code
             if cfg!(debug_assertions) {
                 // Debug tool
                 if dbg_lim >= 12000 {
