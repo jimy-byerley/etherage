@@ -290,11 +290,19 @@ pub enum AlError {
     ///  Sync manager watchdog
     SyncWatchdog = 0x001B,
     ///  Invalid Sync Manager Types
-    InvalidSyncTypes = 0x001C,
-    ///  Invalid Output Configuration
-    InvalidOutputConfig = 0x001D,
-    ///  Invalid Input Configuration
-    InvalidInputConfig = 0x001E,
+    InvalidSyncTypes = 0x001C, 
+    /**  
+        Invalid Output Configuration
+        
+        raise when a something is wrong in a sync channel or PDO mapping that should be written by the master
+    */
+    InvalidOutputConfig = 0x001D, 
+    /**  
+        Invalid Input Configuration
+        
+        raise when a something is wrong in a sync channel or PDO mapping that should be read by the master
+    */
+    InvalidInputConfig = 0x001E, 
     ///  Invalid Watchdog Configuration
     InvalidWatchdogConfig = 0x001F,
     ///  Slave needs cold start
@@ -682,8 +690,9 @@ pub struct SiiAccess {
 data::bilge_pdudata!(SiiAccess, u16);
 
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone)]
+#[derive(FromBits, Debug, Copy, Clone, Default)]
 pub enum SiiOwner {
+    #[default]
 	EthercatDL = 0,
 	Pdi = 1,
 }
@@ -894,16 +903,18 @@ data::bilge_pdudata!(SyncManagerChannel, u64);
 
 /// ETG.1000.4 table 58
 #[bitsize(2)]
-#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SyncMode {
+    #[default]
     Buffered = 0,
     Mailbox = 2,
 }
 /// ETG.1000.4 table 58
 #[bitsize(2)]
-#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SyncDirection {
     /// sync manager buffer is read by the master
+    #[default]
     Read = 0,
     /// sync manager buffer is written by the master
     Write = 1,

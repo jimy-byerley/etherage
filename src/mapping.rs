@@ -63,13 +63,12 @@ use crate::{
     };
 use core::{
     fmt,
-    ops::Range,
-    cell::Ref,
+    ops::{Range, Deref},
+    cell::RefCell,
     };
 use std::{
-    cell::RefCell,
-    collections::{HashMap, BTreeSet},
-    sync::{Arc, Weak, Mutex},
+    collections::{HashMap, HashSet, BTreeSet},
+    sync::{Arc, Weak, Mutex, RwLock, RwLockWriteGuard},
     };
 use bilge::prelude::*;
 
@@ -127,13 +126,14 @@ impl Allocator {
         }
         // update global config
         let mut slaves = HashMap::<u16, Arc<ConfigSlave>>::new();
-        for (&k, slave) in mapping.config.slaves.borrow().iter() {
-            slaves.insert(k,
-                if let Some(value) = internal.slaves.get(&k).map(|v|  v.upgrade()).flatten()
-                    // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()`
+        let config = mapping.config.slaves.lock().unwrap();
+        for &k in mapping.slaves.borrow().iter() {
+            slaves.insert(k, 
+                if let Some(value) = internal.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
+                    // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()` 
                     {value}
                 else {
-                    let new = Arc::new(slave.as_ref().clone());
+                    let new = Arc::new(config[&k].try_read().expect("a slave is still in mapping").clone());
                     internal.slaves.insert(k, Arc::downgrade(&new));
                     new
                 });
@@ -175,10 +175,10 @@ impl AllocatorInternal {
     /// check that a given mapping is compatible with the already configured slaves in the allocator
     /// if true, a group can be initialized from the mapping
     fn compatible(&self, mapping: &Mapping) -> bool {
-        for (address, slave) in mapping.config.slaves.borrow().iter() {
+        for (address, slave) in mapping.config.slaves.lock().unwrap().iter() {
             if let Some(alter) = self.slaves.get(address) {
                 if let Some(alter) = alter.upgrade() {
-                    if slave.as_ref() != alter.as_ref()
+                    if slave.try_read().expect("a slave is still in mapping").deref() != alter.as_ref()
                         {return false}
                 }
             }
@@ -344,27 +344,34 @@ impl<'a> Group<'a> {
     pub async fn data(&self) -> tokio::sync::MutexGuard<GroupData<'a>> {
         self.data.lock().await
     }
+    /// obtain access without locking, exclusivity is guaranteed by self borrowing
+    pub fn data_mut(&mut self) -> &mut GroupData<'a> {
+        self.data.get_mut()
+    }
 }
 impl<'a> GroupData<'a> {
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: add a fallback implementation in case the slave does not support *RW commands
         // TODO: offset should be passed as 32 bit address, this requires a modification of RawMaster
-        self.master.pdu(PduCommand::LRW, SlaveAddress::Logical, self.offset, self.write.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LRW, SlaveAddress::Logical, self.offset, self.write.as_mut_slice(), false).await;
         self.read.copy_from_slice(&self.write);
         self.write.as_mut_slice()
     }
     /// read data slice from segment
     pub async fn read(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LRD, SlaveAddress::Logical, self.offset, self.read.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LRD, SlaveAddress::Logical, self.offset, self.read.as_mut_slice(), false).await;
         self.read.as_mut_slice()
     }
     /// write data slice to segment
     pub async fn write(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LWR, SlaveAddress::Logical, self.offset, self.write.as_mut_slice()).await;
+        self.master.pdu(PduCommand::LWR, SlaveAddress::Logical, self.offset, self.write.as_mut_slice(), false).await;
         self.write.as_mut_slice()
     }
-
+    
+    pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.read.as_mut_slice()}
+    pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.write.as_mut_slice()}
+    
     /// extract a mapped value from the buffer of last received data
     pub fn get<T: PduData>(&self, field: Field<T>) -> T
         {field.get(&self.read)}
@@ -389,10 +396,10 @@ impl fmt::Debug for Group<'_> {
 
 
 /// struct holding configuration informations for multiple slaves, that can be shared between multiple mappings
-#[derive(Clone, Default, Debug, Eq, PartialEq)]
+#[derive(Default, Debug)]
 pub struct Config {
     // slave configs are boxed so that they won't move even while inserting in the hashmap
-    slaves: RefCell<HashMap<u16, Box<ConfigSlave>>>,
+    pub slaves: Mutex<HashMap<u16, Box<RwLock<ConfigSlave>>>>,
 }
 /// configuration for one slave
 #[derive(Clone, Default, Debug, Eq, PartialEq)]
@@ -423,12 +430,6 @@ pub struct ConfigFmmu {
     pub logical: u32,
 }
 
-impl Config {
-    pub fn slaves(&self) -> Ref<'_, HashMap<u16, Box<ConfigSlave>>> {
-        self.slaves.borrow()
-    }
-}
-
 
 /**
     Convenient struct to create a memory mapping for multiple slaves to the logical memory (responsible for realtime data exchanges).
@@ -444,9 +445,14 @@ impl Config {
     - The FMMU (Fieldbux Memory Mapping Unit) is hidden from the user and is used to adjust variables order.
 */
 pub struct Mapping<'a> {
+    /// configuration to modify
     config: &'a Config,
+    /// offset in the physical memory
     offset: RefCell<u32>,
+    /// default value for logical memory segment (initial value for [GrouData])
     default: RefCell<Vec<u8>>,
+    /// keep trace of which slaves are used in this mapping
+    slaves: RefCell<HashSet<u16>>,
 }
 impl<'a> Mapping<'a> {
     pub fn new(config: &'a Config) -> Self {
@@ -454,6 +460,7 @@ impl<'a> Mapping<'a> {
             config,
             offset: RefCell::new(0),
             default: RefCell::new(Vec::new()),
+            slaves: RefCell::new(HashSet::new()),
         }
     }
     /// reference to the devices configuration actually worked on by this mapping
@@ -464,20 +471,23 @@ impl<'a> Mapping<'a> {
     ///
     /// data coming for different slaves can interlace, hence multiple slave mapping instances can exist at the same time
     pub fn slave(&self, address: u16) -> MappingSlave<'_>  {
-        let mut slaves = self.config.slaves.borrow_mut();
+        self.slaves.borrow_mut().insert(address);
+        let mut slaves = self.config.slaves.lock().unwrap();
         slaves
             .entry(address)
-            .or_insert_with(|| Box::new(ConfigSlave {
+            .or_insert_with(|| Box::new(RwLock::new(ConfigSlave {
                 pdos: HashMap::new(),
                 channels: HashMap::new(),
                 fmmu: Vec::new(),
-                }));
-        let slave = slaves.get(&address).unwrap().as_ref();
+                })));
+        // uncontroled reference to self and to configuration
+        // this is safe since the slave config will not be removed from the hashmap and cannot be moved since it is heap allocated
+        // the returned instance holds an immutable reference to self so it cannot be freed
+        let slave = unsafe {core::mem::transmute::<_, &Box<RwLock<_>>>( 
+                        slaves.get(&address).unwrap() 
+                        )};
         MappingSlave {
-            // uncontroled reference to self and to configuration
-            // this is safe since the config parts that will be accessed by this new slave shall be accessed only by it
-            // the returned instance holds an immutable reference to self so it cannot be freed
-            config: unsafe {&mut *(slave as *const _ as *mut _)},
+            config: slave.try_write().expect("slave already in mapping"),
             mapping: self,
             buffer: SLAVE_PHYSICAL_MAPPABLE.start,
             additional: 0,
@@ -493,7 +503,7 @@ impl<'a> Mapping<'a> {
 /// data coming from one's slave physical memory shall not interlace (this is a limitation due to this library, not ethercat) so any mapping methods in here are preventing multiple mapping instances
 pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
-    config: &'a mut ConfigSlave,
+    config: RwLockWriteGuard<'a, ConfigSlave>,
     /// position in the physical memory mapping region
     buffer: u16,
     /// increment to add to `buffer` once the current mapped channel is done.

@@ -183,7 +183,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         buffer.as_mut().fill(0);
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len], false).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
     }
@@ -198,7 +198,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         data.pack(buffer.as_mut()).unwrap();
 		PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len], false).await,
 			value: (),
 			}
 	}
@@ -213,7 +213,7 @@ impl RawMaster {
         let mut buffer = T::Packed::uninit();
         data.pack(buffer.as_mut()).unwrap();
         PduAnswer {
-			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len]).await,
+			answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len], false).await,
 			value: T::unpack(buffer.as_ref()).unwrap(),
 			}
 	}
@@ -231,8 +231,9 @@ impl RawMaster {
             + if slaves physical memory is accessed, it must be a 16bit address
             + if segment logical memory is accessed, it must be a 32bit address
         - `data`: buffer of data to send, and to write with the segment's answer, the answer will answer with the same data size as what was sent so the whole buffer will be sent and written back
+        - `flush`: all PDUs in the buffer will be sent together with this PDU immediately rather than withing for the buffering delay, this is helpful for time-bound applications
     */
-	pub async fn pdu(&self, command: PduCommand, slave: SlaveAddress, memory: u32, data: &mut [u8]) -> u16 {
+	pub async fn pdu(&self, command: PduCommand, slave: SlaveAddress, memory: u32, data: &mut [u8], flush: bool) -> u16 {
         // assemble the address block with slave and memory addresses
         let address = match slave {
             SlaveAddress::Broadcast => u32::from(PhysicalAddress::new(
@@ -249,92 +250,94 @@ impl RawMaster {
                 )),
             SlaveAddress::Logical => memory,
         };
-
-        let token;
-        let (ready, _finisher) = {
+        
+        let (token, ready, _finisher);
+        loop {
             // buffering the pdu sending
-            let mut state = self.pdu_state.lock().unwrap();
-
-            while state.free.is_empty() {
-                let notification = self.received.notified();
-                drop(state);
-                notification.await;
-                state = self.pdu_state.lock().unwrap();
-            }
-
-            // sending the buffer if necessary
-            while self.socket.max_frame() < state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size() {
-                assert!(self.socket.max_frame() >
-                    EthercatHeader::packed_size()
-                    + data.len()
-                    + PduHeader::packed_size()
-                    + PduFooter::packed_size(), "data too big for an ethercat frame");
-                state.ready = true;
-                self.sendable.notify_one();
-                let notification = self.sent.notified();
-                drop(state);
-                notification.await;
-                state = self.pdu_state.lock().unwrap();
-            }
-
-            // reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
-            token = state.free.pop().unwrap();
-            state.receive[token] = Some(PduStorage {
-                // cast lifetime as static
-                // memory safety: this slice is pinned by the caller and its access is managed by field `ready`
-                data: unsafe {std::slice::from_raw_parts_mut(
-                        data.as_mut_ptr(),
-                        data.len(),
-                        )},
-                ready: false,
-                answers: 0,
-                });
-
-            // change last value's PduHeader.next
-            if state.last_start <= state.last_end {
-                let range = state.last_start .. state.last_end;
-                let place = &mut state.send[range];
-                let mut header = PduHeader::unpack(place).unwrap();
-                header.set_next(true);
-                header.pack(place).unwrap();
-            }
-            else {
-                state.last_end = state.last_start;
-            }
-
-            // stacking the PDU in self.pdu_receive
-            let advance = {
-                let range = state.last_end ..;
-                let mut cursor = Cursor::new(&mut state.send[range]);
-                cursor.pack(&PduHeader::new(
-                    u8::from(command),
-                    token as u8,
-                    address,
-                    u11::new(data.len().try_into().unwrap()),
-                    false,
-                    false,
-                    u16::new(0),
-                    )).unwrap();
-                cursor.write(data).unwrap();
-                cursor.pack(&PduFooter::new(0)).unwrap();
-                cursor.position()
-            };
-            state.last_start = state.last_end;
-            state.last_end = state.last_start + advance;
-
-            self.sendable.notify_one();
-
-            // memory safety: this item in the array cannot be moved since self is borrowed, and will only be removed later by the current function
-            // we will access it potentially concurrently, but since we only want to detect a change in the value, that's fine
-            let ready = unsafe {&*(&state.receive[token].as_ref().unwrap().ready as *const bool)};
-            // clean up the receive table at function end, or in case the async runtime cancels this task
-            let finisher = Finisher::new(|| {
+            
+            // this weird scope is here to prevent the rust thread checker to set this async future `!Send` just because there is remaining freed variables with `MutexGuard` type
+            // TODO: restore the previous code (more readable and flexible) once https://github.com/rust-lang/rust/issues/104883 is fixed
+            {
                 let mut state = self.pdu_state.lock().unwrap();
-                state.receive[token] = None;
-                state.free.push(token).unwrap();
-            });
-            (ready, finisher)
-        };
+                let space_available = || self.socket.max_frame() > state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size();
+                let token_available = || ! state.free.is_empty();
+                if ! token_available()  {
+                    // there is nothing to do except waiting
+                }
+                else if ! space_available()  {
+                    // sending the current buffer
+                    assert!(self.socket.max_frame() > 
+                        EthercatHeader::packed_size() 
+                        + data.len() 
+                        + PduHeader::packed_size() 
+                        + PduFooter::packed_size(), "data too big for an ethercat frame");
+                    state.ready = true;
+                    self.sendable.notify_one();
+                }
+                else {
+                    // reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
+                    token = state.free.pop().unwrap();
+                    state.receive[token] = Some(PduStorage {
+                        // cast lifetime as static
+                        // memory safety: this slice is pinned by the caller and its access is managed by field `ready`
+                        data: unsafe {std::slice::from_raw_parts_mut(
+                                data.as_mut_ptr(),
+                                data.len(),
+                                )},
+                        ready: false,
+                        answers: 0,
+                        });
+                    
+                    // change last value's PduHeader.next
+                    if state.last_start <= state.last_end {
+                        let range = state.last_start .. state.last_end;
+                        let place = &mut state.send[range];
+                        let mut header = PduHeader::unpack(place).unwrap();
+                        header.set_next(true);
+                        header.pack(place).unwrap();
+                    }
+                    else {
+                        state.last_end = state.last_start;
+                    }
+                    
+                    // stacking the PDU
+                    let advance = {
+                        let range = state.last_end ..;
+                        let mut cursor = Cursor::new(&mut state.send[range]);
+                        cursor.pack(&PduHeader::new(
+                            u8::from(command),
+                            token as u8,
+                            address,
+                            u11::new(data.len().try_into().unwrap()),
+                            false,
+                            false,
+                            u16::new(0),
+                            )).unwrap();
+                        cursor.write(data).unwrap();
+                        cursor.pack(&PduFooter::new(0)).unwrap();
+                        cursor.position()
+                    };
+                    state.last_start = state.last_end;
+                    state.last_end = state.last_start + advance;
+                    state.receive[token].as_mut().unwrap().ready = flush;
+                    
+                    self.sendable.notify_one();
+                
+                    // memory safety: this item in the array cannot be moved since self is borrowed, and will only be removed later by the current function
+                    // we will access it potentially concurrently, but since we only want to detect a change in the value, that's fine
+                    ready = unsafe {&*(&state.receive[token].as_ref().unwrap().ready as *const bool)};
+                    // clean up the receive table at function end, or in case the async runtime cancels this task
+                    _finisher = Finisher::new(|| {
+                        let mut state = self.pdu_state.lock().unwrap();
+                        state.receive[token] = None;
+                        state.free.push(token).unwrap();
+                    });
+                    
+                    break
+                }
+            }
+            self.received.notified().await;
+        }
 
         // waiting for the answer
         loop {
@@ -342,16 +345,25 @@ impl RawMaster {
             if *ready {break}
             notification.await;
         }
-
-		let state = self.pdu_state.lock().unwrap();
-		state.receive[token].as_ref().unwrap().answers
+        
+        {
+            // free the token
+            let state = self.pdu_state.lock().unwrap();
+            state.receive[token].as_ref().unwrap().answers
+        }
 	}
-
-	/// trigger sending the buffered PDUs, they will be sent as soon as possible by [Self::send] instead of waiting for the frame to be full or for the timeout
+	
+	/** 
+        trigger sending the buffered PDUs, they will be sent as soon as possible by [Self::send] instead of waiting for the frame to be full or for the timeout
+        
+        Note: this method is helpful to manage the stream and make space in the buffer before sending PDUs, but does not help to make sure a PDU is sent deterministic time. To trigger the sending of a PDU, use argument `flush` of [Self::pdu]
+    */
 	pub fn flush(&self) {
         let mut state = self.pdu_state.lock().unwrap();
-        state.ready = true;
-        self.sendable.notify_one();
+        if state.last_end != 0 {
+            state.ready = true;
+            self.sendable.notify_one();
+        }
 	}
 
 	/// extract a received frame of PDUs and buffer each for reception by an eventual `self.pdu()` future waiting for it.

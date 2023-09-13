@@ -400,12 +400,12 @@ pub mod cia402 {
 
     pub const position_mode: Sdo<Positioning> = Sdo::complete(0x60f2);
     pub const position_limit: PositionLimits = PositionLimits {
-        min: Sdo::sub(0x607b, 1, 0),
-        max: Sdo::sub(0x607b, 2, 32),
+        min: Sdo::sub(0x607b, 1, 16),
+        max: Sdo::sub(0x607b, 2, 48),
         };
     pub const position_limit_software: PositionLimits = PositionLimits {
-        min: Sdo::sub(0x607d, 1, 0),
-        max: Sdo::sub(0x607d, 2, 32),
+        min: Sdo::sub(0x607d, 1, 16),
+        max: Sdo::sub(0x607d, 2, 48),
         };
 
     pub mod following_error {
@@ -418,13 +418,29 @@ pub mod cia402 {
 
     pub const max_velocity: Sdo<u32> = Sdo::complete(0x6080);
     pub const max_rated_torque: Sdo<u16> = Sdo::complete(0x6076);
-    pub const max_profile_velocity: Sdo<i32> = Sdo::complete(0x607f);
-
+    pub const max_profile_velocity: Sdo<u32> = Sdo::complete(0x607f);
+    
     pub const polarity: Sdo<> = Sdo::complete(0x607e);
     pub const sensor_velocity: Sdo<i32> = Sdo::complete(0x6069);
 
     pub const motion_profile: Sdo<> = Sdo::complete(0x6086);
-    pub const interpolation_time_period: Sdo<> = Sdo::complete(0x60c2);
+
+    /*
+        duration of the interpolated ramp between the last target point and the next one received.
+        The duration value is `digits * 10^exponent [seconds]` 
+        
+        This is a 1st order interpolation done by the servodrive every of its position-control loop in [CSP] that converts the ethercat received PDO target positions into a position command.
+        
+        By default this duration is `0` so the new targets are converted to stairs, the recommended value is the communication period or above if the period is uncertain.
+    
+        not in ETG, but in canopen specs
+    */
+    pub mod interpolation_period {
+        use super::*;
+        
+        pub const digits: Sdo<u8> = Sdo::sub(0x60c2, 1, 16);
+        pub const exponent: Sdo<i8> = Sdo::sub(0x60c2, 2, 24);
+    }
 
     /**
         motor resolution (steps/revolution) for stepper motors
@@ -451,9 +467,10 @@ pub mod cia402 {
     */
     pub mod profile {
         use super::*;
-
-        pub const velocity: Sdo<i32> = Sdo::complete(0x6081);
-        pub const acceleration: Sdo<i32> = Sdo::complete(0x6083);
+        
+        pub const velocity: Sdo<u32> = Sdo::complete(0x6081);
+        pub const acceleration: Sdo<u32> = Sdo::complete(0x6083);
+//         pub const deceleration: Sdo<u32> = Sdo::complete(0x6084);
     }
 
     pub mod quick_stop {
@@ -827,6 +844,8 @@ pub struct StatusWord {
     reserved: u1,
     pub remote: bool,
     /**
+        this flag (bit 10) is operation-mode specific
+    
         in synchronous modes, this bit toggles each time a new command value is received by the slave.
         In other modes, it is true once the control loop has reached the given target (position, velocity, etc) within a certain range configured elsewere.
     */
@@ -834,9 +853,11 @@ pub struct StatusWord {
     /// whether a torque or velocity limit is currently overriding the control loop output
     pub limit_active: bool,
     /**
+        this flag (bit 12) is operation-mode specific.
+    
         `true` if the device control loop is actively following the command. `false` otherwise (halt is set, and error occured, or internal reasons)
-
-        used by most variants of [OperationMode], if not supported by cyclic synchronous modes, it shall be set to `true`
+        
+        used by most variants of [OperationMode]. when not supported by cyclic synchronous modes, it shall be set to `true` by the slave
     */
     pub following_command: bool,
     /**
@@ -859,7 +880,10 @@ impl fmt::Display for StatusWord {
 								(self.switch_on_disabled(), "sod"),
 								(self.warning(), "w"),
 								(self.remote(), "r"),
+								(self.reached_command(), "rc"),
 								(self.limit_active(), "la"),
+								(self.following_command(), "fc"),
+								(self.following_error(), "ce"),
 								] {
 			write!(f, " ")?;
 			if active {
@@ -896,7 +920,10 @@ pub struct ControlWord {
     pub enable_voltage: bool,
     pub quick_stop: bool,
     pub enable_operation: bool,
-    pub homing: bool,
+    /**
+        this flag (bit 4) is operation-mode specific, in homing and profile modes, it triggers the command set in other SDOs
+    */
+    pub trigger: bool,
     pub cycle: u2,
     pub reset_fault: bool,
     pub halt: bool,
@@ -913,6 +940,7 @@ impl fmt::Display for ControlWord {
 								(self.enable_voltage(), "ev"),
 								(self.quick_stop(), "qs"),
 								(self.enable_operation(), "eo"),
+								(self.trigger(), "t"),
 								(self.reset_fault(), "rf"),
 								(self.halt(), "h"),
 								] {

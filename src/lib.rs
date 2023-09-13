@@ -34,15 +34,18 @@
     - [ ] distributed clock
         + [ ] static drift
         + [ ] dynamic drift
-	- convenience
-		+ [x] logical memory & slave group management tools
-		+ [x] mapping tools
+    - convenience
+        + [x] logical memory & slave group management tools
+        + [x] mapping tools
     - optimization features
         + [x] multiple PDUs per ethercat frame (speed up and compress transmissions)
         + [x] tasks for different slaves or for same slave are parallelized whenever possible
         + [x] no dynamic allocation in transmission and realtime functions
         + [x] async API and implementation to avoid threads context switches
 */
+
+#![doc(html_favicon_url = "/etherage/logo/etherage.svg")]
+#![doc(html_logo_url = "/etherage/logo/ethercotic.svg")]
 
 pub mod data;
 #[allow(non_upper_case_globals)]

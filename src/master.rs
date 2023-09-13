@@ -94,7 +94,9 @@ impl Master {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
         self.raw.bwr(registers::address::fixed, 0).await;
     }
-
+    pub async fn reset_logical(&self) {todo!()}
+    pub async fn reset_mailboxes(&self) {todo!()}
+    
     /// number of slaves in the ethercat segment (only answering slaves will be accounted for)
     pub async fn slaves(&self) -> u16 {
         self.raw.brd(registers::al::status).await.answers

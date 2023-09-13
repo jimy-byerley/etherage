@@ -44,6 +44,7 @@ async fn main() -> std::io::Result<()> {
                 let current_position = pdo.push(sdo::cia402::current::position);
                 let _current_velocity = pdo.push(sdo::cia402::current::velocity);
                 let _current_torque  = pdo.push(sdo::cia402::current::torque);
+    drop(slave);
     println!("done {:#?}", config);
 
     let allocator = mapping::Allocator::new();
@@ -69,10 +70,9 @@ async fn main() -> std::io::Result<()> {
         async {
             let mut period = tokio::time::interval(Duration::from_millis(1));
             loop {
-                let mut group = group.data().await;
-                period.tick().await;
-                group.exchange().await;
+                group.data().await.exchange().await;
                 cycle.notify_waiters();
+                period.tick().await;
             }
         },
         async {
