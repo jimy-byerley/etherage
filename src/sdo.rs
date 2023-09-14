@@ -719,18 +719,18 @@ data::packed_pdudata!(SyncMangerFull);
 #[bitsize(16)]
 #[derive(Default,Clone, Copy, PartialEq, Eq)]
 pub struct SyncSupportedMode {
-    pub free : u1,
-    pub sm : u1,
-    pub dc_sync0 : u1,
-    pub dc_sync1 : u1,
-    pub dc_fixed : u1,
-    pub shift : u1,
-    pub shift_local_time : u1,
+    pub free : bool,
+    pub sm : bool,
+    pub dc_sync0 : bool,
+    pub dc_sync1 : bool,
+    pub dc_fixed : bool,
+    pub shift : bool,
+    pub shift_local_time : bool,
     reserved1 : u3,
-    pub delay_time_compute : u1,
-    pub delay_time_fixed : u1,
+    pub delay_time_compute : bool,
+    pub delay_time_fixed : bool,
     reserved_2 : u2,
-    pub dynamic_cycle_time : u1,
+    pub dynamic_cycle_time : bool,
     reserved_3 : u1,
 }
 data::bilge_pdudata!(SyncSupportedMode, u16);
@@ -738,8 +738,8 @@ data::bilge_pdudata!(SyncSupportedMode, u16);
 #[bitsize(16)]
 #[derive(Default,Clone, Copy, PartialEq, Eq)]
 pub struct SyncCycleTimeDsc{
-    pub measure_local_time : u1,
-    pub reset_event_counter : u1,
+    pub measure_local_time : bool,
+    pub reset_event_counter : bool,
     reserved : u14
 }
 data::bilge_pdudata!(SyncCycleTimeDsc, u16);
