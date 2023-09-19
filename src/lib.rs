@@ -78,7 +78,7 @@ use std::sync::Arc;
 
 /// general object reporting an unexpected result regarding ethercat communication
 #[derive(Clone, Debug)]
-pub enum EthercatError<T> {
+pub enum EthercatError<T=()> {
     /// error caused by communication support
     ///
     /// these errors are exterior to this library

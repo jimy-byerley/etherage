@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use etherage::{
     EthernetSocket,
-    clock::SyncClock,
     SlaveAddress,
     CommunicationState, Master, 
     registers,
@@ -14,10 +13,10 @@ pub const SOCKET_NAME : &'static str = "eno1";
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     // RT this_thread
-    assert!(thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max).is_ok());
+    thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max).unwrap();
 
     //Init master
-    let mut master: Arc<Master> = Arc::new(Master::new(EthernetSocket::new(&SOCKET_NAME)?));
+    let master: Arc<Master> = Arc::new(Master::new(EthernetSocket::new(&SOCKET_NAME)?));
     {
         let m : Arc<Master> = master.clone();
         ioprio::set_priority(
@@ -46,10 +45,10 @@ async fn main() -> std::io::Result<()> {
     };
     master.reset_addresses().await;
 
-    let mut iter: etherage::master::SlaveDiscovery = master.discover().await;
-    let mut initializations = Vec::new();
+    let mut tasks = Vec::new();
+    let mut iter = master.discover().await;
     while let Some(mut s) = iter.next().await  {
-        initializations.push(async move {
+        tasks.push(async move {
             let SlaveAddress::AutoIncremented(i) = s.address()
                 else { panic!("slave already has a fixed address") };
             s.switch(CommunicationState::Init).await;
@@ -58,13 +57,14 @@ async fn main() -> std::io::Result<()> {
             s.init_coe().await;
         });
     }
-    initializations.join().await;
-    master.init_clock().await;
+    tasks.join().await;
+    
+    master.init_clock().await.expect("clock initialization");
     
     master.switch(registers::AlState::PreOperational).await;
     master.switch(registers::AlState::SafeOperational).await;
     
-    master.clock().await.sync().await.expect("synchronization task");
+    master.clock().await.sync().await.expect("clock synchronization task");
 
     Ok(())
 }

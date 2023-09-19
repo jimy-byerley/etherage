@@ -133,14 +133,12 @@ impl Master {
         self.clock.lock().await.take();
     }
     
-    pub async fn init_clock(&self) {
+    pub async fn init_clock(&self) -> Result<(), EthercatError> {
         // TODO: stop the previous clock
-//         if let Some(clock) = self.clock.lock() {
-//             clock.stop();
-//         }
         self.clock.lock().await.replace(
-            SyncClock::all(self.raw.clone(), None, None).await.unwrap()
+            SyncClock::all(self.raw.clone(), None, None).await?
             );
+        Ok(())
     }
     
     pub async fn clock(&self) -> MappedMutexGuard<'_, SyncClock> {
