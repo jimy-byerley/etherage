@@ -60,7 +60,7 @@ pub mod rawmaster;
 pub mod mailbox;
 pub mod can;
 pub mod master;
-pub mod synchro;
+pub mod clock;
 pub mod slave;
 pub mod mapping;
 

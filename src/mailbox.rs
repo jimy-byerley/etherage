@@ -6,7 +6,9 @@ use crate::{
     data::{self, PduData, Cursor},
 	};
 use core::ops::Range;
+use std::sync::Arc;
 use bilge::prelude::*;
+use futures_concurrency::future::Join;
 
 
 /// arbitrary maximum size for a mailbox buffer
@@ -22,8 +24,8 @@ const MAILBOX_MAX_SIZE: usize = 1024;
 
     Following ETG.1000.4 6.7.1 it is using the first 2 sync managers in handshake mode. Buffered mode is not meant for mailbox.
 */
-pub struct Mailbox<'a> {
-    master: &'a RawMaster,
+pub struct Mailbox {
+    master: Arc<RawMaster>,
 	slave: u16,
 	read: Direction,
 	write: Direction,
@@ -34,15 +36,14 @@ struct Direction {
     max: usize,
 }
 
-impl<'b> Mailbox<'b> {
+impl Mailbox {
     /// condigure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
-    pub async fn new(master: &'b RawMaster, slave: u16, write: Range<u16>, read: Range<u16>) -> Mailbox<'b> {
+    pub async fn new(master: Arc<RawMaster>, slave: u16, write: Range<u16>, read: Range<u16>) -> Mailbox {
         // check that there is not previous error
         if master.fprd(slave, registers::al::response).await.one().error() {
             panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
         }
 
-        use futures_concurrency::future::Join;
         // configure sync manager
         (
             async { master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {

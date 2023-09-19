@@ -970,6 +970,18 @@ pub mod dc {
         pub sign: bool,
     }
     data::bilge_pdudata!(TimeDifference, u32);
+    
+    impl From<TimeDifference> for i32 {
+        fn from(value: TimeDifference) -> i32  {
+            u32::from(value.mean().value()) as i32 
+                * if value.sign() {-1} else {1}
+        }
+    }
+    impl From<i32> for TimeDifference {
+        fn from(value: i32) -> TimeDifference {
+            TimeDifference::new(u31::new(value.abs() as u32), value < 0)
+        }
+    }
 }
 
 pub mod isochronous {

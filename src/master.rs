@@ -4,13 +4,19 @@ use crate::{
 	data::{PduData, Field},
 	slave::{Slave, CommunicationState},
 	mapping::{Allocator, Mapping, Group},
-	registers,
+	clock::SyncClock,
+	registers, EthercatError,
 	};
 use std::{
     collections::HashSet,
-    sync::Mutex,
+    sync::Arc,
     };
-use core::ops::Range;
+use core::{
+    ops::Range,
+    default::Default,
+    };
+use futures_concurrency::future::Join;
+use tokio::sync::MappedMutexGuard;
 
 pub type MixedState = registers::AlMixedState;
 
@@ -42,17 +48,33 @@ pub type MixedState = registers::AlMixedState;
     ```
 */
 pub struct Master {
-    pub(crate) raw: RawMaster,
-    pub(crate) slaves: Mutex<HashSet<SlaveAddress>>,
+    pub(crate) raw: Arc<RawMaster>,
+    pub(crate) slaves: std::sync::Mutex<HashSet<SlaveAddress>>,
     allocator: Allocator,
+    clock: tokio::sync::Mutex<Option<SyncClock>>,
 }
 impl Master {
+    /**
+        initialize an ethercat master on the given socket
+    */
 	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {
 		Self {
-			raw: RawMaster::new(socket),
-			slaves: Mutex::new(HashSet::new()),
+			raw: Arc::new(RawMaster::new(socket)),
+			slaves: HashSet::new().into(),
 			allocator: Allocator::new(),
+			clock: None.into(),
 		}
+	}
+	/**
+        build a safe master from a raw master. This method is marked unsafe because it is not protocl-safe since the RawMaster can still be accessed away of this safe master instance.
+	*/
+	pub unsafe fn raw(raw: Arc<RawMaster>) -> Self {
+        Self {
+            raw,
+            slaves: HashSet::new().into(),
+            allocator: Allocator::new(),
+            clock: None.into(),
+        }
 	}
 
     /**
@@ -60,11 +82,11 @@ impl Master {
 
 		This method is marked unsafe since letting the user write registers may break the protocol sequences performed by the protocol implementation. Accessing the low level is communication-unsafe.
     */
-    pub unsafe fn get_raw(&self) -> &'_ RawMaster {&self.raw}
-    /**
-		this method is safe since it consumes the communication-safe master implementation.
-    */
-    pub fn into_raw(self) -> RawMaster {self.raw}
+    pub unsafe fn get_raw(&self) -> &Arc<RawMaster> {&self.raw}
+//     /**
+// 		this method is safe since it consumes the communication-safe master implementation.
+//     */
+//     pub fn into_raw(self) -> Arc<RawMaster> {self.raw}
 
 	/**
         discover all available slaves present in the ethercat segment, in topological order
@@ -92,10 +114,38 @@ impl Master {
     */
     pub async fn reset_addresses(&self) {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
-        self.raw.bwr(registers::address::fixed, 0).await;
+        (
+            self.raw.bwr(registers::address::fixed, 0),
+            self.raw.bwr(registers::address::alias, 0),
+        ).join().await;
     }
-    pub async fn reset_logical(&self) {todo!()}
-    pub async fn reset_mailboxes(&self) {todo!()}
+    pub async fn reset_logical(&self) {
+        assert_eq!(self.slaves.lock().unwrap().len(), 0);
+        self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::fmmu.address)), [0; 256]).await;
+    }
+    pub async fn reset_mailboxes(&self) {
+        assert_eq!(self.slaves.lock().unwrap().len(), 0);
+        self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::sync_manager::interface.address)), [0; 256]).await;
+    }
+    pub async fn reset_clock(&mut self) {
+        assert_eq!(self.slaves.lock().unwrap().len(), 0);
+        self.raw.bwr(registers::dc::clock, Default::default()).await;
+        self.clock.lock().await.take();
+    }
+    
+    pub async fn init_clock(&self) {
+        // TODO: stop the previous clock
+//         if let Some(clock) = self.clock.lock() {
+//             clock.stop();
+//         }
+        self.clock.lock().await.replace(
+            SyncClock::all(self.raw.clone(), None, None).await.unwrap()
+            );
+    }
+    
+    pub async fn clock(&self) -> MappedMutexGuard<'_, SyncClock> {
+        tokio::sync::MutexGuard::map(self.clock.lock().await, |o|  o.as_mut().expect("clock not initialized"))
+    }
     
     /// number of slaves in the ethercat segment (only answering slaves will be accounted for)
     pub async fn slaves(&self) -> u16 {

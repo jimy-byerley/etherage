@@ -53,7 +53,7 @@ const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100}
 */
 
 pub struct Slave<'a> {
-    master: &'a RawMaster,
+    master: Arc<RawMaster>,
     /// current address in use, fixed or topological
     address: SlaveAddress,
     /// assumed current state
@@ -63,8 +63,8 @@ pub struct Slave<'a> {
 
     // internal structures are inter-referencing, thus must be stored in Rc to ensure the references to it will not void because of deallocation or data move
 //     sii: Mutex<Sii>,
-    mailbox: Option<Arc<Mutex<Mailbox<'a>>>>,
-    coe: Option<Arc<Mutex<Can<'a>>>>,
+    mailbox: Option<Arc<Mutex<Mailbox>>>,
+    coe: Option<Arc<Mutex<Can>>>,
 //     clock: Option<Dc>,
 }
 impl<'a> Slave<'a> {
@@ -72,7 +72,7 @@ impl<'a> Slave<'a> {
         build a slave from a `RawMaster`. As everything constructed with a `RawMaster` this is not protocol-safe: no check is done, in particular nothing prevents to create multiple instances for the same physical slave, or for non-existing slaves.
         However if the physical slave is used only through one `Slave` instance, all operations will be protocol-safe.
     */
-    pub fn raw(master: &'a RawMaster, address: SlaveAddress) -> Self {
+    pub fn raw(master: Arc<RawMaster>, address: SlaveAddress) -> Self {
         Self {
             master,
             safemaster: None,
@@ -96,7 +96,7 @@ impl<'a> Slave<'a> {
         else {
             book.insert(address);
             Some(Self {
-                master: &master.raw,
+                master: master.raw.clone(),
                 safemaster: Some(master),
                 address,
                 state: Init,
@@ -108,7 +108,7 @@ impl<'a> Slave<'a> {
     }
 
     /// return a reference to the underlying `RawMaster` used, this method is unsafe since it allows accessing any slave concurrently to what all `Slave` and `Master` instances are doing.
-    pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
+    pub unsafe fn raw_master(&self) -> &Arc<RawMaster> {&self.master}
 
     /// retreive the slave's identification informations
     pub fn informations(&self)  {todo!()}
@@ -231,7 +231,7 @@ impl<'a> Slave<'a> {
         };
         // setup the mailbox
         let mailbox = Mailbox::new(
-            self.master,
+            self.master.clone(),
             address,
             MAILBOX_BUFFER_WRITE,
             MAILBOX_BUFFER_READ,
@@ -257,7 +257,7 @@ impl<'a> Slave<'a> {
 //     pub async fn clock(&'a self) {todo!()}
 
     /// locks access to CoE communication and return the underlying instance of [Can] running CoE
-    pub async fn coe(&self) -> MutexGuard<'_, Can<'a>>    {
+    pub async fn coe(&self) -> MutexGuard<'_, Can>    {
         self.coe
             .as_ref().expect("coe not initialized")
             .lock().await

@@ -49,11 +49,11 @@ const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
 
     This scheme comes in addition to the slave memory areas described in [crate::rawmaster::RawMaster], for slaves supporting CoE.
 */
-pub struct Can<'a> {
-    mailbox: Arc<Mutex<Mailbox<'a>>>,
+pub struct Can {
+    mailbox: Arc<Mutex<Mailbox>>,
 }
-impl<'a> Can<'a> {
-    pub fn new(mailbox: Arc<Mutex<Mailbox<'a>>>) -> Can<'a> {
+impl Can {
+    pub fn new(mailbox: Arc<Mutex<Mailbox>>) -> Can {
         Can {mailbox}
     }
     /// read an SDO, any size
@@ -256,7 +256,7 @@ impl<'a> Can<'a> {
 
 	/// read the mailbox, check for
 	async fn receive_sdo_response<'b, T: PduData>(
-        mailbox: &mut Mailbox<'_>,
+        mailbox: &mut Mailbox,
         buffer: &'b mut [u8],
         priority: u2,
         expected: SdoCommandResponse,
@@ -293,7 +293,7 @@ impl<'a> Can<'a> {
 	}
 
 	async fn receive_sdo_segment<'b>(
-        mailbox: &mut Mailbox<'_>,
+        mailbox: &mut Mailbox,
         buffer: &'b mut [u8],
         priority: u2,
         expected: SdoCommandResponse,
