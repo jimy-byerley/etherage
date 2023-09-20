@@ -953,7 +953,9 @@ pub mod dc {
         pub system_delay: u32,
         /**
             Bits 30..0: Mean difference between local copy of "system time" and "received system time" values.
-            Bit 31: 0 - Local copy of "system time" > "received system time". 1 - Othercase
+            Bit 31: 
+                - 0 - Local copy of "system time" > "received system time". 
+                - 1 - Othercase
         */
         pub system_difference: TimeDifference,
         /// Implementation specific

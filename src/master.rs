@@ -16,7 +16,7 @@ use core::{
     default::Default,
     };
 use futures_concurrency::future::Join;
-use tokio::sync::MappedMutexGuard;
+use tokio::sync::RwLockReadGuard;
 
 pub type MixedState = registers::AlMixedState;
 
@@ -51,7 +51,7 @@ pub struct Master {
     pub(crate) raw: Arc<RawMaster>,
     pub(crate) slaves: std::sync::Mutex<HashSet<SlaveAddress>>,
     allocator: Allocator,
-    clock: tokio::sync::Mutex<Option<SyncClock>>,
+    clock: tokio::sync::RwLock<Option<SyncClock>>,
 }
 impl Master {
     /**
@@ -127,22 +127,29 @@ impl Master {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
         self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::sync_manager::interface.address)), [0; 256]).await;
     }
-    pub async fn reset_clock(&mut self) {
-        assert_eq!(self.slaves.lock().unwrap().len(), 0);
-        self.raw.bwr(registers::dc::clock, Default::default()).await;
-        self.clock.lock().await.take();
+    pub async fn reset_clock(&self) {
+        // stop and void the previous clock
+        self.clock.write().await.take().map(|clock| clock.stop());
+        // reset registers
+        (
+            self.raw.bwr(registers::dc::clock, Default::default()),
+            self.raw.bwr(registers::isochronous::slave_cfg, Default::default()),
+        ).join().await;
     }
     
     pub async fn init_clock(&self) -> Result<(), EthercatError> {
-        // TODO: stop the previous clock
-        self.clock.lock().await.replace(
+        self.reset_clock().await;
+        self.clock.write().await.replace(
             SyncClock::all(self.raw.clone(), None, None).await?
             );
         Ok(())
     }
     
-    pub async fn clock(&self) -> MappedMutexGuard<'_, SyncClock> {
-        tokio::sync::MutexGuard::map(self.clock.lock().await, |o|  o.as_mut().expect("clock not initialized"))
+    pub async fn clock(&self) -> RwLockReadGuard<'_, SyncClock> {
+        RwLockReadGuard::map(
+            self.clock.read().await, 
+            |o|  o.as_ref().expect("clock not initialized"),
+            )
     }
     
     /// number of slaves in the ethercat segment (only answering slaves will be accounted for)

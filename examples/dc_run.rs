@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::Duration,
+    };
 use etherage::{
     EthernetSocket,
     SlaveAddress,
@@ -55,16 +58,31 @@ async fn main() -> std::io::Result<()> {
             s.set_address(i+1).await;
             s.init_mailbox().await;
             s.init_coe().await;
+            i+1
         });
     }
-    tasks.join().await;
+    let slaves = tasks.join().await;
     
+    // initialize clocks and perform static drift
     master.init_clock().await.expect("clock initialization");
     
     master.switch(registers::AlState::PreOperational).await;
     master.switch(registers::AlState::SafeOperational).await;
     
-    master.clock().await.sync().await.expect("clock synchronization task");
+    let clock = master.clock().await;
+    let mut interval = tokio::time::interval(Duration::from_millis(2));
+    (
+        // dynamic drift
+        clock.sync(),
+        // survey divergence
+        async { loop {
+            interval.tick().await;
+            for &slave in &slaves {
+                print!("{} ", clock.divergence(slave));
+            }
+            print!("\n");
+        }},
+    ).join().await.0.unwrap();
 
     Ok(())
 }
