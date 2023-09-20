@@ -109,6 +109,8 @@ impl Master {
 
     /**
         reset all slaves fixed addresses in the ethercat segment.
+        
+        To call this function is generally good before connecting to slaves, to allow configuring new addresses without having any previous configured addresses interfering
 
         this function will panic if there is instances of [Slave] alive
     */
@@ -119,14 +121,31 @@ impl Master {
             self.raw.bwr(registers::address::alias, 0),
         ).join().await;
     }
+    /**
+        reset all slaves mappings to logical memory
+        
+        To call this function is generally a good idea before configuring mappings on slaves, to avoid former mappings to overlap with the new ones.
+        
+        This function will panic if ther is instances of [Slave] alive
+    */
     pub async fn reset_logical(&self) {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
         self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::fmmu.address)), [0; 256]).await;
     }
+    /**
+        reset mailbox configurations for all slaves, freeing their reserved memory space.
+        
+        This function will panic if ther is instances of [Slave] alive
+    */
     pub async fn reset_mailboxes(&self) {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
         self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::sync_manager::interface.address)), [0; 256]).await;
     }
+    /**
+        reset all slaves clock synchronization configurations
+        
+        To call this function is generally a good idea during slaves configuration if you are not using clock at all because preexisting clock setup may prevent slaves from switching to operation mode.
+    */
     pub async fn reset_clock(&self) {
         // stop and void the previous clock
         self.clock.write().await.take().map(|clock| clock.stop());
@@ -137,6 +156,7 @@ impl Master {
         ).join().await;
     }
     
+    /// initialize distributed clock on all slaves that support it
     pub async fn init_clock(&self) -> Result<(), EthercatError> {
         self.reset_clock().await;
         self.clock.write().await.replace(
@@ -145,6 +165,7 @@ impl Master {
         Ok(())
     }
     
+    /// return the underlying instance of [SyncClock] synchronizing slaves clocks
     pub async fn clock(&self) -> RwLockReadGuard<'_, SyncClock> {
         RwLockReadGuard::map(
             self.clock.read().await, 

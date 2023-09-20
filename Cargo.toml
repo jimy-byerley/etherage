@@ -17,7 +17,6 @@ log = "^0.4.17"
 futures-concurrency = "^7.2.1"
 packed_struct = { version = "^0.10.0", default-features = false }
 tokio = { version = "^1.21.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
-chrono = { version="^0.4.26"}
 ioprio ="^0.2.0"
 bilge = "^0.2"
 

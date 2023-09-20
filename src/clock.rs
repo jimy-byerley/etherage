@@ -1,12 +1,41 @@
 /*!
-    Master normally has two different synchronization modes
+    Implementation of clock synchonization between master and slaves.
     
-    - Cyclic mode
-    - DC Mode
-
-    In Cyclic mode the master send the process data frame cyclically. The process data frame may be sent with different cycle times.
+    Clock synchronization in the ethercat protocol serves two different purposes
     
-    TODO
+    - slave task synchronization
+    
+        The slaves whose clocks are synchronized will be able to run their realtime tasks with the same time reference (like applying new commands at the same time, or using the same durations), and at the same rate as the master sends order.
+    
+    - timestamps synchronization
+    
+        The slaves whose clocks are synchronized will progress at the same rate (slight differences can be found due to synchronization jitter, but it will remain small), so data retreived from slaves will have been measured at the same time and to retreive one only timestamp per frame will be sufficient for these slaves.
+    
+    All this is described in ETG.1020
+    
+    ## synchronization modes
+    
+    There is 3 modes of slave task synchronization:
+    
+    - **free run**
+        slaves tasks are not synchronized to ethercat. This mode is when no clock is initialized
+    - **SM-synchronous**
+        slaves tasks are triggered by an ethercat sending
+    - **DC-synchronous**
+        slaves tasks are triggered by their clock synchronized with other slaves and the master. This mode is implemented in [SyncClock]
+        
+    ![synchronization modes](/etherage/schemes/synchronization-modes.svg)
+    
+    Depending on the synchronization mode, you can expect different execution behavior on your slaves, whose importance higher with the number of slaves. The following chronogram shows typical scheduling of task executions.
+    
+    ![synchronization of slaves](/etherage/schemes/synchronization-slaves.svg)
+        
+    ## roles and responsibilities in the ethercat network
+    
+    Since the master can be connected to the ethercat segment using less reliable hardware, its clock cannot be used to synchronize slaves. Instead, the first slave supporting DC (distributed clock) is used as reference clock (the first slave is the called *referent*).
+    the reference clock time is used to monitor the jitter between master and referent, and the jitter between all slaves.
+    
+    In case of hotplug, or any change in the transmission delays in the segment, the clock must be reinitialized.
 */
 
 use crate::{
@@ -42,7 +71,11 @@ const CONTINOUS_TIMELAPS: u64 = 2000000;
 /**
     implementation of the Distributed Clock (DC) at the master level.
     
-    Other kinds of clock do not concern this struct.
+    Other kinds of clock do not concern this struct (at least for now).
+    
+    The time offsets and delays measured by this clock synchronization mode are shows in the following chronogram for one packet sending.
+    
+    ![clock offsets references](/etherage/schemes/clock-references.svg)
 */
 pub struct SyncClock {
     // Raw master reference
@@ -159,7 +192,7 @@ impl SyncClock {
     pub unsafe fn raw_master(&self) -> &Arc<RawMaster>  {&self.master}
     
     /**
-        Set a slave reference for distributed clock, compute delay and notify all the ethercat loop
+        configure slaves, compute delays and static drifts
         
         *index*: Index of the slave used as reference (must be the first slave of the physical loop)
         
@@ -273,7 +306,7 @@ impl SyncClock {
     }
 
     /**
-        Start dc synchronisation. Use cycle time as execution period
+        distributed clock synchronisation task. Using cycle time as execution period
         
         Once the automatic control is start, time cannot period cannot be changed.
         Start cyclic time correction only with conitnuous drift flag set.
@@ -504,6 +537,7 @@ impl SyncClock {
         }
     }
 
+    // synchronization mechanism for read/writting internal data
     
     /// wrap a blocking reading of internal data, no blocking is done if nothing is being written
     fn load_updating<T, F>(&self, mut task: F) -> T
