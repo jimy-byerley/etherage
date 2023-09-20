@@ -5,10 +5,10 @@ authors = ["Jimy Byerley <jimy.byerley@gmail.com>", "CendreQuasar540"]
 version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-readme = "README.md"
+readme = "readme.md"
 description = "An EtherCAT master in pure-Rust very close to the ethercat nature"
-keywords = ["ethercat", "ethernet", "realtime", "robotics", "servodrive"]
-url = "https://github.com/jimy-byerley/etherage"
+keywords = ["ethercat", "ethernet", "realtime", "robotics", "servodrive", "motion-control", "fieldbus", "industrial-automation"]
+repository = "https://github.com/jimy-byerley/etherage"
 resolver = "2"
 
 [dependencies]
