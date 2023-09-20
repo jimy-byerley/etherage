@@ -9,7 +9,7 @@ use etherage::{
     registers,
     };
 use ioprio::*;
-use futures_concurrency::future::Join;
+use futures_concurrency::future::{Join, Race};
 
 pub const SOCKET_NAME : &'static str = "eno1";
 
@@ -71,6 +71,7 @@ async fn main() -> std::io::Result<()> {
     
     let clock = master.clock().await;
     let mut interval = tokio::time::interval(Duration::from_millis(2));
+    let mut interval2 = tokio::time::interval(Duration::from_micros(5_367));
     (
         // dynamic drift
         clock.sync(),
@@ -82,7 +83,11 @@ async fn main() -> std::io::Result<()> {
             }
             print!("\n");
         }},
-    ).join().await.0.unwrap();
+        async { loop {
+            interval2.tick().await;
+            master.logical_exchange(etherage::Field::simple(0), [0u8; 64]).await;
+        }},
+    ).race().await.unwrap();
 
     Ok(())
 }

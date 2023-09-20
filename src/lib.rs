@@ -31,9 +31,9 @@
             - [x] tools for mapping
         + [ ] EOE
         + [ ] FOE
-    - [ ] distributed clock
-        + [ ] static drift
-        + [ ] dynamic drift
+    - [x] distributed clock
+        + [x] static drift
+        + [x] dynamic drift
     - convenience
         + [x] logical memory & slave group management tools
         + [x] mapping tools

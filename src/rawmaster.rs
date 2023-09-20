@@ -305,7 +305,7 @@ impl RawMaster {
                         let range = state.last_end ..;
                         let mut cursor = Cursor::new(&mut state.send[range]);
                         cursor.pack(&PduHeader::new(
-                            u8::from(command),
+                            command,
                             token as u8,
                             address,
                             u11::new(data.len().try_into().unwrap()),
@@ -319,7 +319,7 @@ impl RawMaster {
                     };
                     state.last_start = state.last_end;
                     state.last_end = state.last_start + advance;
-                    state.receive[token].as_mut().unwrap().ready = flush;
+                    state.ready = flush;
                     
                     self.sendable.notify_one();
                 
@@ -331,6 +331,8 @@ impl RawMaster {
                         let mut state = self.pdu_state.lock().unwrap();
                         state.receive[token] = None;
                         state.free.push(token).unwrap();
+                        
+                        // BUG: freeing the token on future cancelation does not cancel the packet reception, so the received packet may interfere with any next PDU using this token
                     });
                     
                     break
@@ -521,7 +523,7 @@ enum EthercatType {
 #[derive(FromBits, DebugBits, Clone, Default)]
 struct PduHeader {
     /// PDU command, specifying whether logical or physical memory is accesses, addressing type, and what read/write operation
-    command: u8,
+    command: PduCommand,
     /// PDU task request identifier
     token: u8,
     /// address on the bus, its content depends on the command: [PhysicalAddress] or [u32]

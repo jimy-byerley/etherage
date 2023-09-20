@@ -301,7 +301,6 @@ impl SyncClock {
         }
 
         println!("initialized");
-        self.status = ClockStatus::Initialized;
         Ok(())
     }
 
@@ -316,12 +315,6 @@ impl SyncClock {
     pub async fn sync(&self) -> Result<(), EthercatError> {
         let start_time = Duration::from_millis(1);
         
-//         if self.status != ClockStatus::Initialized 
-//             {return Err(EthercatError::Master("Cannot run DC clock synchro until delay wasn't computed"))}
-
-//         self.status = ClockStatus::Active;
-//         self.typ = MasterSyncType::Dc;
-
         // Start sync - Wait that all slave obtains the frame
         let t = self.global_time() + start_time.as_nanos() as u64;
         self.slaves.iter().map(|slv| async {
@@ -359,7 +352,7 @@ impl SyncClock {
                     self.master.fprd(self.slaves[watched].address, registers::dc::rcv_time_diff),
                     self.master.brd(registers::dls_user::r3),
                     // send something just to have a flushing pdu sending
-                    self.master.pdu(PduCommand::BRD, SlaveAddress::Broadcast, registers::dls_user::r3.byte as u32, &mut [0u8; 4], true),
+                    self.master.pdu(PduCommand::BRD, SlaveAddress::Broadcast, registers::dl::status.byte as u32, &mut [0u8; 2], true),
                 ).join().await;
                 
                 let time_diff = time_diff.one();
