@@ -95,6 +95,7 @@ impl<'a> Slave<'a> {
             {None}
         else {
             book.insert(address);
+            drop(book);
             Some(Self {
                 master: master.raw.clone(),
                 safemaster: Some(master),
@@ -220,14 +221,12 @@ impl<'a> Slave<'a> {
 //         self.master.write(self.address, registers::address::fixed, fixed).await;
 //     }
 
-//     pub async fn init_clock(&mut self)  {todo!()}
-
     /// initialize the slave's mailbox (if supported by the slave)
     pub async fn init_mailbox(&mut self) {
         assert_eq!(self.state, Init);
         let address = match self.address {
             SlaveAddress::Fixed(i) => i,
-            _ => panic!("mailbox needs fixed addresses, setup the address first  (AFAIK)"),
+            _ => panic!("mailbox is unsafe without fixed addresses"),
         };
         // setup the mailbox
         let mailbox = Mailbox::new(
@@ -253,8 +252,6 @@ impl<'a> Slave<'a> {
         let mailbox = self.mailbox.clone().expect("mailbox not initialized");
         self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
     }
-
-//     pub async fn clock(&'a self) {todo!()}
 
     /// locks access to CoE communication and return the underlying instance of [Can] running CoE
     pub async fn coe(&self) -> MutexGuard<'_, Can>    {

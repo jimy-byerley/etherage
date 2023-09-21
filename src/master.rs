@@ -116,6 +116,7 @@ impl Master {
     */
     pub async fn reset_addresses(&self) {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
+        assert!(self.clock.read().await.is_none());
         (
             self.raw.bwr(registers::address::fixed, 0),
             self.raw.bwr(registers::address::alias, 0),

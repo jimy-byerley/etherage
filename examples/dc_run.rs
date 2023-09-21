@@ -83,11 +83,12 @@ async fn main() -> std::io::Result<()> {
             }
             print!("\n");
         }},
+        // parasitic realtime data exchanges
         async { loop {
             interval2.tick().await;
             master.logical_exchange(etherage::Field::simple(0), [0u8; 64]).await;
         }},
-    ).race().await.unwrap();
+    ).race().await.expect("operation");
 
     Ok(())
 }

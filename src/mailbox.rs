@@ -37,7 +37,11 @@ struct Direction {
 }
 
 impl Mailbox {
-    /// condigure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
+    /**
+        configure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
+        
+        `slave` is the slave's fixed address, no implementation is made for mailbox with topological addresses
+    */
     pub async fn new(master: Arc<RawMaster>, slave: u16, write: Range<u16>, read: Range<u16>) -> Mailbox {
         // check that there is not previous error
         if master.fprd(slave, registers::al::response).await.one().error() {

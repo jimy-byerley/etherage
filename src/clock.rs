@@ -11,7 +11,7 @@
 
         The slaves whose clocks are synchronized will progress at the same rate (slight differences can be found due to synchronization jitter, but it will remain small), so data retreived from slaves will have been measured at the same time and to retreive one only timestamp per frame will be sufficient for these slaves.
 
-    All this is described in ETG1000 (1000_4 + 1000_6) and ETG.1020
+    All this is described in ETG.1000.4 + ETG.1000.6 and ETG.1020
 
     ## synchronization modes
 
@@ -24,6 +24,7 @@
     - **DC-synchronous**
         slaves tasks are triggered by their clock synchronized with other slaves and the master. This mode is implemented in [SyncClock]
         according to ETG.1020, this mode is required only for the application that require high precision (<ms) in operation.
+        
         Multiple mode of DC synchronous for DC unit in slave are available. The default one used only the sync_0 impulse to trigger based time. (see [this](/etherage/schemes/synchronization-DC-submodes.svg) schematoic to get more information)
 
 
@@ -187,6 +188,7 @@ impl SyncClock {
             .collect::<Vec<_>>().join().await
             .iter()
             .filter(|(_, info)|  info.dc_supported())
+            .inspect(|(slave, _)|  assert_ne!(*slave, 0, "clock synchronization without fixed addresses is unsafe"))
             .map(|(slave, _)| slave.clone())
             .collect::<Vec<u16>>();
 
