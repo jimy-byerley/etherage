@@ -1,6 +1,6 @@
 /*!
     SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
-    
+
     This module expose the standard SII registers.
 
     ETG.1000.6 5.4
@@ -28,7 +28,7 @@ const checksum: Field<u16> = Field::simple(WORD*0x0007);
 
 mod device {
     use super::*;
-    
+
     const vendor: Field<u32> = Field::simple(WORD*0x0008);
     const product: Field<u32> = Field::simple(WORD*0x000a);
     const revision: Field<u32> = Field::simple(WORD*0x000c);
@@ -37,11 +37,11 @@ mod device {
 
 mod mailbox {
     use super::*;
-    
+
     mod boostrap {
         mod receive {
             use super::*;
-    
+
             /// Send Mailbox Offset for Bootstrap state (slave to master)
             const offset: Field<u16> = Field::simple(WORD*0x0014);
             /// Send Mailbox Size for Bootstrap state (slave to master)
@@ -50,7 +50,7 @@ mod mailbox {
         }
         mod send {
             use super::*;
-    
+
             /// Receive Mailbox Offset for Standard state (master to slave)
             const offset: Field<u16> = Field::simple(WORD*0x0016);
             /// Receive Mailbox Size for Standard state (master to slave)
@@ -60,7 +60,7 @@ mod mailbox {
     mod standard {
         mod receive {
             use super::*;
-    
+
             /// Receive Mailbox Offset for Standard state (master to slave)
             const offset: Field<u16> = Field::simple(WORD*0x0018);
             /// Receive Mailbox Size for Standard state (master to slave)
@@ -68,7 +68,7 @@ mod mailbox {
         }
         mod send {
             use super::*;
-    
+
             /// Send Mailbox Offset for Standard state (slave to master)
             const offset: Field<u16> = Field::simple(WORD*0x001a);
             /// Send Mailbox Size for Standard state (slave to master)
@@ -117,7 +117,7 @@ impl Sii<'_> {
             cursor.pack(&self.master.fprd(self.slave, registers::sii::data).await).unwrap();
         }
         T::unpack(buffer.as_ref())
-        
+
         // TODO:  change the segment size using read_size
     }
     /// write data to the slave's EEPROM using the SII
@@ -130,7 +130,7 @@ impl Sii<'_> {
             self.master.fpwr(self.slave, registers::sii::address, ((field.byte + cursor.position()) as u16)/unit).await;
             self.master.fpwr(self.slave, registers::sii::data, cursor.unpack().unwrap()).await;
         }
-        
+
         // TODO:  check possible write errors
     }
 }

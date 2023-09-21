@@ -17,14 +17,14 @@ async fn main() -> std::io::Result<()> {
             master.send();
     })};
     std::thread::sleep(Duration::from_millis(500));
-    
+
     let reg = Field::<u16>::simple(0x1234);
     let slave = 0;
-            
+
     // test read/write
     let received = master.aprd(slave, reg).await;
     master.apwr(slave, reg, received.value).await;
-    
+
     // test simultaneous read/write
     (
         async {
@@ -38,7 +38,6 @@ async fn main() -> std::io::Result<()> {
             master.apwr(slave, reg, received.value).await;
         },
     ).join().await;
-    
+
     Ok(())
 }
-

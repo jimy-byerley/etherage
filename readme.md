@@ -108,4 +108,3 @@ typical output with 8 Omron servodrives:
   slave 1: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
   slave 2: "R88D-1SN04H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.01" software "V1.04.00"
 ```
-

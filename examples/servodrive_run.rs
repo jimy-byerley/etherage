@@ -2,7 +2,7 @@ use std::sync::Arc;
 use core::time::Duration;
 use futures_concurrency::future::Join;
 use etherage::{
-    EthernetSocket, RawMaster, 
+    EthernetSocket, RawMaster,
     Slave, SlaveAddress, CommunicationState,
     data::Field,
     sdo::{self, SyncDirection, OperationMode},
@@ -23,7 +23,7 @@ async fn main() -> std::io::Result<()> {
         std::thread::spawn(move || loop {
             master.send();
     })};
-    
+
     println!("create mapping");
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
@@ -46,13 +46,13 @@ async fn main() -> std::io::Result<()> {
                 let _current_torque  = pdo.push(sdo::cia402::current::torque);
     drop(slave);
     println!("done {:#?}", config);
-    
+
     let allocator = mapping::Allocator::new();
     let group = allocator.group(&master, &mapping);
-    
+
     println!("group {:#?}", group);
     println!("fields {:#?}", (statusword, controlword));
-    
+
     let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await;
     slave.set_address(1).await;
@@ -62,12 +62,12 @@ async fn main() -> std::io::Result<()> {
     group.configure(&slave).await;
     slave.switch(CommunicationState::SafeOperational).await;
     slave.switch(CommunicationState::Operational).await;
-    
-    
+
+
     let cycle = tokio::sync::Notify::new();
-    
+
     (
-        async { 
+        async {
             let mut period = tokio::time::interval(Duration::from_millis(1));
             loop {
                 group.data().await.exchange().await;
@@ -78,69 +78,69 @@ async fn main() -> std::io::Result<()> {
         async {
             let initial = {
                 let mut group = group.data().await;
-                
+
                 let initial = group.get(current_position);
                 group.set(target_mode, OperationMode::SynchronousPosition);
                 group.set(target_position, initial);
-                
+
                 println!("error {:x}", group.get(error));
                 println!("position  {}", initial);
                 initial
             };
-            
+
             use bilge::prelude::u2;
             println!("power: {:?}", slave.coe().await.sdo_read(&sdo::error, u2::new(0)).await);
-        
+
             println!("switch on");
             switch_on(statusword, controlword, error, &group, &cycle).await;
-            
+
 			let velocity = 3_000_000;
 			let increment = 100_000_000;
-			
+
 			println!("move forward");
 			loop {
                 cycle.notified().await;
                 let mut group = group.data().await;
-                
+
                 let position = group.get(current_position);
                 if position >= initial + increment {break}
                 group.set(target_position, position + velocity);
                 println!("    {}", position);
             }
-            
+
 			println!("move backward");
             loop {
                 cycle.notified().await;
                 let mut group = group.data().await;
-                
+
                 let position = group.get(current_position);
                 if position <= initial {break}
                 group.set(target_position, position - velocity);
                 println!("    {}", position);
             }
-            
+
             println!("done");
         },
     ).join().await;
-    
+
     Ok(())
 }
 
 
 
 pub async fn switch_on(
-		statusword: Field<sdo::StatusWord>, 
-		controlword: Field<sdo::ControlWord>, 
+		statusword: Field<sdo::StatusWord>,
+		controlword: Field<sdo::ControlWord>,
 		error: Field<u16>,
 		group: &Group<'_>,
 		cycle: &tokio::sync::Notify,
 		) {
-	loop {		
+	loop {
         {
             let mut group = group.data().await;
             let status = group.get(statusword);
             let mut control = sdo::ControlWord::default();
-            
+
             // state "not ready to switch on"
             // we are in the state we wanted !
             if status.operation_enabled() {
@@ -181,7 +181,7 @@ pub async fn switch_on(
             group.set(controlword, control);
             println!("switch on {} {}  {:#x}", status, control, group.get(error));
         }
-		
+
 		cycle.notified().await;
 	}
 }

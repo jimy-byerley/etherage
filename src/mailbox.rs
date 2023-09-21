@@ -6,7 +6,9 @@ use crate::{
     data::{self, PduData, Cursor},
 	};
 use core::ops::Range;
+use std::sync::Arc;
 use bilge::prelude::*;
+use futures_concurrency::future::Join;
 
 
 /// arbitrary maximum size for a mailbox buffer
@@ -15,15 +17,15 @@ const MAILBOX_MAX_SIZE: usize = 1024;
 
 /**
     implementation of communication with a slave's mailbox
-    
+
     The mailbox is a mean for ethercat slaves to implement non-minimalistic ethercat features, and features that do not fit in registers (because they rely on imperative designs, or variable size data ...).
-    
+
     The mailbox is an optional feature of an ethercat slave.
-    
+
     Following ETG.1000.4 6.7.1 it is using the first 2 sync managers in handshake mode. Buffered mode is not meant for mailbox.
 */
-pub struct Mailbox<'a> {
-    master: &'a RawMaster,
+pub struct Mailbox {
+    master: Arc<RawMaster>,
 	slave: u16,
 	read: Direction,
 	write: Direction,
@@ -34,15 +36,18 @@ struct Direction {
     max: usize,
 }
 
-impl<'b> Mailbox<'b> {
-    /// condigure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
-    pub async fn new(master: &'b RawMaster, slave: u16, write: Range<u16>, read: Range<u16>) -> Mailbox<'b> {
+impl Mailbox {
+    /**
+        configure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
+        
+        `slave` is the slave's fixed address, no implementation is made for mailbox with topological addresses
+    */
+    pub async fn new(master: Arc<RawMaster>, slave: u16, write: Range<u16>, read: Range<u16>) -> Mailbox {
         // check that there is not previous error
         if master.fprd(slave, registers::al::response).await.one().error() {
             panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
         }
-        
-        use futures_concurrency::future::Join;
+
         // configure sync manager
         (
             async { master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
@@ -56,7 +61,7 @@ impl<'b> Mailbox<'b> {
                 config.set_enable(true);
                 config
             }).await.one() },
-            
+
             async { master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
                 let mut config = registers::SyncManagerChannel::default();
                 config.set_address(read.start);
@@ -69,10 +74,10 @@ impl<'b> Mailbox<'b> {
                 config
             }).await.one() },
         ).join().await;
-        
+
         assert!(usize::from(read.end - read.start) < MAILBOX_MAX_SIZE);
         assert!(usize::from(write.end - write.start) < MAILBOX_MAX_SIZE);
-        
+
         Self {
             master,
             slave,
@@ -90,22 +95,22 @@ impl<'b> Mailbox<'b> {
     }
     pub async fn poll(&self) -> bool {todo!()}
     pub async fn available(&self) -> usize {todo!()}
-    
-	/** 
+
+	/**
         read the frame currently in the mailbox, wait for it if not already present
-	
+
         `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
-    
+
         return the slice of data received.
-        
+
         - 0 is lowest priority, 3 is highest
     */
 	pub async fn read<'a>(&mut self, ty: MailboxType, _priority: u2, data: &'a mut [u8]) -> &'a [u8] {
 		let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
-        
+
         self.read.count = (self.read.count % 7)+1;
-        
+
 		// wait for data
 		let mut state = loop {
             let state = self.master.fprd(self.slave, mailbox_control).await;
@@ -119,9 +124,9 @@ impl<'b> Mailbox<'b> {
         let buffer = &mut allocated[range];
 		// read the mailbox content
 		loop {
-            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer).await == 1 
+            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1 
                 {break}
-            
+
             // trigger repeat
             state.set_repeat(true);
             while self.master.fpwr(self.slave, mailbox_control, state).await.answers == 0  {}
@@ -143,21 +148,21 @@ impl<'b> Mailbox<'b> {
         assert_eq!(header.ty(), ty);
         assert_eq!(u8::from(header.count()), self.read.count);
         received.write(frame.read(header.length() as usize).unwrap()).unwrap();
-		
+
 		received.finish()
 	}
 	/**
         write the given frame in the mailbox, wait for it first if already busy
-        
+
         - 0 is lowest priority, 3 is highest
     */
 	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
 		let mailbox_control = registers::sync_manager::interface.mailbox_write();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         let buffer = &mut allocated[.. self.write.max];
-        
+
         self.write.count = (self.write.count % 7)+1;
-        
+
         let mut frame = Cursor::new(buffer.as_mut());
         frame.pack(&MailboxHeader::new(
 				data.len() as u16,
@@ -169,7 +174,7 @@ impl<'b> Mailbox<'b> {
 			)).unwrap();
         frame.write(data).unwrap();
         let sent = frame.finish();
-        
+
 		// wait for mailbox to be empty
 		loop {
             let state = self.master.fprd(self.slave, mailbox_control).await;
@@ -194,7 +199,7 @@ impl<'b> Mailbox<'b> {
 //         }
 //         else {
             // write the full buffer
-            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut()).await != 1
+            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut(), false).await != 1
                 {}
 //         }
 	}
@@ -267,5 +272,3 @@ pub enum MailboxError {
     /// Mailbox service already in use
     ServiceInWork = 0x9,
 }
-
-

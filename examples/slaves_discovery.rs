@@ -23,29 +23,29 @@ async fn main() -> std::io::Result<()> {
     })};
     
     master.reset_addresses().await;
-    
+
 //     // sequencial version
 //     let mut iter = master.discover().await;
 //     while let Some(mut slave) = iter.next().await {
 //         println!("slave {:?}", slave.address());
-//         let SlaveAddress::AutoIncremented(i) = slave.address() 
+//         let SlaveAddress::AutoIncremented(i) = slave.address()
 //             else {panic!("slave already has a fixed address")};
-//         
+//
 //         slave.switch(CommunicationState::Init).await;
 //         slave.set_address(i+1).await;
 //         slave.init_mailbox().await;
 //         slave.init_coe().await;
 //         slave.switch(CommunicationState::PreOperational).await;
-//         
+//
 //         let mut can = slave.coe().await;
 //         let priority = u2::new(0);
-//         
+//
 //         let info = slave.physical_read(registers::dl::information).await;
 //         let mut name = [0; 50];
 //         let mut hardware = [0; 50];
 //         let mut software = [0; 50];
-//         
-//         println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}", 
+//
+//         println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}",
 //                 i,
 //                 std::str::from_utf8(
 //                     &can.sdo_read_slice(&sdo::device_name.downcast(), priority, &mut name).await
@@ -61,30 +61,30 @@ async fn main() -> std::io::Result<()> {
 //                     ).unwrap().trim_end(),
 //                 );
 //     }
-    
+
     // concurrent version
     let mut iter = master.discover().await;
     let mut pool = Vec::new();
     while let Some(mut slave) = iter.next().await {
         pool.push(async move {
-            let SlaveAddress::AutoIncremented(i) = slave.address() 
+            let SlaveAddress::AutoIncremented(i) = slave.address()
                 else {panic!("slave already has a fixed address")};
-            
+
             slave.switch(CommunicationState::Init).await;
             slave.set_address(i+1).await;
             slave.init_mailbox().await;
             slave.init_coe().await;
             slave.switch(CommunicationState::PreOperational).await;
-            
+
             let mut can = slave.coe().await;
             let priority = u2::new(0);
-            
+
             let info = slave.physical_read(registers::dl::information).await;
             let mut name = [0; 50];
             let mut hardware = [0; 50];
             let mut software = [0; 50];
-            
-            println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}", 
+
+            println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}",
                     i,
                     std::str::from_utf8(
                         &can.sdo_read_slice(&sdo::device::name, priority, &mut name).await
@@ -102,6 +102,6 @@ async fn main() -> std::io::Result<()> {
         });
     }
     pool.join().await;
-    
+
     Ok(())
 }

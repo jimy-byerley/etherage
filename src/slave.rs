@@ -26,18 +26,18 @@ const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100}
 
 /**
     This struct exposes the ethercat master functions addressing one slave.
-    
+
     Its lifetime refers to the [Master] the slave answers to.
-    
+
     ## Note
-    
+
     At contrary to [RawMaster], this struct is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
     The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
-    
+
     ## Example
-    
+
     The following is a typical configuration sequence of a slave
-    
+
     ```ignore
     slave.switch(CommunicationState::Init).await;
     slave.set_address(1).await;
@@ -48,22 +48,23 @@ const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100}
     slave.switch(CommunicationState::SafeOperational).await;
     slave.switch(CommunicationState::Operational).await;
     ```
-        
+
     In this example, `group` is a tool to manage the logical memory and mappings from [crate::mapping].
 */
+
 pub struct Slave<'a> {
-    master: &'a RawMaster,
+    master: Arc<RawMaster>,
     /// current address in use, fixed or topological
     address: SlaveAddress,
     /// assumed current state
     state: CommunicationState,
     /// safe master to report to if existing
     safemaster: Option<&'a Master>,
-    
+
     // internal structures are inter-referencing, thus must be stored in Rc to ensure the references to it will not void because of deallocation or data move
 //     sii: Mutex<Sii>,
-    mailbox: Option<Arc<Mutex<Mailbox<'a>>>>,
-    coe: Option<Arc<Mutex<Can<'a>>>>,
+    mailbox: Option<Arc<Mutex<Mailbox>>>,
+    coe: Option<Arc<Mutex<Can>>>,
 //     clock: Option<Dc>,
 }
 impl<'a> Slave<'a> {
@@ -71,13 +72,13 @@ impl<'a> Slave<'a> {
         build a slave from a `RawMaster`. As everything constructed with a `RawMaster` this is not protocol-safe: no check is done, in particular nothing prevents to create multiple instances for the same physical slave, or for non-existing slaves.
         However if the physical slave is used only through one `Slave` instance, all operations will be protocol-safe.
     */
-    pub fn raw(master: &'a RawMaster, address: SlaveAddress) -> Self {
+    pub fn raw(master: Arc<RawMaster>, address: SlaveAddress) -> Self {
         Self {
             master,
             safemaster: None,
             address,
             state: Init,
-            
+
             mailbox: None,
             coe: None,
         }
@@ -94,24 +95,25 @@ impl<'a> Slave<'a> {
             {None}
         else {
             book.insert(address);
+            drop(book);
             Some(Self {
-                master: &master.raw,
+                master: master.raw.clone(),
                 safemaster: Some(master),
                 address,
                 state: Init,
-                
+
                 mailbox: None,
                 coe: None,
             })
         }
     }
-    
+
     /// return a reference to the underlying `RawMaster` used, this method is unsafe since it allows accessing any slave concurrently to what all `Slave` and `Master` instances are doing.
-    pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
-    
+    pub unsafe fn raw_master(&self) -> &Arc<RawMaster> {&self.master}
+
     /// retreive the slave's identification informations
     pub fn informations(&self)  {todo!()}
-    
+
     /// return the current state of the slave, it does not the current expected state for this slave
     pub async fn state(&self) -> CommunicationState {
         self.master.read(self.address, registers::al::status).await.one()
@@ -127,7 +129,7 @@ impl<'a> Slave<'a> {
                 config.set_request_id(true);
                 config
             }).await.answers != 1  {}
-        
+
         // wait for state change, or error
         loop {
             let status = self.master.read(self.address, registers::al::response).await.one();
@@ -136,9 +138,9 @@ impl<'a> Slave<'a> {
                 if error == registers::AlError::NoError  {break}
                 panic!("error on slave {:?} state change: {:?}", self.address, error);
             }
-            print!("slave {:?} state {:?}  waiting {:?}     \r", 
-                self.address, 
-                CommunicationState::try_from(status.state()).unwrap(), 
+            print!("slave {:?} state {:?}  waiting {:?}     \r",
+                self.address,
+                CommunicationState::try_from(status.state()).unwrap(),
                 target,
                 );
             if status.state() == target.into()  {
@@ -156,7 +158,7 @@ impl<'a> Slave<'a> {
 //                     config.set_request_id(true);
 //                     config
 //                 }).await;
-// 		
+//
 //             // wait for state change, or error
 //             for _ in 0 .. 20 {
 //                 let status = self.master.read(self.address, registers::al::response).await.one();
@@ -165,9 +167,9 @@ impl<'a> Slave<'a> {
 //                     if error == registers::AlError::NoError  {break}
 //                     panic!("error on slave {:?} state change: {:?}", self.address, error);
 //                 }
-//                 println!("slave {:?} state {:?}  waiting {:?}", 
-//                     self.address, 
-//                     CommunicationState::try_from(status.state()).unwrap(), 
+//                 println!("slave {:?} state {:?}  waiting {:?}",
+//                     self.address,
+//                     CommunicationState::try_from(status.state()).unwrap(),
 //                     target,
 //                     );
 //                 if status.state() == target.into()  {
@@ -179,7 +181,7 @@ impl<'a> Slave<'a> {
     }
     /**
         set the expected state of the slave.
-        
+
         this actually does not perform any operation on the slave, but will change the expected behavior and thus error handling of the slave's methods
     */
     pub fn expect(&mut self, state: CommunicationState) {
@@ -189,7 +191,7 @@ impl<'a> Slave<'a> {
     pub fn expected(&self) -> CommunicationState {
         self.state
     }
-    
+
     /// get the current address used to communicate with the slave
     pub fn address(&self) -> SlaveAddress  {self.address}
     /// set a fixed address for the slave, `0` is forbidden
@@ -206,7 +208,7 @@ impl<'a> Slave<'a> {
         }
         self.address = new;
     }
-    
+
 //     pub async fn auto_address(&mut self) {
 //         let fixed = {
 //             let book = self.master.slaves.lock();
@@ -218,19 +220,17 @@ impl<'a> Slave<'a> {
 //             };
 //         self.master.write(self.address, registers::address::fixed, fixed).await;
 //     }
-    
-//     pub async fn init_clock(&mut self)  {todo!()}
 
     /// initialize the slave's mailbox (if supported by the slave)
     pub async fn init_mailbox(&mut self) {
         assert_eq!(self.state, Init);
         let address = match self.address {
             SlaveAddress::Fixed(i) => i,
-            _ => panic!("mailbox needs fixed addresses, setup the address first  (AFAIK)"),
+            _ => panic!("mailbox is unsafe without fixed addresses"),
         };
         // setup the mailbox
         let mailbox = Mailbox::new(
-            self.master,
+            self.master.clone(),
             address,
             MAILBOX_BUFFER_WRITE,
             MAILBOX_BUFFER_READ,
@@ -241,30 +241,28 @@ impl<'a> Slave<'a> {
             config.set_owner(registers::SiiOwner::Pdi);
             config
             }).await.one();
-        
+
         self.coe = None;
         self.mailbox = Some(Arc::new(Mutex::new(mailbox)));
     }
-    
+
     /// initialize CoE (Canopen over Ethercat) communication (if supported by the slave), this requires the mailbox to be initialized
     pub async fn init_coe(&mut self) {
         // override the mailbox reference lifetime, we will have to make sure we free any stored object using it before destroying the mailbox
         let mailbox = self.mailbox.clone().expect("mailbox not initialized");
         self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
     }
-    
-//     pub async fn clock(&'a self) {todo!()}
-    
+
     /// locks access to CoE communication and return the underlying instance of [Can] running CoE
-    pub async fn coe(&self) -> MutexGuard<'_, Can<'a>>    {
+    pub async fn coe(&self) -> MutexGuard<'_, Can>    {
         self.coe
             .as_ref().expect("coe not initialized")
             .lock().await
     }
-    
+
 //     /// locks access to EoE communication
 //     pub fn eoe(&'a self) {todo!()}
-    
+
     /// read a value from the slave's physical memory
     pub async fn physical_read<T: PduData>(&self, field: Field<T>) -> T  {
         self.master.read(self.address, field).await.one()
