@@ -376,7 +376,7 @@ impl RawMaster {
 
             let token = usize::from(header.token());
             assert!(token <= state.receive.len());
-            if let Some(mut storage) = state.receive[token].as_mut() {
+            if let Some(storage) = state.receive[token].as_mut() {
                 let content = frame.read(usize::from(u16::from(header.len()))).unwrap();
 
                 // copy the PDU content in the reception buffer

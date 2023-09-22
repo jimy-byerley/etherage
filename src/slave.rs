@@ -88,12 +88,16 @@ impl<'a> Slave<'a> {
     */
     pub async fn new(master: &'a Master, address: SlaveAddress) -> Option<Slave<'a>> {
         let mut book = master.slaves.lock().unwrap();
-        if book.contains(&address)
-        || book.contains(&SlaveAddress::Fixed(
-                master.raw.read(address, registers::address::fixed).await.one()
-                ))
-            {None}
+        println!("checking {:?}", address);
+        if book.contains(&address) || match address {
+            SlaveAddress::AutoIncremented(_) => book.contains(&SlaveAddress::Fixed(
+                    master.raw.read(address, registers::address::fixed).await.one()
+                    )),
+            SlaveAddress::Fixed(_) => false,
+            _ => true,
+        } {None}
         else {
+            println!("check ok");
             book.insert(address);
             drop(book);
             Some(Self {
@@ -208,18 +212,6 @@ impl<'a> Slave<'a> {
         }
         self.address = new;
     }
-
-//     pub async fn auto_address(&mut self) {
-//         let fixed = {
-//             let book = self.master.slaves.lock();
-//             let i = (0 .. book.len())
-//                 .filter(|i|  book.contain(&i))
-//                 .next().unwrap();
-//             book.insert(i);
-//             i
-//             };
-//         self.master.write(self.address, registers::address::fixed, fixed).await;
-//     }
 
     /// initialize the slave's mailbox (if supported by the slave)
     pub async fn init_mailbox(&mut self) {

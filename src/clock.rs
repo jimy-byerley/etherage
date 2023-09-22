@@ -50,7 +50,7 @@ use crate::{
     };
 use std::{
     collections::HashMap,
-    time::{Instant, Duration},
+    time::{SystemTime, Instant, Duration},
     sync::Arc,
     };
 use core::sync::atomic::{
@@ -86,8 +86,10 @@ const DC_CONTROL_LOOP_2_ADJUST:  u16 = u16::from_le_bytes([0x00u8, 0x0cu8]);
 pub struct SyncClock {
     // Raw master reference
     master: Arc<RawMaster>,
-    /// start instant used as master's clock
+    /// start instant used as master's clock, it serves as monotonic clock for all offset computations to guarantee the synchronization success
     start: Instant,
+    /// system clock when the clock has been initialized, it serves as reference to return an offset between slaves clock and system clock. If the system clock has not been monotonic all the time since the initialization of this instance, any offset from slave to master will not mean anything to the user
+    epoch: SystemTime,
     /// flag stopping synchronization execution
     stopped: AtomicBool,
 
@@ -138,6 +140,7 @@ impl SyncClock {
         let mut new = Self {
             master,
             start: Instant::now(),
+            epoch: SystemTime::now(),
             stopped: AtomicBool::new(false),
             offset: 0,
             delay: 0,
@@ -379,6 +382,12 @@ impl SyncClock {
         }
         Ok(())
     }
+    
+    /// resynchronize the master offset with the computer system time
+    pub fn sync_system(&mut self) {
+        self.start = Instant::now();
+        self.epoch = SystemTime::now();
+    }
 
     /// stop execution of [Self::sync]
     pub fn stop(&self) {
@@ -389,14 +398,22 @@ impl SyncClock {
     pub fn status(&self) -> ClockStatus {self.status}
 
     /// return the slave address of the slave used as reference clock. This slave is called referent, or reference slave.
-    pub fn referent(&self) -> u16  {self.slaves.first().unwrap().address}
+    pub fn referent(&self) -> u16  {
+        self.slaves.first().unwrap().address
+    }
     /// return the current time on the reference clock
-    pub fn reference(&self) -> Instant  {
-        Instant::now() + Duration::from_nanos(u64::from(self.slaves.first().unwrap().clock.system_delay))
+    pub fn reference(&self) -> SystemTime  {
+        self.epoch + self.start.elapsed() + Duration::from_nanos(u64::from(self.slaves.first().unwrap().clock.system_delay))
     }
 
     /// time offset between the master (the computer's system clock, aka local time) and the reference clock
-    pub fn offset_master(&self) -> i128   {self.offset}
+    pub fn offset_master(&self) -> i128   {
+        self.offset 
+        + i128::try_from(
+            self.epoch.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap().as_nanos()
+            ).unwrap()
+    }
     /// time offset between the given slave clock and the reference clock
     pub fn offset_slave(&self, slave: u16) -> i128   {
         i32::from_ne_bytes(
