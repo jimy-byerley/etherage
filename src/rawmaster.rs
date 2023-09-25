@@ -94,7 +94,7 @@ struct PduStorage {
 impl RawMaster {
 	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {
         Self {
-            pdu_merge_time: std::time::Duration::from_micros(100), // microseconds
+            pdu_merge_time: std::time::Duration::from_micros(100),
 
             socket: Box::new(socket),
             received: Notify::new(),

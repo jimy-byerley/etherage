@@ -17,6 +17,12 @@ pub trait PduData: Sized {
 
     fn packed_size() -> usize  {Self::Packed::LEN}
     fn packed_bitsize() -> usize {Self::Packed::LEN*8}
+    
+    fn packed(&self) -> PackingResult<Self::Packed> {
+        let mut buffer = Self::Packed::uninit();
+        self.pack(buffer.as_mut())?;
+        Ok(buffer)
+    }
 }
 
 /**
