@@ -22,7 +22,10 @@ pub struct EthernetSocket {
 
 /// biggest possible ethercat frame allowed by the protocol
 /// ethernet header + ethercat header + 2^11
-const MAX_ETHERNET_FRAME: usize = 2064;
+// const MAX_ETHERNET_FRAME: usize = 2064;
+/// biggest possible ethernet frame allowed by 802.3
+/// 1500 payload + 14 header
+const MAX_ETHERNET_FRAME: usize = 1514;
 
 impl EthernetSocket {
     pub fn new(interface: &str) -> io::Result<Self> {
@@ -47,8 +50,9 @@ impl EthernetSocket {
             lower,
             ifreq: ifreq_for(interface),
             header: EthernetHeader {
+                // broadcast addresses
                 dst: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
-                src: [0x12, 0x10, 0x10, 0x10, 0x10, 0x10],
+                src: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
                 // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
                 // vlan: [0x81, 0x0, 0, 0],
                 protocol,
@@ -145,6 +149,10 @@ impl EthercatSocket for EthernetSocket {
             {Err(io::Error::last_os_error())} 
         else 
             {Ok(())}
+    }
+    fn max_frame(&self) -> usize  {
+        MAX_ETHERNET_FRAME 
+        - <EthernetHeader as PackedStruct>::ByteArray::len()
     }
 }
 
