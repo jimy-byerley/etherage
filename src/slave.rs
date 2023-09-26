@@ -5,7 +5,7 @@ use crate::{
     data::{PduData, Field},
     mailbox::Mailbox,
     can::Can,
-    registers,
+    registers::{self, AlError},
     error::{EthercatError, EthercatResult},
     };
 use tokio::sync::{Mutex, MutexGuard};
@@ -97,7 +97,7 @@ impl<'a> Slave<'a> {
         else {
             book.insert(address);
             drop(book);
-            Some(Self {
+            Ok(Self {
                 master: master.raw.clone(),
                 safemaster: Some(master),
                 address,
@@ -117,7 +117,7 @@ impl<'a> Slave<'a> {
 
     /// return the current state of the slave, it does not the current expected state for this slave
     pub async fn state(&self) -> EthercatResult<CommunicationState> {
-        self.master.read(self.address, registers::al::status).await.one()
+        self.master.read(self.address, registers::al::status).await.one()?
             .state().try_into()
             .map_err(|_| EthercatError::Protocol("undefined slave state"))
     }
@@ -138,7 +138,7 @@ impl<'a> Slave<'a> {
             if status.error() {
                 let error = self.master.read(self.address, registers::al::error).await.one()?;
                 if error == registers::AlError::NoError  {break}
-				return Err(EthercatError::Slave(received));
+				return Err(EthercatError::Slave(error));
             }
             print!("slave {:?} state {:?}  waiting {:?}     \r",
                 self.address,

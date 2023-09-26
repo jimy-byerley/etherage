@@ -195,7 +195,6 @@ impl Can {
             Self::receive_sdo_response(
                 &mut mailbox,
                 &mut buffer,
-                priority,
                 SdoCommandResponse::Download,
                 sdo,
                 ).await?;
@@ -266,7 +265,7 @@ impl Can {
 
 	/// read the mailbox, check for
 	async fn receive_sdo_response<'b, T: PduData>(
-        mailbox: &mut Mailbox<'_>,
+        mailbox: &mut Mailbox,
         buffer: &'b mut [u8], 
         expected: SdoCommandResponse,
         sdo: &Sdo<T>, 
@@ -307,7 +306,7 @@ impl Can {
 	}
 
 	async fn receive_sdo_segment<'b>(
-        mailbox: &mut Mailbox<'_>,
+        mailbox: &mut Mailbox,
         buffer: &'b mut [u8], 
         expected: SdoCommandResponse,
         toggle: bool, 

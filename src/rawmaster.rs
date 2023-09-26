@@ -381,7 +381,7 @@ impl RawMaster {
             if token >= state.receive.len()
                 {return Err(EthercatError::Protocol("received inconsistent PDU token"))}
             
-            if let Some(mut storage) = state.receive[token].as_mut() {
+            if let Some(storage) = state.receive[token].as_mut() {
                 let content = frame.read(usize::from(u16::from(header.len())))
                     .map_err(|_|  EthercatError::Protocol("unable to unpack PDU size"))?;
                 
@@ -407,7 +407,7 @@ impl RawMaster {
         
         In case something goes wrong during PDUs unpacking, the PDUs successfully processed will be reported to their pending futures, the futures for PDU which caused the read to fail and all following PDUs in the frame will be left pending (since the data is corrupted, there is no way to determine which future should be aborted)
     */
-	pub fn receive(&self) -> EthercatResult<()> {
+	pub fn receive(&self) -> EthercatResult {
         let mut receive = self.ethercat_receive.lock().unwrap();
         let size = self.socket.receive(receive.deref_mut())?;
         let mut frame = Cursor::new(&receive[.. size]);
@@ -432,7 +432,7 @@ impl RawMaster {
         Ok(())
 	}
 	/// this is the socket sending handler
-	pub fn send(&self) {
+	pub fn send(&self) -> EthercatResult {
         let mut state = self.pdu_state.lock().unwrap();
         // wait indefinitely if no data to send
         while state.last_end == 0
@@ -491,7 +491,7 @@ impl<T: PduData> PduAnswer<T> {
         self.exact(1)
     }
     /// extract the value only if the given amount of slaves answered
-    pub fn exact(self, n: u16) -> EthercatResult<T> {
+    pub fn exact(&self, n: u16) -> EthercatResult<T> {
         if self.answers != n {
             if self.answers == 0 
                 {return Err(EthercatError::Protocol("no slave answered"))}
@@ -503,13 +503,13 @@ impl<T: PduData> PduAnswer<T> {
         Ok(self.value()?)
     }
     /// extract the value if any slave answered
-    pub fn any(self) -> EthercatResult<T> {
+    pub fn any(&self) -> EthercatResult<T> {
         if self.answers == 0
             {return Err(EthercatError::Protocol("no slave answered"))}
         Ok(self.value()?)
     }
     /// extract the value, whatever it is and if slaves answered or not
-    pub fn value(self) -> PackingResult<T> {
+    pub fn value(&self) -> PackingResult<T> {
         T::unpack(self.data.as_ref())
     }
 }

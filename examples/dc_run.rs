@@ -11,15 +11,14 @@ use etherage::{
 use ioprio::*;
 use futures_concurrency::future::{Join, Race};
 
-pub const SOCKET_NAME : &'static str = "eno1";
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> EthercatResult {
     // RT this_thread
     thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max).unwrap();
 
     //Init master
-    let master: Arc<Master> = Arc::new(Master::new(EthernetSocket::new(&SOCKET_NAME)?));
+    let master: Arc<Master> = Arc::new(Master::new(EthernetSocket::new("eno1")?));
     {
         let m : Arc<Master> = master.clone();
         ioprio::set_priority(

@@ -12,7 +12,7 @@ use crate::data::PackingError;
     [Self::Slave] variant should not be used without an appropriate type for `T`, `T` depend on the operation the slave reports for, and is usually an error code, or an enum.
 */
 #[derive(Clone, Debug)]
-pub enum EthercatError<T> {
+pub enum EthercatError<T=()> {
     /// error caused by communication support
     ///
     /// these errors are exterior to this library
