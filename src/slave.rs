@@ -88,7 +88,6 @@ impl<'a> Slave<'a> {
     */
     pub async fn new(master: &'a Master, address: SlaveAddress) -> Option<Slave<'a>> {
         let mut book = master.slaves.lock().unwrap();
-        println!("checking {:?}", address);
         if book.contains(&address) || match address {
             SlaveAddress::AutoIncremented(_) => book.contains(&SlaveAddress::Fixed(
                     master.raw.read(address, registers::address::fixed).await.one()
@@ -97,7 +96,6 @@ impl<'a> Slave<'a> {
             _ => true,
         } {None}
         else {
-            println!("check ok");
             book.insert(address);
             drop(book);
             Some(Self {
@@ -142,11 +140,11 @@ impl<'a> Slave<'a> {
                 if error == registers::AlError::NoError  {break}
                 panic!("error on slave {:?} state change: {:?}", self.address, error);
             }
-            print!("slave {:?} state {:?}  waiting {:?}     \r",
-                self.address,
-                CommunicationState::try_from(status.state()).unwrap(),
-                target,
-                );
+//             print!("slave {:?} state {:?}  waiting {:?}     \r",
+//                 self.address,
+//                 CommunicationState::try_from(status.state()).unwrap(),
+//                 target,
+//                 );
             if status.state() == target.into()  {
                 break
             }
