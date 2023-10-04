@@ -1,10 +1,10 @@
 //! implementation of communication with a slave's mailbox
 
 use crate::{
-	rawmaster::{RawMaster, PduCommand, SlaveAddress},
-	registers,
+    rawmaster::{RawMaster, PduCommand, SlaveAddress},
+    registers,
     data::{self, PduData, Cursor},
-	};
+    };
 use core::ops::Range;
 use std::sync::Arc;
 use bilge::prelude::*;
@@ -26,9 +26,9 @@ const MAILBOX_MAX_SIZE: usize = 1024;
 */
 pub struct Mailbox {
     master: Arc<RawMaster>,
-	slave: u16,
-	read: Direction,
-	write: Direction,
+    slave: u16,
+    read: Direction,
+    write: Direction,
 }
 struct Direction {
     count: u8,
@@ -96,7 +96,7 @@ impl Mailbox {
     pub async fn poll(&self) -> bool {todo!()}
     pub async fn available(&self) -> usize {todo!()}
 
-	/**
+    /**
         read the frame currently in the mailbox, wait for it if not already present
 
         `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
@@ -105,14 +105,14 @@ impl Mailbox {
 
         - 0 is lowest priority, 3 is highest
     */
-	pub async fn read<'a>(&mut self, ty: MailboxType, _priority: u2, data: &'a mut [u8]) -> &'a [u8] {
-		let mailbox_control = registers::sync_manager::interface.mailbox_read();
+    pub async fn read<'a>(&mut self, ty: MailboxType, _priority: u2, data: &'a mut [u8]) -> &'a [u8] {
+        let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
 
         self.read.count = (self.read.count % 7)+1;
 
-		// wait for data
-		let mut state = loop {
+        // wait for data
+        let mut state = loop {
             let state = self.master.fprd(self.slave, mailbox_control).await;
             if state.answers == 0 || ! state.value.mailbox_full()  {continue}
             break state.value
@@ -122,8 +122,8 @@ impl Mailbox {
                         .min(data.len() + MailboxHeader::packed_size())
                         .min(self.read.max);
         let buffer = &mut allocated[range];
-		// read the mailbox content
-		loop {
+        // read the mailbox content
+        loop {
             if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1 
                 {break}
 
@@ -149,15 +149,15 @@ impl Mailbox {
         assert_eq!(u8::from(header.count()), self.read.count);
         received.write(frame.read(header.length() as usize).unwrap()).unwrap();
 
-		received.finish()
-	}
-	/**
+        received.finish()
+    }
+    /**
         write the given frame in the mailbox, wait for it first if already busy
 
         - 0 is lowest priority, 3 is highest
     */
-	pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
-		let mailbox_control = registers::sync_manager::interface.mailbox_write();
+    pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) {
+        let mailbox_control = registers::sync_manager::interface.mailbox_write();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         let buffer = &mut allocated[.. self.write.max];
 
@@ -165,18 +165,18 @@ impl Mailbox {
 
         let mut frame = Cursor::new(buffer.as_mut());
         frame.pack(&MailboxHeader::new(
-				data.len() as u16,
-				u16::new(0),  // address of master
-				u6::new(0),  // this value has no effect and is reserved for future use
-				priority,
-				ty,
-				u3::new(self.write.count),
-			)).unwrap();
+                data.len() as u16,
+                u16::new(0),  // address of master
+                u6::new(0),  // this value has no effect and is reserved for future use
+                priority,
+                ty,
+                u3::new(self.write.count),
+            )).unwrap();
         frame.write(data).unwrap();
         let sent = frame.finish();
 
-		// wait for mailbox to be empty
-		loop {
+        // wait for mailbox to be empty
+        loop {
             let state = self.master.fprd(self.slave, mailbox_control).await;
             if state.answers == 0 || state.value.mailbox_full()  {continue}
             break
@@ -202,7 +202,7 @@ impl Mailbox {
             while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut(), false).await != 1
                 {}
 //         }
-	}
+    }
 }
 
 /// ETG 1000.4 table 29

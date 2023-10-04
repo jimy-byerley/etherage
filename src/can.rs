@@ -1,12 +1,12 @@
 //! implementation of CoE (Canopen Over Ethercat)
 
 use crate::{
-	mailbox::{Mailbox, MailboxType},
-	registers,
-	sdo::Sdo,
-	data::{self, PduData, Storage, Cursor},
-	EthercatError,
-	};
+    mailbox::{Mailbox, MailboxType},
+    registers,
+    sdo::Sdo,
+    data::{self, PduData, Storage, Cursor},
+    EthercatError,
+    };
 use bilge::prelude::*;
 use tokio::sync::Mutex;
 use std::sync::Arc;
@@ -58,11 +58,11 @@ impl Can {
     }
     /// read an SDO, any size
     pub async fn sdo_read<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2) -> T {
-		let mut data = T::Packed::uninit();
+        let mut data = T::Packed::uninit();
         T::unpack(self.sdo_read_slice(&sdo.downcast(), priority, data.as_mut()).await).unwrap()
     }
 
-	pub async fn sdo_read_slice<'b>(&mut self, sdo: &Sdo, priority: u2, data: &'b mut [u8]) -> &'b mut [u8]   {
+    pub async fn sdo_read_slice<'b>(&mut self, sdo: &Sdo, priority: u2, data: &'b mut [u8]) -> &'b mut [u8]   {
         let mut mailbox = self.mailbox.lock().await;
         let mut buffer = [0; MAILBOX_MAX_SIZE];
 
@@ -113,7 +113,7 @@ impl Can {
             // receive more data from segments
             // TODO check for possible SDO error
             while received.remain().len() != 0 {
-				// send segment request
+                // send segment request
                 {
                     let mut frame = Cursor::new(buffer.as_mut_slice());
                     frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
@@ -127,8 +127,8 @@ impl Can {
                     mailbox.write(MailboxType::Can, priority, frame.finish()).await;
                 }
 
-				// receive segment
-				{
+                // receive segment
+                {
                     let (header, segment) = Self::receive_sdo_segment(
                             &mut mailbox,
                             &mut buffer,
@@ -139,30 +139,30 @@ impl Can {
                     let segment = &segment[.. received.remain().len()];
                     received.write(segment).expect("received more than expected");
 
-					if ! header.more () {break}
+                    if ! header.more () {break}
                 }
 
-				toggle = ! toggle;
+                toggle = ! toggle;
             }
             received.finish()
         }
 
         // TODO: error propagation instead of asserts
         // TODO send SdoCommand::Abort in case any error
-	}
-	/// write an SDO, any size
-	pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)  {
+    }
+    /// write an SDO, any size
+    pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)  {
         let mut packed = T::Packed::uninit();
         data.pack(packed.as_mut()).unwrap();
         self.sdo_write_slice(&sdo.downcast(), priority, packed.as_ref()).await;
-	}
-	pub async fn sdo_write_slice(&mut self, sdo: &Sdo, priority: u2, data: &[u8])  {
+    }
+    pub async fn sdo_write_slice(&mut self, sdo: &Sdo, priority: u2, data: &[u8])  {
         let mut mailbox = self.mailbox.lock().await;
         let mut buffer = [0; MAILBOX_MAX_SIZE];
-		if data.len() <= EXPEDITED_MAX_SIZE {
-			// expedited transfer
-			// send data in the 4 bytes instead of data size
-			{
+        if data.len() <= EXPEDITED_MAX_SIZE {
+            // expedited transfer
+            // send data in the 4 bytes instead of data size
+            {
                 let mut frame = Cursor::new(buffer.as_mut_slice());
                 frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
                 frame.pack(&SdoHeader::new(
@@ -187,13 +187,13 @@ impl Can {
                 SdoCommandResponse::Download,
                 sdo,
                 ).await.unwrap();
-		}
-		else {
-			// normal transfer, eventually segmented
-			let mut data = Cursor::new(data.as_ref());
+        }
+        else {
+            // normal transfer, eventually segmented
+            let mut data = Cursor::new(data.as_ref());
 
-			// send one download request with the start of data
-			{
+            // send one download request with the start of data
+            {
                 let mut frame = Cursor::new(buffer.as_mut_slice());
                 frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
                 frame.pack(&SdoHeader::new(
@@ -248,14 +248,14 @@ impl Can {
                     ).await.unwrap();
                 toggle = !toggle;
             }
-		}
+        }
 
         // TODO: error propagation instead of asserts
         // TODO send SdoCommand::Abort in case any error
-	}
+    }
 
-	/// read the mailbox, check for
-	async fn receive_sdo_response<'b, T: PduData>(
+    /// read the mailbox, check for
+    async fn receive_sdo_response<'b, T: PduData>(
         mailbox: &mut Mailbox,
         buffer: &'b mut [u8],
         priority: u2,
@@ -290,9 +290,9 @@ impl Can {
                 return Err(EthercatError::Protocol("unexpected COE service during SDO operation"))
             },
         }
-	}
+    }
 
-	async fn receive_sdo_segment<'b>(
+    async fn receive_sdo_segment<'b>(
         mailbox: &mut Mailbox,
         buffer: &'b mut [u8],
         priority: u2,
@@ -321,14 +321,14 @@ impl Can {
                 return Err(EthercatError::Protocol("unexpected COE service during SDO operation"))
             },
         }
-	}
+    }
 
-	pub fn pdo_read() {todo!()}
-	pub fn pdo_write() {todo!()}
+    pub fn pdo_read() {todo!()}
+    pub fn pdo_write() {todo!()}
 
-	pub fn info_dictionnary() {todo!()}
-	pub fn info_sdo() {todo!()}
-	pub fn info_subitem() {todo!()}
+    pub fn info_dictionnary() {todo!()}
+    pub fn info_sdo() {todo!()}
+    pub fn info_subitem() {todo!()}
 }
 
 
