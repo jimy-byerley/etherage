@@ -140,11 +140,11 @@ impl<'a> Slave<'a> {
                 if error == registers::AlError::NoError  {break}
 				return Err(EthercatError::Slave(error));
             }
-            print!("slave {:?} state {:?}  waiting {:?}     \r",
-                self.address,
-                CommunicationState::try_from(status.state()).unwrap(),
-                target,
-                );
+//             print!("slave {:?} state {:?}  waiting {:?}     \r",
+//                 self.address,
+//                 CommunicationState::try_from(status.state()).unwrap(),
+//                 target,
+//                 );
             if status.state() == target.into()  {break}
         }
         self.state = target;
@@ -183,18 +183,6 @@ impl<'a> Slave<'a> {
         self.master.write(self.address, registers::address::fixed, 0).await.one()?;
         Ok(())
     }
-
-//     pub async fn auto_address(&mut self) {
-//         let fixed = {
-//             let book = self.master.slaves.lock();
-//             let i = (0 .. book.len())
-//                 .filter(|i|  book.contain(&i))
-//                 .next().unwrap();
-//             book.insert(i);
-//             i
-//             };
-//         self.master.write(self.address, registers::address::fixed, fixed).await;
-//     }
 
     /// initialize the slave's mailbox (if supported by the slave)
     pub async fn init_mailbox(&mut self) -> EthercatResult {

@@ -6,16 +6,16 @@
 
 use crate::{
 // 	slave::Slave,
-	data::{self, Field, BitField, PduData, Storage},
-	registers,
-	};
+    data::{self, Field, BitField, PduData, Storage},
+    registers,
+    };
 use core::{
     fmt,
-	marker::PhantomData,
-	convert::From,
-	ops::Range,
-	any::type_name
-	};
+    marker::PhantomData,
+    convert::From,
+    ops::Range,
+    any::type_name
+    };
 use bilge::prelude::*;
 
 pub use crate::registers::SyncDirection;
@@ -24,12 +24,12 @@ pub use crate::registers::SyncDirection;
 /// address of an SDO's subitem, not a SDO itself
 #[derive(Eq, PartialEq)]
 pub struct Sdo<T: PduData=()> {
-	/// index of the item in the slave's dictionnary of objects
-	pub index: u16,
-	/// subindex in the item
-	pub sub: SdoPart,
-	/// field pointing to the subitem in the byte sequence of the complete SDO
-	pub field: BitField<T>,
+    /// index of the item in the slave's dictionnary of objects
+    pub index: u16,
+    /// subindex in the item
+    pub sub: SdoPart,
+    /// field pointing to the subitem in the byte sequence of the complete SDO
+    pub field: BitField<T>,
 }
 /// specifies which par of an SDO is addressed
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -41,36 +41,36 @@ pub enum SdoPart {
     Sub(u8),
 }
 impl<T: PduData> Sdo<T> {
-	/// address an sdo subitem, deducing its bit size from the `PduData` impl
-	/// offset is the bit offset of the subitem in the complete sdo
-	pub const fn sub(index: u16, sub: u8, offset: usize) -> Self { Self{
-		index,
-		sub: SdoPart::Sub(sub),
-		field: BitField::new(offset, T::Packed::LEN*8),
-	}}
-	pub const fn sub_with_size(index: u16, sub: u8, offset: usize, size: usize) -> Self { Self{
-		index,
-		sub: SdoPart::Sub(sub),
-		field: BitField::new(offset, size),
-	}}
-	/// address a complete sdo at the given index, with `sub=0` and `byte=0`
-	pub const fn complete(index: u16) -> Self { Self{
-		index,
-		sub: SdoPart::Complete,
-		field: BitField::new(0, T::Packed::LEN*8),
-	}}
-	pub const fn complete_with_size(index: u16, size: usize) -> Self { Self{
-		index,
-		sub: SdoPart::Complete,
-		field: BitField::new(0, size),
-	}}
+    /// address an sdo subitem, deducing its bit size from the `PduData` impl
+    /// offset is the bit offset of the subitem in the complete sdo
+    pub const fn sub(index: u16, sub: u8, offset: usize) -> Self { Self{
+        index,
+        sub: SdoPart::Sub(sub),
+        field: BitField::new(offset, T::Packed::LEN*8),
+    }}
+    pub const fn sub_with_size(index: u16, sub: u8, offset: usize, size: usize) -> Self { Self{
+        index,
+        sub: SdoPart::Sub(sub),
+        field: BitField::new(offset, size),
+    }}
+    /// address a complete sdo at the given index, with `sub=0` and `byte=0`
+    pub const fn complete(index: u16) -> Self { Self{
+        index,
+        sub: SdoPart::Complete,
+        field: BitField::new(0, T::Packed::LEN*8),
+    }}
+    pub const fn complete_with_size(index: u16, size: usize) -> Self { Self{
+        index,
+        sub: SdoPart::Complete,
+        field: BitField::new(0, size),
+    }}
 
-	pub const fn downcast(self) -> Sdo { Sdo{
+    pub const fn downcast(self) -> Sdo { Sdo{
         index: self.index,
         sub: self.sub,
         field: BitField::new(self.field.bit, self.field.len),
-	}}
-	pub fn into_sub(&self) -> Sdo<T> {
+    }}
+    pub fn into_sub(&self) -> Sdo<T> {
         match self.sub {
             SdoPart::Complete => Sdo{
                 index: self.index,
@@ -79,7 +79,7 @@ impl<T: PduData> Sdo<T> {
                 },
             SdoPart::Sub(_) => self.clone(),
         }
-	}
+    }
 }
 impl SdoPart {
     /// return the subindex or 0 for a complete item
@@ -94,19 +94,19 @@ impl SdoPart {
     }}
 }
 impl<T: PduData> fmt::Display for Sdo<T> {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{:#x}:{:?}", self.index, self.sub)
-	}
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#x}:{:?}", self.index, self.sub)
+    }
 }
 impl<T: PduData> fmt::Debug for Sdo<T> {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{} {{index: {:#x}, sub: {:?}, field: {{{:#x}, {}}}}}",
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} {{index: {:#x}, sub: {:?}, field: {{{:#x}, {}}}}}",
             type_name::<Self>(),
             self.index,
             self.sub,
             self.field.bit,
             self.field.len)
-	}
+    }
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
 impl<T: PduData> Clone for Sdo<T> {
@@ -162,9 +162,9 @@ impl<T: PduData> From<u16> for SdoList<T> {
     fn from(index: u16) -> Self {Self::new(index)}
 }
 impl<T: PduData> fmt::Debug for SdoList<T> {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{} {{index: 0x{:x}, capacity: {}}}", type_name::<Self>(), self.index, self.capacity)
-	}
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} {{index: 0x{:x}, capacity: {}}}", type_name::<Self>(), self.index, self.capacity)
+    }
 }
 // [Clone] and [Copy] must be implemented manually to allow copying a sdo pointing to a type which does not implement this operation
 impl<T> Clone for SdoList<T> {
@@ -524,13 +524,13 @@ impl From<&Pdo> for SdoList<PdoEntry> {
     fn from(pdo: &Pdo) -> Self {Self::with_capacity(pdo.index, pdo.capacity)}
 }
 impl fmt::Debug for Pdo {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{} {{index: {:#x}, fixed: {}, capacity: {}}}",
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} {{index: {:#x}, fixed: {}, capacity: {}}}",
             type_name::<Self>(),
             self.index,
             self.fixed,
             self.capacity)
-	}
+    }
 }
 
 
@@ -548,12 +548,12 @@ pub struct PdoEntry {
 data::bilge_pdudata!(PdoEntry, u32);
 impl fmt::Debug for PdoEntry {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{} {{index: {:#x}, sub: {}, bitsize: {}}}",
+        write!(f, "{} {{index: {:#x}, sub: {}, bitsize: {}}}",
             type_name::<Self>(),
             self.index(),
             self.sub(),
             self.bitsize())
-	}
+    }
 }
 
 
@@ -565,12 +565,12 @@ impl fmt::Debug for PdoEntry {
 */
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SyncChannel {
-	/// index of the SDO that configures the SyncChannel
-	pub index: u16,
-	/// whether this channel is to be read or written by the master, this might be set by the user if the slave supports it.
-	pub direction: SyncDirection,
-	/// max number of PDO that can be assigned to the SyncChannel
-	pub capacity: u8,
+    /// index of the SDO that configures the SyncChannel
+    pub index: u16,
+    /// whether this channel is to be read or written by the master, this might be set by the user if the slave supports it.
+    pub direction: SyncDirection,
+    /// max number of PDO that can be assigned to the SyncChannel
+    pub capacity: u8,
 }
 impl SyncChannel {
     /// return a field pointing to the nth entry definition of the sync manager channel
@@ -586,13 +586,13 @@ impl SyncChannel {
     }
 }
 impl fmt::Debug for SyncChannel {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{} {{index: 0x{:x}, direction: {:?}, capacity: {}}}",
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} {{index: 0x{:x}, direction: {:?}, capacity: {}}}",
             type_name::<Self>(),
             self.index,
             self.direction,
             self.capacity)
-	}
+    }
 }
 
 /// ETG.1000.6 table 67
@@ -869,32 +869,32 @@ pub struct StatusWord {
 data::bilge_pdudata!(StatusWord, u16);
 
 impl fmt::Display for StatusWord {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "StatusWord{{")?;
-		for (active, mark) in [ (self.ready_switch_on(), "rtso"),
-								(self.switched_on(), "so"),
-								(self.operation_enabled(), "oe"),
-								(self.fault(), "f"),
-								(self.voltage_enabled(), "ve"),
-								(self.quick_stop(), "qs"),
-								(self.switch_on_disabled(), "sod"),
-								(self.warning(), "w"),
-								(self.remote(), "r"),
-								(self.reached_command(), "rc"),
-								(self.limit_active(), "la"),
-								(self.following_command(), "fc"),
-								(self.following_error(), "ce"),
-								] {
-			write!(f, " ")?;
-			if active {
-				write!(f, "{}", mark)?;
-			} else {
-				for _ in 0 .. mark.len() {write!(f, " ")?;}
-			}
-		}
-		write!(f, "}}")?;
-		Ok(())
-	}
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "StatusWord{{")?;
+        for (active, mark) in [ (self.ready_switch_on(), "rtso"),
+                                (self.switched_on(), "so"),
+                                (self.operation_enabled(), "oe"),
+                                (self.fault(), "f"),
+                                (self.voltage_enabled(), "ve"),
+                                (self.quick_stop(), "qs"),
+                                (self.switch_on_disabled(), "sod"),
+                                (self.warning(), "w"),
+                                (self.remote(), "r"),
+                                (self.reached_command(), "rc"),
+                                (self.limit_active(), "la"),
+                                (self.following_command(), "fc"),
+                                (self.following_error(), "ce"),
+                                ] {
+            write!(f, " ")?;
+            if active {
+                write!(f, "{}", mark)?;
+            } else {
+                for _ in 0 .. mark.len() {write!(f, " ")?;}
+            }
+        }
+        write!(f, "}}")?;
+        Ok(())
+    }
 }
 
 /**
@@ -934,26 +934,26 @@ pub struct ControlWord {
 data::bilge_pdudata!(ControlWord, u16);
 
 impl fmt::Display for ControlWord {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "ControlWord{{") ?;
-		for (active, mark) in [ (self.switch_on(), "so"),
-								(self.enable_voltage(), "ev"),
-								(self.quick_stop(), "qs"),
-								(self.enable_operation(), "eo"),
-								(self.trigger(), "t"),
-								(self.reset_fault(), "rf"),
-								(self.halt(), "h"),
-								] {
-			write!(f, " ")?;
-			if active {
-				write!(f, "{}", mark)?;
-			} else {
-				for _ in 0 .. mark.len() {write!(f, " ")?;}
-			}
-		}
-		write!(f, "}}")?;
-		Ok(())
-	}
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ControlWord{{") ?;
+        for (active, mark) in [ (self.switch_on(), "so"),
+                                (self.enable_voltage(), "ev"),
+                                (self.quick_stop(), "qs"),
+                                (self.enable_operation(), "eo"),
+                                (self.trigger(), "t"),
+                                (self.reset_fault(), "rf"),
+                                (self.halt(), "h"),
+                                ] {
+            write!(f, " ")?;
+            if active {
+                write!(f, "{}", mark)?;
+            } else {
+                for _ in 0 .. mark.len() {write!(f, " ")?;}
+            }
+        }
+        write!(f, "}}")?;
+        Ok(())
+    }
 }
 
 
@@ -963,21 +963,21 @@ impl fmt::Display for ControlWord {
 pub enum OperationMode {
     /// actuator power disabled
     #[default]
-	Off = 0,
-	/// PP
-	ProfilePosition = 1,
-	/// VL
-	Velocity = 2,
-	/// PV
-	ProfileVelocity = 3,
-	/// TQ
-	TorqueProfile = 4,
-	/// HM
-	Homing = 6,
-	/// IP
-	InterpolatedPosition = 7,
+    Off = 0,
+    /// PP
+    ProfilePosition = 1,
+    /// VL
+    Velocity = 2,
+    /// PV
+    ProfileVelocity = 3,
+    /// TQ
+    TorqueProfile = 4,
+    /// HM
+    Homing = 6,
+    /// IP
+    InterpolatedPosition = 7,
 
-	/**
+    /**
         CSP (Cyclic Synchronous Position)
 
         If the following error is calculated in the control device it is afflicted with a dead-time. Therefore the calculation of the following error in the drive might have a better quality.
@@ -988,24 +988,24 @@ pub enum OperationMode {
 
         [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented with every update of the output process data. Object [cia402::enabled_sychronization] shall be supported and used to enable or disable the Output Cycle Counter functionality.
     */
-	SynchronousPosition = 8,
-	/**
+    SynchronousPosition = 8,
+    /**
         CSV (Cyclic Synchronous Velocity)
 
         In the csv mode [ControlWord::halt] shall be ignored because the halt function is controlled by the control device.
 
-       [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented
+    [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented
     */
-	SynchronousVelocity = 9,
-	/**
+    SynchronousVelocity = 9,
+    /**
         CST (Cyclic Synchronous Torque)
 
         In the cst mode the Halt bit (bit 8) of the Controlword shall be ignored because the halt function is controlled by the control device.
 
         [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented with every update of the output process data. [cia402::enabled_sychronization] shall be supported and used to enable or disable the Output Cycle Counter functionality.
     */
-	SynchronousTorque = 10,
-	/**
+    SynchronousTorque = 10,
+    /**
         CSTCA (Cyclic Synchronous Torque mode with Commutation Angle)
 
         With this mode, the trajectory generator is located in the control device, not in the drive device. In cyclic synchronous manner, it provides a commutation angle and a target torque to the drive device, which performs current control and space vector modulation. Optionally, an additive torque value can be provided by the control system in order to allow two instances to set up the torque. Measured by sensors, the drive device could provide actual values for position or may provide velocity and torque to the control device.
@@ -1020,7 +1020,7 @@ pub enum OperationMode {
 
         In cstca mode [StatusWord::reached_command] can be used as Status Toggle information to indicate if the device provides updated input data. The bit shall be toggled with every update of the input process data. If object [cia402::supported_sychronization] is supported, [StatusWord::following_error] can be used to extend the Status Toggle information to a 2-Bit Input Cycle Counter. [cia402::enabled_sychronization] shall be supported and used to enable or disable the Input Cycle Counter functionality. [StatusWord::following_command] shall be zero if the drive does not follow the target value (position, velocity or torque) because of local reasons (internal set-point settings), e.g. if a local Input is configured to a halt function or if a safety function prevents the drive in Operational to follow the target set point. The control device shall evaluate the bit. [StatusWord::following_command] shall be set if the drive is in state Operation enabled and follows the target and set-point values of the control device. In all other cases it shall be zero. If the bit is not supported it shall be fix set to 1 in the statusword.
     */
-	SynchronousTorqueCommutation = 11,
+    SynchronousTorqueCommutation = 11,
 }
 data::bilge_pdudata!(OperationMode, u8);
 

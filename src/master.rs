@@ -22,15 +22,15 @@ pub type MixedState = registers::AlMixedState;
 
 
 /**
-	This struct exposes the ethercat master functions addressing the whole ethercat segment.
-	Functions addressing a specific slave are exposed in [Slave]
+    This struct exposes the ethercat master functions addressing the whole ethercat segment.
+    Functions addressing a specific slave are exposed in [Slave]
 
-	## Note
+    ## Note
 
-	At contrary to [RawMaster], this struct is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
-	The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
+    At contrary to [RawMaster], this struct is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
+    The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
 
-	## Example
+    ## Example
 
     The following is the typical initialization sequence of a master
 
@@ -57,30 +57,30 @@ impl Master {
     /**
         initialize an ethercat master on the given socket
     */
-	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {
-		Self {
-			raw: Arc::new(RawMaster::new(socket)),
-			slaves: HashSet::new().into(),
-			allocator: Allocator::new(),
-			clock: None.into(),
-		}
-	}
-	/**
+    pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {
+        Self {
+            raw: Arc::new(RawMaster::new(socket)),
+            slaves: HashSet::new().into(),
+            allocator: Allocator::new(),
+            clock: None.into(),
+        }
+    }
+    /**
         build a safe master from a raw master. This method is marked unsafe because it is not protocl-safe since the RawMaster can still be accessed away of this safe master instance.
-	*/
-	pub unsafe fn raw(raw: Arc<RawMaster>) -> Self {
+    */
+    pub unsafe fn raw(raw: Arc<RawMaster>) -> Self {
         Self {
             raw,
             slaves: HashSet::new().into(),
             allocator: Allocator::new(),
             clock: None.into(),
         }
-	}
+    }
 
     /**
-		return a reference to the low level master control.
+        return a reference to the low level master control.
 
-		This method is marked unsafe since letting the user write registers may break the protocol sequences performed by the protocol implementation. Accessing the low level is communication-unsafe.
+        This method is marked unsafe since letting the user write registers may break the protocol sequences performed by the protocol implementation. Accessing the low level is communication-unsafe.
     */
     pub unsafe fn get_raw(&self) -> &Arc<RawMaster> {&self.raw}
 //     /**
@@ -88,7 +88,7 @@ impl Master {
 //     */
 //     pub fn into_raw(self) -> Arc<RawMaster> {self.raw}
 
-	/**
+    /**
         discover all available slaves present in the ethercat segment, in topological order
 
         slaves already held by a [Slave] instance will be skiped by this iterator
@@ -123,7 +123,7 @@ impl Master {
         ).join().await;
     }
     /**
-        reset all slaves mappings to logical memory
+        reset all slaves mappings to logical memory, and sync managers channels
         
         To call this function is generally a good idea before configuring mappings on slaves, to avoid former mappings to overlap with the new ones.
         
@@ -132,6 +132,7 @@ impl Master {
     pub async fn reset_logical(&self) {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
         self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::fmmu.address)), [0; 256]).await;
+        self.raw.bwr(Field::<[u8; 128]>::simple(usize::from(registers::sync_manager::interface.address)), [0; 128]).await;
     }
     /**
         reset mailbox configurations for all slaves, freeing their reserved memory space.
@@ -179,24 +180,37 @@ impl Master {
         self.raw.brd(registers::al::status).await.answers
     }
 
-	/// retreive a structure representing the state of all slaves in the segment
-	pub async fn states(&self) -> MixedState {
+    /// retreive a structure representing the state of all slaves in the segment
+    pub async fn states(&self) -> MixedState {
         self.raw.brd(registers::al::status).await.value().unwrap().state()
-	}
-	/**
-		send an request for communication state change to all slaves.
+    }
+    /**
+        send an request for communication state change to all slaves.
 
-		the change will be effective on every slave on this function return, however [Slave::expect] will need to be called in order to convert salve instances to their proper state
-	*/
-	pub async fn switch(&self, target: CommunicationState) {
+        the change will be effective on every slave on this function return, however [Slave::expect] will need to be called in order to convert salve instances to their proper state
+    */
+    pub async fn switch(&self, target: CommunicationState) {
         self.raw.bwr(registers::al::control, {
-			let mut config = registers::AlControlRequest::default();
-			config.set_state(target.into());
-			config.set_ack(true);
-			config
-		}).await;
-        // TODO: wait until all slaves switched ?
-	}
+            let mut config = registers::AlControlRequest::default();
+            config.set_state(target.into());
+            config.set_ack(true);
+            config.set_request_id(true);
+            config
+        }).await;
+        
+        // wait for state change, or error
+        loop {
+            let status = self.raw.brd(registers::al::response).await.value;
+            if status.error() 
+                {panic!("error on slaves state change to {:?}  {:?}", target, status.state());}
+//             print!("slaves state {:?}  waiting {:?}     ",
+//                 status.state(),
+//                 target,
+//                 );
+            if status.state() == target.into()  
+                {break}
+        }
+    }
 
 
     /// same as [RawMaster::brd]

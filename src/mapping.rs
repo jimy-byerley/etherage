@@ -237,6 +237,9 @@ pub struct GroupData<'a> {
     write: Vec<u8>,
 }
 impl<'a> Group<'a> {
+    /// the configuration of slaves
+    pub fn config(&self) -> &HashMap<u16, Arc<ConfigSlave>>  {&self.config}
+    /// `true` if this group has a configuration for the given slave
     pub fn contains(&self, slave: u16) -> bool {
         self.config.contains_key(&slave)
     }
@@ -354,6 +357,8 @@ impl<'a> Group<'a> {
     }
 }
 impl<'a> GroupData<'a> {
+    pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
+    
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: add a fallback implementation in case the slave does not support *RW commands

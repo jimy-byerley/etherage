@@ -923,16 +923,17 @@ pub enum SyncDirection {
 pub mod dc {
     use super::*;
 
-    //DC parameter offset
+    // DC parameter offset
     pub const clock: Field<DistributedClock> = Field::simple(0x0900);
-    pub const rcv_time_brw: Field<u32> = Field::simple(0x0900);
-    pub const rcv_system_time: Field<u64> = Field::simple(0x0910);
+    // direct access to DC struct fields
+    pub const received_time: Field<u32> = Field::simple(0x0900);
+    pub const system_time: Field<u64> = Field::simple(0x0910);
     pub const system_time_unit: Field<u64> = Field::simple(0x0918);
-    pub const rcv_time_offset : Field<u64> = Field::simple(0x920);
-    pub const rcv_time_delay : Field<u32> = Field::simple(0x928);
-    pub const rcv_time_diff: Field<TimeDifference> = Field::simple(0x092C);
-    pub const rcv_time_loop_0: Field<u16> = Field::simple(0x0930);
-    pub const rcv_time_loop_2: Field<u16> = Field::simple(0x0934);
+    pub const system_offset: Field<u64> = Field::simple(0x920);
+    pub const system_delay: Field<u32> = Field::simple(0x928);
+    pub const system_difference: Field<TimeDifference> = Field::simple(0x092C);
+    pub const param_0: Field<u16> = Field::simple(0x0930);
+    pub const param_2: Field<u16> = Field::simple(0x0934);
 
     /// ETG.1000.4 table 60
     #[repr(packed)]
