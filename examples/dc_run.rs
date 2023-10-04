@@ -7,6 +7,7 @@ use etherage::{
     SlaveAddress,
     CommunicationState, Master, 
     registers,
+    EthercatResult,
     };
 use ioprio::*;
 use futures_concurrency::future::{Join, Race};
@@ -65,8 +66,8 @@ async fn main() -> EthercatResult {
     // initialize clocks and perform static drift
     master.init_clock().await.expect("clock initialization");
     
-    master.switch(registers::AlState::PreOperational).await;
-    master.switch(registers::AlState::SafeOperational).await;
+    master.switch(registers::AlState::PreOperational).await.unwrap();
+    master.switch(registers::AlState::SafeOperational).await.unwrap();
     
     let clock = master.clock().await;
     let mut interval = tokio::time::interval(Duration::from_millis(2));

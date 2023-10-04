@@ -308,12 +308,12 @@ impl SyncClock {
             //Ignore reference and non active slave
             if slv.address >= self.referent() {
                 // Send offset and delay
-                self.master.fpwr(slv.address, registers::dc::rcv_time_delay, slv.clock.system_delay).await.one()?;
-                self.master.fpwr(slv.address, registers::dc::rcv_time_offset, slv.clock.system_offset).await.one()?;
+                self.master.fpwr(slv.address, registers::dc::system_delay, slv.clock.system_delay).await.one()?;
+                self.master.fpwr(slv.address, registers::dc::system_offset, slv.clock.system_offset).await.one()?;
 
                 // Enable sync unit
-                self.master.fpwr(slv.address, registers::dc::rcv_time_loop_2, slv.clock.control_loop_params[2]).await.one()?;
-                self.master.fpwr(slv.address, registers::dc::rcv_time_loop_0, slv.clock.control_loop_params[0]).await.one()?;
+                self.master.fpwr(slv.address, registers::dc::param_2, slv.clock.control_loop_params[2]).await.one()?;
+                self.master.fpwr(slv.address, registers::dc::param_0, slv.clock.control_loop_params[0]).await.one()?;
             }
             Ok(())
         }).collect::<Vec<_>>().join().await
@@ -379,8 +379,8 @@ impl SyncClock {
                 // survey one slave each iteration
                 // TODO: offer more survey options
                 let (writting, time_diff, _) = (
-                    self.master.bwr(registers::dc::rcv_system_time, dt),
-                    self.master.fprd(self.slaves[watched].address, registers::dc::rcv_time_diff),
+                    self.master.bwr(registers::dc::system_time, dt),
+                    self.master.fprd(self.slaves[watched].address, registers::dc::system_difference),
 //                     self.master.brd(registers::dls_user::r3),
                     // send something just to have a flushing pdu sending
                     self.master.pdu(PduCommand::BRD, SlaveAddress::Broadcast, registers::dl::status.byte as u32, &mut [0u8; 2], true),
