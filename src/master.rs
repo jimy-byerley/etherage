@@ -123,7 +123,7 @@ impl Master {
         ).join().await;
     }
     /**
-        reset all slaves mappings to logical memory
+        reset all slaves mappings to logical memory, and sync managers channels
         
         To call this function is generally a good idea before configuring mappings on slaves, to avoid former mappings to overlap with the new ones.
         
@@ -132,6 +132,7 @@ impl Master {
     pub async fn reset_logical(&self) {
         assert_eq!(self.slaves.lock().unwrap().len(), 0);
         self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::fmmu.address)), [0; 256]).await;
+        self.raw.bwr(Field::<[u8; 128]>::simple(usize::from(registers::sync_manager::interface.address)), [0; 128]).await;
     }
     /**
         reset mailbox configurations for all slaves, freeing their reserved memory space.
@@ -193,9 +194,22 @@ impl Master {
             let mut config = registers::AlControlRequest::default();
             config.set_state(target.into());
             config.set_ack(true);
+            config.set_request_id(true);
             config
         }).await;
-        // TODO: wait until all slaves switched ?
+        
+        // wait for state change, or error
+        loop {
+            let status = self.raw.brd(registers::al::response).await.value;
+            if status.error() 
+                {panic!("error on slaves state change to {:?}  {:?}", target, status.state());}
+//             print!("slaves state {:?}  waiting {:?}     ",
+//                 status.state(),
+//                 target,
+//                 );
+            if status.state() == target.into()  
+                {break}
+        }
     }
 
 
