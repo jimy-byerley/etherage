@@ -29,7 +29,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // sequencial version
     let mut iter = master.discover().await;
     while let Some(mut slave) = iter.next().await {
-        println!("slave {:?}", slave.address());
         let SlaveAddress::AutoIncremented(i) = slave.address()
             else {panic!("slave already has a fixed address")};
         

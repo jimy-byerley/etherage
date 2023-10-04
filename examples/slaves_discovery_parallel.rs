@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pool.push(async move {
             let SlaveAddress::AutoIncremented(i) = slave.address()
                 else {panic!("slave already has a fixed address")};
+            
             let task = async {
                 slave.switch(CommunicationState::Init).await?;
                 slave.set_address(i+1).await?;

@@ -39,6 +39,7 @@ pub enum EthercatError<T=()> {
     Timeout(&'static str),
 }
 
+/// convenient alias to simplify return annotations
 pub type EthercatResult<T=(), E=()> = core::result::Result<T, EthercatError<E>>;
 
 
