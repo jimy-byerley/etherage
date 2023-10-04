@@ -43,6 +43,7 @@
 */
 
 use crate::{
+    data::PduData,
     registers::{self, AlState},
     sdo::{self, SyncMangerFull},
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
@@ -50,7 +51,7 @@ use crate::{
     };
 use std::{
     collections::HashMap,
-    time::{Instant, Duration},
+    time::{SystemTime, Instant, Duration},
     sync::Arc,
     };
 use core::sync::atomic::{
@@ -86,8 +87,10 @@ const DC_CONTROL_LOOP_2_ADJUST:  u16 = u16::from_le_bytes([0x00u8, 0x0cu8]);
 pub struct SyncClock {
     // Raw master reference
     master: Arc<RawMaster>,
-    /// start instant used as master's clock
+    /// start instant used as master's clock, it serves as monotonic clock for all offset computations to guarantee the synchronization success
     start: Instant,
+    /// system clock when the clock has been initialized, it serves as reference to return an offset between slaves clock and system clock. If the system clock has not been monotonic all the time since the initialization of this instance, any offset from slave to master will not mean anything to the user
+    epoch: SystemTime,
     /// flag stopping synchronization execution
     stopped: AtomicBool,
 
@@ -138,6 +141,7 @@ impl SyncClock {
         let mut new = Self {
             master,
             start: Instant::now(),
+            epoch: SystemTime::now(),
             stopped: AtomicBool::new(false),
             offset: 0,
             delay: 0,
@@ -212,7 +216,7 @@ impl SyncClock {
     async fn init(&mut self) -> Result<(), EthercatError> {
         // Check number of slave declared
         let local_time = self.local_time();
-        if self.master.brw(registers::dc::rcv_time_brw, 0).await.answers == 0
+        if self.master.brw(registers::dc::received_time, 0).await.answers == 0
             {return Err(EthercatError::Master("DC initialisation - No slave found"))}
 
         // no reset is done since it is the responsibility of the caller
@@ -220,8 +224,8 @@ impl SyncClock {
 
         // ETG.1020 - 22.2.4 Master Control loop - Initialize loop parameter for all DC node
         // these hardcoded constants are from the specs
-        self.master.bwr(registers::dc::rcv_time_loop_2, DC_CONTROL_LOOP_2_STARTUP).await;
-        self.master.bwr(registers::dc::rcv_time_loop_0, DC_CONTROL_LOOP_0_RESET).await;
+        self.master.bwr(registers::dc::param_2, DC_CONTROL_LOOP_2_STARTUP).await;
+        self.master.bwr(registers::dc::param_0, DC_CONTROL_LOOP_0_RESET).await;
         for slv in self.slaves.iter_mut() {
             slv.clock.control_loop_params[0] = DC_CONTROL_LOOP_0_RESET;
             slv.clock.control_loop_params[2] = DC_CONTROL_LOOP_2_STARTUP;
@@ -290,21 +294,25 @@ impl SyncClock {
             //Ignore reference and non active slave
             if slv.address >= self.referent() {
                 // Send offset and delay
-                self.master.fpwr(slv.address, registers::dc::rcv_time_delay, slv.clock.system_delay).await.one();
-                self.master.fpwr(slv.address, registers::dc::rcv_time_offset, slv.clock.system_offset).await.one();
+                self.master.fpwr(slv.address, registers::dc::system_delay, slv.clock.system_delay).await.one();
+                self.master.fpwr(slv.address, registers::dc::system_offset, slv.clock.system_offset).await.one();
 
                 // Enable sync unit
-                self.master.fpwr(slv.address, registers::dc::rcv_time_loop_2, slv.clock.control_loop_params[2]).await.one();
-                self.master.fpwr(slv.address, registers::dc::rcv_time_loop_0, slv.clock.control_loop_params[0]).await.one();
+                self.master.fpwr(slv.address, registers::dc::param_2, slv.clock.control_loop_params[2]).await.one();
+                self.master.fpwr(slv.address, registers::dc::param_0, slv.clock.control_loop_params[0]).await.one();
             }
         }).collect::<Vec<_>>().join().await;
 
         // Static drif correction
         println!("static drift");
         for _ in 0..self.drift_frm_count {
-            let p = self.master.bwr(registers::dc::rcv_system_time, self.global_time());
-            self.master.flush();
-            p.await;
+            self.master.pdu(
+                PduCommand::BWR, 
+                SlaveAddress::Broadcast, 
+                registers::dc::system_time.byte as u32, 
+                &mut self.global_time().packed().unwrap(), 
+                true,
+                ).await; 
         }
 
         println!("initialized");
@@ -354,10 +362,10 @@ impl SyncClock {
                 // Send data in the same frame
                 // survey one slave each iteration
                 // TODO: offer more survey options
-                let (_, time_diff, _, _) = (
-                    self.master.bwr(registers::dc::rcv_system_time, dt),
-                    self.master.fprd(self.slaves[watched].address, registers::dc::rcv_time_diff),
-                    self.master.brd(registers::dls_user::r3),
+                let (_, time_diff, _) = (
+                    self.master.bwr(registers::dc::system_time, dt),
+                    self.master.fprd(self.slaves[watched].address, registers::dc::system_difference),
+//                     self.master.brd(registers::dls_user::r3),
                     // send something just to have a flushing pdu sending
                     self.master.pdu(PduCommand::BRD, SlaveAddress::Broadcast, registers::dl::status.byte as u32, &mut [0u8; 2], true),
                 ).join().await;
@@ -367,17 +375,19 @@ impl SyncClock {
                     (&mut *(&self.slaves[watched] as *const _ as *mut SlaveInfo)).clock.system_difference = time_diff;
                 });
 
-                // only here for debug
-//                 self.survey_time_sync();
-
                 watched += 1;
                 watched %= self.slaves.len();
             }
 
             // TODO: Notify main thread that cycle occured ?
-            self.master.flush();
         }
         Ok(())
+    }
+    
+    /// resynchronize the master offset with the computer system time
+    pub fn sync_system(&mut self) {
+        self.start = Instant::now();
+        self.epoch = SystemTime::now();
     }
 
     /// stop execution of [Self::sync]
@@ -389,14 +399,22 @@ impl SyncClock {
     pub fn status(&self) -> ClockStatus {self.status}
 
     /// return the slave address of the slave used as reference clock. This slave is called referent, or reference slave.
-    pub fn referent(&self) -> u16  {self.slaves.first().unwrap().address}
+    pub fn referent(&self) -> u16  {
+        self.slaves.first().unwrap().address
+    }
     /// return the current time on the reference clock
-    pub fn reference(&self) -> Instant  {
-        Instant::now() + Duration::from_nanos(u64::from(self.slaves.first().unwrap().clock.system_delay))
+    pub fn reference(&self) -> SystemTime  {
+        self.epoch + self.start.elapsed() + Duration::from_nanos(u64::from(self.slaves.first().unwrap().clock.system_delay))
     }
 
     /// time offset between the master (the computer's system clock, aka local time) and the reference clock
-    pub fn offset_master(&self) -> i128   {self.offset}
+    pub fn offset_master(&self) -> i128   {
+        self.offset 
+        + i128::try_from(
+            self.epoch.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap().as_nanos()
+            ).unwrap()
+    }
     /// time offset between the given slave clock and the reference clock
     pub fn offset_slave(&self, slave: u16) -> i128   {
         i32::from_ne_bytes(
@@ -407,9 +425,7 @@ impl SyncClock {
     }
     /// return the transmission delay from the master to the given slave
     pub fn delay(&self, slave: u16) -> i128  {
-        self.slaves[self.index[&slave]]
-            .clock.system_delay
-            .into()
+        todo!()
     }
     /**
         return the current synchronization error (time gap) between the reference clock and the given slave clock.

@@ -94,7 +94,7 @@ struct PduStorage {
 impl RawMaster {
 	pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {
         Self {
-            pdu_merge_time: std::time::Duration::from_micros(100), // microseconds
+            pdu_merge_time: std::time::Duration::from_micros(100),
 
             socket: Box::new(socket),
             received: Notify::new(),
@@ -376,7 +376,7 @@ impl RawMaster {
 
             let token = usize::from(header.token());
             assert!(token <= state.receive.len());
-            if let Some(mut storage) = state.receive[token].as_mut() {
+            if let Some(storage) = state.receive[token].as_mut() {
                 let content = frame.read(usize::from(u16::from(header.len()))).unwrap();
 
                 // copy the PDU content in the reception buffer
