@@ -7,6 +7,7 @@ use crate::{
 	clock::SyncClock,
 	registers, EthercatError,
 	error::EthercatResult,
+    registers::AlError,
 	};
 use std::{
     collections::HashSet,
@@ -190,7 +191,7 @@ impl Master {
 
         the change will be effective on every slave on this function return, however [Slave::expect] will need to be called in order to convert salve instances to their proper state
     */
-    pub async fn switch(&self, target: CommunicationState) -> EthercatResult {
+    pub async fn switch(&self, target: CommunicationState) -> EthercatResult<(), AlError> {
         self.raw.bwr(registers::al::control, {
             let mut config = registers::AlControlRequest::default();
             config.set_state(target.into());
@@ -201,14 +202,20 @@ impl Master {
         
         // wait for state change, or error
         loop {
-            let status = self.raw.brd(registers::al::response).await.value().unwrap();
-            if status.error() 
-				{return Err(EthercatError::Slave(()))}
+            let status = self.raw.brd(registers::al::response).await;
+            if status.value().unwrap().error() {
+// 				{return Err(EthercatError::Slave(()))}
+                for slave in 0 .. status.answers {
+                    let error = self.raw.aprd(slave, registers::al::error).await.one()?;
+                    if error != AlError::NoError
+                        {return Err(EthercatError::Slave(error))}
+                }
+            }
 //             print!("slaves state {:?}  waiting {:?}     ",
 //                 status.state(),
 //                 target,
 //                 );
-            if status.state() == target.into()  
+            if status.value().unwrap().state() == target.into()  
                 {break}
         }
         Ok(())

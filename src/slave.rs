@@ -137,8 +137,8 @@ impl<'a> Slave<'a> {
             let status = self.master.read(self.address, registers::al::response).await.one()?;
             if status.error() {
                 let error = self.master.read(self.address, registers::al::error).await.one()?;
-                if error == registers::AlError::NoError  {break}
-				return Err(EthercatError::Slave(error));
+                if error != registers::AlError::NoError
+                    {return Err(EthercatError::Slave(error))}
             }
 //             print!("slave {:?} state {:?}  waiting {:?}     \r",
 //                 self.address,
