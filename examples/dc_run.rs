@@ -1,20 +1,20 @@
 use std::{
     sync::Arc,
     time::Duration,
+    error::Error,
     };
 use etherage::{
     EthernetSocket,
     SlaveAddress,
     CommunicationState, Master, 
     registers,
-    EthercatResult,
     };
 use ioprio::*;
 use futures_concurrency::future::{Join, Race};
 
 
 #[tokio::main]
-async fn main() -> EthercatResult {
+async fn main() -> Result<(), Box<dyn Error>> {
     // RT this_thread
     thread_priority::set_current_thread_priority(thread_priority::ThreadPriority::Max).unwrap();
 
@@ -46,7 +46,13 @@ async fn main() -> EthercatResult {
             thread_priority::ThreadSchedulePolicy::Realtime(thread_priority::RealtimeThreadSchedulePolicy::Fifo),
             ).unwrap();
     };
-    master.reset_addresses().await;
+    master.switch(CommunicationState::Init).await.unwrap();
+    (
+        master.reset_addresses(),
+        master.reset_clock(),
+        master.reset_logical(),
+        unsafe {master.get_raw()}.bwr(etherage::registers::ports_errors, etherage::registers::PortsErrorCount::default()),
+    ).join().await;
 
     let mut tasks = Vec::new();
     let mut iter = master.discover().await;
@@ -54,20 +60,19 @@ async fn main() -> EthercatResult {
         tasks.push(async move {
             let SlaveAddress::AutoIncremented(i) = s.address()
                 else { panic!("slave already has a fixed address") };
-            s.switch(CommunicationState::Init).await.unwrap();
             s.set_address(i+1).await.unwrap();
             s.init_mailbox().await.unwrap();
-            s.init_coe().await;
+//             s.init_coe().await;
             i+1
         });
     }
     let slaves = tasks.join().await;
     
     // initialize clocks and perform static drift
-    master.init_clock().await.expect("clock initialization");
+    master.init_clock().await?;
     
-    master.switch(registers::AlState::PreOperational).await.unwrap();
-    master.switch(registers::AlState::SafeOperational).await.unwrap();
+    master.switch(CommunicationState::PreOperational).await.unwrap();
+    master.switch(CommunicationState::SafeOperational).await.unwrap();
     
     let clock = master.clock().await;
     let mut interval = tokio::time::interval(Duration::from_millis(2));
@@ -88,7 +93,7 @@ async fn main() -> EthercatResult {
             interval2.tick().await;
             master.logical_exchange(etherage::Field::simple(0), [0u8; 64]).await;
         }},
-    ).race().await.expect("operation");
+    ).race().await?;
 
     Ok(())
 }

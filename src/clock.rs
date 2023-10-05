@@ -348,14 +348,14 @@ impl SyncClock {
 
         // Start sync - Wait that all slave obtains the frame
         let t = self.global_time() + start_time.as_nanos() as u64;
-        self.slaves.iter().map(|slv| async {
-            self.master.fpwr(slv.address, registers::isochronous::slave_sync, slv.isochronous.sync).await;
-            self.master.fpwr(slv.address, registers::isochronous::slave_start_time, t as u32).await;
-            self.master.fpwr(slv.address, registers::isochronous::slave_sync_time_0, slv.isochronous.sync_0_cycle_time).await;
-            self.master.fpwr(slv.address, registers::isochronous::slave_sync_time_1, slv.isochronous.sync_1_cycle_time).await;
-            self.master.fpwr(slv.address, registers::isochronous::slave_latch_edge_0, slv.isochronous.latch_0_edge).await;
-            self.master.fpwr(slv.address, registers::isochronous::slave_latch_edge_1, slv.isochronous.latch_1_edge).await;
-        }).collect::<Vec<_>>().join().await;
+//         self.slaves.iter().map(|slv| async {
+//             self.master.fpwr(slv.address, registers::isochronous::slave_sync, slv.isochronous.sync).await;
+//             self.master.fpwr(slv.address, registers::isochronous::slave_start_time, t as u32).await;
+//             self.master.fpwr(slv.address, registers::isochronous::slave_sync_time_0, slv.isochronous.sync_0_cycle_time).await;
+//             self.master.fpwr(slv.address, registers::isochronous::slave_sync_time_1, slv.isochronous.sync_1_cycle_time).await;
+//             self.master.fpwr(slv.address, registers::isochronous::slave_latch_edge_0, slv.isochronous.latch_0_edge).await;
+//             self.master.fpwr(slv.address, registers::isochronous::slave_latch_edge_1, slv.isochronous.latch_1_edge).await;
+//         }).collect::<Vec<_>>().join().await;
 
         thread_priority::set_current_thread_priority(ThreadPriority::Max).unwrap();
 
@@ -386,7 +386,7 @@ impl SyncClock {
                     self.master.pdu(PduCommand::BRD, SlaveAddress::Broadcast, registers::dl::status.byte as u32, &mut [0u8; 2], true),
                 ).join().await;
 
-                writting.one()?;
+                writting.exact(self.slaves.len() as _)?;
                 let time_diff = time_diff.one()?;
                 self.store_updating(|| unsafe {
                     (&mut *(&self.slaves[watched] as *const _ as *mut SlaveInfo)).clock.system_difference = time_diff;

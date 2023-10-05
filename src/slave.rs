@@ -88,11 +88,11 @@ impl<'a> Slave<'a> {
         build a slave from a `Master`. exclusive acces to the addressed slave is ensured by `Master`, and the use of this struct will be protocl-safe.
     */
     pub async fn new(master: &'a Master, address: SlaveAddress) -> EthercatResult<Slave<'a>> {
+        let fixed = SlaveAddress::Fixed(master.raw.read(address, registers::address::fixed).await.one()?);
         let mut book = master.slaves.lock().unwrap();
+        
         if book.contains(&address)
-        || book.contains(&SlaveAddress::Fixed(
-                master.raw.read(address, registers::address::fixed).await.one()?
-                ))
+        || book.contains(&fixed)
             {Err(EthercatError::Master("slave already in use by an other instance"))}
         else {
             book.insert(address);
