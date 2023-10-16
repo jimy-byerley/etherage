@@ -359,17 +359,24 @@ impl SyncClock {
 
         thread_priority::set_current_thread_priority(ThreadPriority::Max).unwrap();
 
-        let mut interval = tokio::time::interval(Duration::from_nanos(self.cycle_time));
+//         let mut interval = tokio::time::interval(Duration::from_nanos(self.cycle_time));
+//         use tokio::time::MissedTickBehavior;
+//         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+        use futures::stream::StreamExt;
+        let mut interval = tokio_timerfd::Interval::new_interval(Duration::from_nanos(self.cycle_time)).unwrap();
+
         let mut watched = 0;
 
         // Wait the DC synchro start
         // TODO: see if this is necessary
         while self.global_time() < t {std::thread::yield_now()}
 
-        interval.reset();
+//         interval.reset();
         while ! self.stopped.load(Relaxed) {
             // Wait tick
-            interval.tick().await;
+//             interval.tick().await;
+                interval.next().await.unwrap().unwrap();
 
             // Continuous drift correction and survey
             if self.dc_correction_typ == DCCorrectionType::Continuous {
