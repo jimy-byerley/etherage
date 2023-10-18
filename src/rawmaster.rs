@@ -5,12 +5,18 @@
 */
 
 use std::sync::{Mutex, Condvar};
+use std::os::fd::AsRawFd;
+use std::time::Instant;
+use tokio::io::unix::AsyncFd;
 use core::{
     ops::DerefMut,
     time::Duration,
     };
 use tokio::sync::Notify;
+use tokio_timerfd::Delay;
 use bilge::prelude::*;
+use futures_concurrency::future::{Join, Race};
+use core::future::poll_fn;
 
 use crate::{
     error::{EthercatError, EthercatResult},
@@ -28,6 +34,8 @@ const MAX_ETHERCAT_FRAME: usize = 1500;
 const MIN_PDU: usize = 60;
 /// maximum number of PDU in an ethercat frame
 const MAX_ETHERCAT_PDU: usize = MAX_ETHERCAT_FRAME / MIN_PDU;
+
+// trait EthercatSocket: crate::socket::EthercatSocket + AsRawFd {}
 
 /**
     low level ethercat communication functions, with no notion of slave.
@@ -65,7 +73,7 @@ pub struct RawMaster {
     socket: Box<dyn EthercatSocket + Send + Sync>,
     // synchronization signal for multitask reception
     received: Notify,
-    sendable: Condvar,
+    sendable: Notify,
     sent: Notify,
 
     // communication state
@@ -99,7 +107,7 @@ impl RawMaster {
 
             socket: Box::new(socket),
             received: Notify::new(),
-            sendable: Condvar::new(),
+            sendable: Notify::new(),
             sent: Notify::new(),
 
             pdu_state: Mutex::new(PduState {
@@ -330,6 +338,7 @@ impl RawMaster {
                     // clean up the receive table at function end, or in case the async runtime cancels this task
                     _finisher = Finisher::new(|| {
                         let mut state = self.pdu_state.lock().unwrap();
+                        // free the token
                         state.receive[token] = None;
                         state.free.push(token).unwrap();
                         
@@ -350,7 +359,6 @@ impl RawMaster {
         }
         
         {
-            // free the token
             let state = self.pdu_state.lock().unwrap();
             state.receive[token].as_ref().unwrap().answers
         }
@@ -407,60 +415,91 @@ impl RawMaster {
         
         In case something goes wrong during PDUs unpacking, the PDUs successfully processed will be reported to their pending futures, the futures for PDU which caused the read to fail and all following PDUs in the frame will be left pending (since the data is corrupted, there is no way to determine which future should be aborted)
     */
-    pub fn receive(&self) -> EthercatResult {
-        let mut receive = self.ethercat_receive.lock().unwrap();
-        let size = self.socket.receive(receive.deref_mut())?;
-        let mut frame = Cursor::new(&receive[.. size]);
-        
-        let header = frame.unpack::<EthercatHeader>()?;
-        if frame.remain().len() < header.len().value() as usize
-            {return Err(EthercatError::Protocol("received frame header has inconsistent length"))}
-        let content = &frame.remain()[.. header.len().value() as usize];
-        
-        assert!(header.len().value() as usize <= content.len());
-        // TODO check working count to detect possible refused requests
-        match header.ty() {
-            EthercatType::PDU => self.pdu_receive(
-                                    self.pdu_state.lock().unwrap().deref_mut(),
-                                    content,
-                                    )?,
-            // what is this ?
-            EthercatType::NetworkVariable => todo!(),
-            // no mailbox frame shall transit to this master, ignore it or raise an error ?
-            EthercatType::Mailbox => {},
+    pub async fn receive(&self) -> EthercatResult {
+        loop {
+            let mut receive = self.ethercat_receive.lock().unwrap();
+            let size = poll_fn(|cx| 
+                self.socket.poll_receive(cx, receive.deref_mut())
+                ).await?;
+            let mut frame = Cursor::new(&receive[.. size]);
+            
+            let header = frame.unpack::<EthercatHeader>()?;
+            if frame.remain().len() < header.len().value() as usize
+                {return Err(EthercatError::Protocol("received frame header has inconsistent length"))}
+            let content = &frame.remain()[.. header.len().value() as usize];
+            
+            assert!(header.len().value() as usize <= content.len());
+            match header.ty() {
+                EthercatType::PDU => self.pdu_receive(
+                                        self.pdu_state.lock().unwrap().deref_mut(),
+                                        content,
+                                        )?,
+                // what is this ?
+                EthercatType::NetworkVariable => todo!(),
+                // no mailbox frame shall transit to this master, ignore it or raise an error ?
+                EthercatType::Mailbox => {},
+            }
         }
-        Ok(())
     }
     /// this is the socket sending handler
-    pub fn send(&self) -> EthercatResult {
-        let mut state = self.pdu_state.lock().unwrap();
-        // wait indefinitely if no data to send
-        while state.last_end == 0
-            {state = self.sendable.wait(state).unwrap();}
-        // wait for more data until a timeout once data is present
-        if ! state.ready
-            {state = self.sendable.wait_timeout_while(
-                    state,
-                    self.pdu_merge_time,
-                    |state| ! state.ready,
-                    ).unwrap().0;}
+    pub async fn send(&self) -> EthercatResult {
+        let mut delay = Delay::new(Instant::now())?;
+        loop {
+            let mut delay = &mut delay;
+            
+            // wait indefinitely if no data to send
+            let mut state = loop {
+                self.sendable.notified().await;
+                let state = self.pdu_state.lock().unwrap();
+                if state.last_end != 0  {break state}
+            };
+            
+            if ! state.ready {
+                drop(state);
+                delay.reset(Instant::now() + self.pdu_merge_time);
+                // wait for more data until a timeout once data is present
+                state = (
+                    // timeout for sending the batch
+                    async {
+                        delay.await.unwrap();
+                        /// TODO: handle the possible ioerror in the delay
+                        self.pdu_state.lock().unwrap()
+                    },
+                    // wait for more data in the batch
+                    async { loop {
+                        self.sendable.notified().await;
+                        let state = self.pdu_state.lock().unwrap();
+                        if state.ready  {break state}
+                    }},
+                ).race().await;
+            }
+            
+            // check header
+            EthercatHeader::new(
+                u11::new((state.last_end - EthercatHeader::packed_size()) as u16),
+                EthercatType::PDU,
+                ).pack(&mut state.send).unwrap();
 
-        // check header
-        EthercatHeader::new(
-            u11::new((state.last_end - EthercatHeader::packed_size()) as u16),
-            EthercatType::PDU,
-            ).pack(&mut state.send).unwrap();
-
-        // send
-        // we are blocking the async machine until the send ends
-        // we assume it is not a long operation to copy those data into the system buffer
-        self.socket.send(&state.send[.. state.last_end])?;
-        // reset state
-        state.ready = false;
-        state.last_end = 0;
-        state.last_start = EthercatHeader::packed_size();
-        self.sent.notify_waiters();
-        Ok(())
+            let send = unsafe {std::slice::from_raw_parts_mut(
+                            state.send.as_mut_ptr(), 
+                            state.last_end,
+                            )};
+            drop(state);
+            // send
+            // we are blocking the async machine until the send ends
+            // we assume it is not a long operation to copy those data into the system buffer
+            poll_fn(|cx|
+                self.socket.poll_send(cx, &send)
+                ).await?;
+            
+            let mut state = self.pdu_state.lock().unwrap();
+            // reset state
+            state.ready = false;
+            state.last_end = 0;
+            state.last_start = EthercatHeader::packed_size();
+            drop(state);
+            self.sent.notify_waiters();
+        }
     }
 }
 

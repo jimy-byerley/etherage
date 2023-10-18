@@ -1,5 +1,6 @@
 use std::io;
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use std::os::fd::{AsRawFd, RawFd};
 use super::EthercatSocket;
 
 /**
@@ -54,5 +55,11 @@ impl EthercatSocket for UdpSocket {
         1500 // max ethernet payload in 802.3 is 1500 bytes
         - 20 // IP header
         - 8 // UDP header
+    }
+}
+
+impl AsRawFd for UdpSocket {
+    fn as_raw_fd(&self) -> RawFd {
+        self.socket.as_raw_fd()
     }
 }

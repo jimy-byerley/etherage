@@ -12,11 +12,13 @@
     | [UdpSocket] | 2^32                                    | 2^32                                       | depend on trafic | all                                      |
 */
 
-mod udp;
+// mod udp;
 mod ethernet;
 
-pub use udp::UdpSocket;
+// pub use udp::UdpSocket;
 pub use ethernet::EthernetSocket;
+use core::future::Future;
+use core::task::{Poll, Context};
 
 use std::io;
 
@@ -33,7 +35,8 @@ pub trait EthercatSocket {
     
         The implementor is responsible from assembling the whole packet, and hiding the details of socket-specific headers, footers, checks, fragmentation ...
     */
-    fn receive(&self, data: &mut [u8]) -> io::Result<usize>;
+    fn poll_receive(&self, cx: &mut Context<'_>, data: &mut [u8]) -> Poll<io::Result<usize>>;
+    
     /** 
         send an ethercat frame contained in the given buffer.
         
@@ -42,7 +45,8 @@ pub trait EthercatSocket {
         the buffer passed must contain the data with the ethercat header. 
         The implentor of this trait is responsible of encapsulating the data into the specific socket by adding the necessary specific headers, footers, checks, fragmentation ...
     */
-    fn send(&self, data: &[u8]) -> io::Result<()>;
+    fn poll_send(&self, cx: &mut Context<'_>, data: &[u8]) -> Poll<io::Result<()>>;
+    
     /// maximum frame size tolerated for sending by this socket
     fn max_frame(&self) -> usize;
 }

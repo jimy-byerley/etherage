@@ -140,11 +140,6 @@ impl<'a> Slave<'a> {
                 if error != registers::AlError::NoError
                     {return Err(EthercatError::Slave(error))}
             }
-//             print!("slave {:?} state {:?}  waiting {:?}     \r",
-//                 self.address,
-//                 CommunicationState::try_from(status.state()).unwrap(),
-//                 target,
-//                 );
             if status.state() == target.into()  {break}
         }
         self.state = target;

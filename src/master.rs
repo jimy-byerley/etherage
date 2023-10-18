@@ -204,17 +204,12 @@ impl Master {
         loop {
             let status = self.raw.brd(registers::al::response).await;
             if status.value().unwrap().error() {
-// 				{return Err(EthercatError::Slave(()))}
                 for slave in 0 .. status.answers {
                     let error = self.raw.aprd(slave, registers::al::error).await.one()?;
                     if error != AlError::NoError
                         {return Err(EthercatError::Slave(error))}
                 }
             }
-//             print!("slaves state {:?}  waiting {:?}     ",
-//                 status.state(),
-//                 target,
-//                 );
             if status.value().unwrap().state() == target.into()  
                 {break}
         }
