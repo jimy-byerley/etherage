@@ -61,7 +61,7 @@ impl Master {
     */
     pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {
         Self {
-            raw: Arc::new(RawMaster::new(socket)),
+            raw: RawMaster::new(socket),
             slaves: HashSet::new().into(),
             allocator: Allocator::new(),
             clock: None.into(),

@@ -12,17 +12,7 @@ use bilge::prelude::u2;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let master = Arc::new(Master::new(EthernetSocket::new("eno1")?));
-    {
-        let master = master.clone();
-        std::thread::spawn(move || loop {
-            unsafe {master.get_raw()}.receive().unwrap();
-    })};
-    {
-        let master = master.clone();
-        std::thread::spawn(move || loop {
-            unsafe {master.get_raw()}.send().unwrap();
-    })};
+    let master = Master::new(EthernetSocket::new("eno1")?);
     
     master.reset_addresses().await;
 

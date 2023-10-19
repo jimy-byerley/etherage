@@ -12,10 +12,10 @@
     | [UdpSocket] | 2^32                                    | 2^32                                       | depend on trafic | all                                      |
 */
 
-// mod udp;
+mod udp;
 mod ethernet;
 
-// pub use udp::UdpSocket;
+pub use udp::UdpSocket;
 pub use ethernet::EthernetSocket;
 use core::future::Future;
 use core::task::{Poll, Context};

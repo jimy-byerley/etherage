@@ -15,17 +15,7 @@ use etherage::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let master = Arc::new(RawMaster::new(EthernetSocket::new("eno1")?));
-    {
-        let master = master.clone();
-        std::thread::spawn(move || loop {
-            master.receive().unwrap();
-    })};
-    {
-        let master = master.clone();
-        std::thread::spawn(move || loop {
-            master.send().unwrap();
-    })};
+    let master = RawMaster::new(EthernetSocket::new("eno1")?);
     
     println!("create mapping");
     let config = mapping::Config::default();
