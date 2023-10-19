@@ -5,8 +5,7 @@
 */
 
 use std::{
-    sync::{Arc, Mutex, Condvar},
-    os::fd::AsRawFd,
+    sync::{Arc, Mutex},
     time::Instant,
     };
 use core::{
@@ -14,13 +13,12 @@ use core::{
     time::Duration,
     };
 use tokio::{
-    io::unix::AsyncFd,
     task::JoinHandle,
     sync::Notify,
     };
 use tokio_timerfd::{Delay, Interval};
 use bilge::prelude::*;
-use futures_concurrency::future::{Join, Race};
+use futures_concurrency::future::Race;
 use futures::StreamExt;
 use core::future::poll_fn;
 
@@ -87,7 +85,6 @@ pub struct RawMaster {
     // they should not be held for too long (and never during blocking operations) so they shouldn't disturb the async runtime too much
 
     pdu_state: Mutex<PduState>,
-    ethercat_receive: Mutex<[u8; MAX_ETHERCAT_FRAME]>,
     task: Mutex<Option<JoinHandle<()>>>,
 }
 struct PduState {
@@ -110,7 +107,7 @@ struct PduStorage {
 }
 impl RawMaster {
     pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Arc<Self> {
-        let mut master = Arc::new(Self {
+        let master = Arc::new(Self {
             pdu_merge_time: std::time::Duration::from_micros(100),
 
             socket: Box::new(socket),
@@ -126,7 +123,6 @@ impl RawMaster {
                 receive: [0; 2*MAX_ETHERCAT_PDU].map(|_| None),
                 free: (0 .. 2*MAX_ETHERCAT_PDU).collect(),
                 }),
-            ethercat_receive: Mutex::new([0; MAX_ETHERCAT_FRAME]),
             task: Mutex::new(None),
         });
         master.task.lock().unwrap().replace(tokio::task::spawn({
@@ -466,10 +462,10 @@ impl RawMaster {
     async fn task_send(&self) -> EthercatResult {
         let mut delay = Delay::new(Instant::now())?;
         loop {
-            let mut delay = &mut delay;
+            let delay = &mut delay;
             
             // wait indefinitely if no data to send
-            let mut ready = loop {
+            let ready = loop {
                 self.sendable.notified().await;
                 let state = self.pdu_state.lock().unwrap();
                 if state.last_end != 0  {break state.ready}
@@ -486,7 +482,7 @@ impl RawMaster {
                         // timeout for sending the batch
                         async {
                             delay.await.unwrap();
-                            /// TODO: handle the possible ioerror in the delay
+                            // TODO: handle the possible ioerror in the delay
                             let mut state = self.pdu_state.lock().unwrap();
                             state.ready = true;
                             state

@@ -17,7 +17,6 @@ mod ethernet;
 
 pub use udp::UdpSocket;
 pub use ethernet::EthernetSocket;
-use core::future::Future;
 use core::task::{Poll, Context};
 
 use std::io;

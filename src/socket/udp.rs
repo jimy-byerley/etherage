@@ -1,4 +1,4 @@
-use std::io::{self, Result, Error};
+use std::io::Result;
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use std::os::fd::{AsRawFd, RawFd};
 use core::task::{Poll, Context};
