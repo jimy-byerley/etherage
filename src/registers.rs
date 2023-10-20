@@ -125,7 +125,7 @@ pub mod al {
     pub const sync_config: Field<AlSyncConfig> = Field::simple(dls_user::r8.byte);
 }
 
-
+/// registers controlling the distributed clock
 pub mod dc {
     use super::*;
 
@@ -141,25 +141,6 @@ pub mod dc {
     pub const param_0: Field<u16> = Field::simple(0x0930);
     pub const param_2: Field<u16> = Field::simple(0x0934);
 }
-
-// pub mod isochronous {
-//     use super::*;
-// 
-//     //Iso chronous PDI offset
-//     pub const slave_cfg : Field<Isochronous> = Field::simple(0x980);
-//     pub const slave_sync : Field<IsochronousSync> = Field::simple(0x981);
-//     pub const slave_pulse : Field<u16> = Field::simple(0x983);
-//     pub const slave_interrupt : Field<IsochronousInterrupt> = Field::simple(0x98E);
-//     pub const slave_start_time : Field<u32> = Field::simple(0x990);
-//     pub const slave_sync_time_0 : Field<u32> = Field::simple(0x9A0);
-//     pub const slave_sync_time_1 : Field<u32> = Field::simple(0x9A0);
-//     pub const slave_latch_edge_0 : Field<IsochronousLatchEdge> = Field::simple(0x9A8);
-//     pub const slave_latch_edge_1 : Field<IsochronousLatchEdge> = Field::simple(0x9A9);
-//     pub const slave_latch_event : Field<IsochronousLatchEvent> = Field::simple(0x9AE);
-//     pub const slave_latch_value : Field<u32> = Field::simple(0x09B0);
-// 
-// }
-
 
 /**
     registers allowing to generate slave task synchronization to the distributed clock 
@@ -1112,20 +1093,20 @@ pub struct Isochronous {
     pub interrupt1: IsochronousInterrupt,           // Interrupt enable/disable struct
     pub start_time: u32,                  // The interrupt generation will start when the lower 32bits of the the system time will reach this value (ns)
     reserved3: [u8; 12],
-    pub sync_0_cycle_time: u32,                     // SYNC 0 cycle time. Optional multiple of 1ns
-    pub sync_1_cycle_time: u32,                     // SYNC 1 cycle time. Optional multiple of 1ns
-    pub latch_0_edge: IsochronousLatch,        // Latch 0:
-    pub latch_1_edge: IsochronousLatch,        // Latch 1:
+    pub sync0_cycle_time: u32,                     // SYNC 0 cycle time. Optional multiple of 1ns
+    pub sync1_cycle_time: u32,                     // SYNC 1 cycle time. Optional multiple of 1ns
+    pub latch0_edge: IsochronousLatch,        // Latch 0:
+    pub latch1_edge: IsochronousLatch,        // Latch 1:
     pub reserved4: [u8; 4],                             // Reserved equivalent to [u8;4]
-    pub latch_0_event: IsochronousLatch,      // Enable or disable event storage for SYNC 0
-    pub latch_1_event: IsochronousLatch,      // Enable or disable event storage for SYNC 1
-    pub latch_0_pos_edge_time: u32,                // latch0 value + event
+    pub latch0_event: IsochronousLatch,      // Enable or disable event storage for SYNC 0
+    pub latch1_event: IsochronousLatch,      // Enable or disable event storage for SYNC 1
+    pub latch0_time_positive: u32,                // latch0 value + event
     reserved5: u32,                                 // Reserved equivalent to [u8;4]
-    pub latch_0_neg_edge_time: u32,                // latch0 value - event
+    pub latch0_time_negative: u32,                // latch0 value - event
     reserved6: u32,                                 // Reserved equivalent to [u8;4]
-    pub latch_1_pos_edge_time: u32,                // latch1 value + event
+    pub latch1_time_positive: u32,                // latch1 value + event
     reserved7: u32,                                 // Reserved equivalent to [u8;4]
-    pub latch_1_neg_edge_time: u32,                // latch1 value - event
+    pub latch1_time_negative: u32,                // latch1 value - event
     reserved8: u32,                                 // Reserved equivalent to [u8;4]
 }
 data::packed_pdudata!(Isochronous);

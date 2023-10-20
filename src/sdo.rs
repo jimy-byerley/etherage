@@ -750,11 +750,11 @@ impl Synchronization {
      /**
         Hardware delay time of the slave. 
         
-        Only important for DC Sync0/1 (Synchronization type = 0x02 or 0x03):
+        Only important for DC Sync0/1
         
         Time from receiving the trigger (Sync0 or Sync1 Event) to drive output values to the time until they become valid in the process (e.g. electrical signal available). 
         
-        if Subindex 7 Minimum Delay Time is supported and unequal 0, this Delay Time is the Maximum Delay Time
+        if [Self::min_delay_time] is supported and unequal 0, this Delay Time is the Maximum Delay Time
     */
     pub fn delay_time(&self) -> Sdo<u32>  {Sdo::sub(self.index, 9, 27*8)}
     /**
@@ -823,7 +823,7 @@ impl Synchronization {
 
 /** ETG 1020 table 86 and 87 - `0x1C32` or `0x1C33`
 
-The following table shows which field is mendatory for which tsk sync supported mode
+The following table shows which field is mendatory for which task sync supported mode in slaves
 
 | Var                  | Free |SM 2/3 | SM 2/3 Shift | DC  | DC shift | DC shift SYNC 1 | DC SYNC1 | DC subordinate|
 |----------------------|------|-------|--------------|-----|----------|-----------------|----------|---------------|

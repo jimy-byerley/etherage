@@ -126,17 +126,20 @@ macro_rules! bilge_pdudata {
             use $crate::data::Storage;
             if dst.len() < Self::Packed::LEN
                 {return Err($crate::data::PackingError::BadSize(dst.len(), "bilge struct needs exact size"))}
-//             assert_eq!((&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) }).len(), Self::Packed::LEN);
-//             assert_eq!(std::mem::size_of::<Self>(), Self::Packed::LEN);
-            dst[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
+                
+            let common = Self::Packed::LEN.min(core::mem::size_of::<Self>());
+            let src = unsafe{ core::mem::transmute::<&Self, &Self::Packed>(self) };
+            dst[.. common].copy_from_slice(&src[.. common]);
             Ok(())
         }
         fn unpack(src: &[u8]) -> $crate::data::PackingResult<Self> {
             use $crate::data::Storage;
             if src.len() < Self::Packed::LEN
                 {return Err($crate::data::PackingError::BadSize(src.len(), "bilge struct needs exact size"))}
+            
             let mut tmp = [0; core::mem::size_of::<Self>()];
-            tmp[.. Self::Packed::LEN].copy_from_slice(&src[.. Self::Packed::LEN]);
+            let common = Self::Packed::LEN.min(core::mem::size_of::<Self>());
+            tmp[.. common].copy_from_slice(&src[.. common]);
             Ok(unsafe{ core::mem::transmute::<[u8; core::mem::size_of::<Self>()], Self>(tmp) })
         }
     }};
