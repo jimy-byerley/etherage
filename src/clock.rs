@@ -348,14 +348,14 @@ impl SyncClock {
 
         // Start sync - Wait that all slave obtains the frame
         let t = self.global_time() + start_time.as_nanos() as u64;
-//         self.slaves.iter().map(|slv| async {
+        self.slaves.iter().map(|slv| async {
 //             self.master.fpwr(slv.address, registers::isochronous::slave_sync, slv.isochronous.sync).await;
-//             self.master.fpwr(slv.address, registers::isochronous::slave_start_time, t as u32).await;
-//             self.master.fpwr(slv.address, registers::isochronous::slave_sync_time_0, slv.isochronous.sync_0_cycle_time).await;
-//             self.master.fpwr(slv.address, registers::isochronous::slave_sync_time_1, slv.isochronous.sync_1_cycle_time).await;
-//             self.master.fpwr(slv.address, registers::isochronous::slave_latch_edge_0, slv.isochronous.latch_0_edge).await;
-//             self.master.fpwr(slv.address, registers::isochronous::slave_latch_edge_1, slv.isochronous.latch_1_edge).await;
-//         }).collect::<Vec<_>>().join().await;
+            self.master.fpwr(slv.address, registers::isochronous::sync::start_time, t as u32).await;
+            self.master.fpwr(slv.address, registers::isochronous::sync::sync0_cycle_time, slv.isochronous.sync0_cycle_time).await;
+            self.master.fpwr(slv.address, registers::isochronous::sync::sync1_cycle_time, slv.isochronous.sync1_cycle_time).await;
+            self.master.fpwr(slv.address, registers::isochronous::latch::edge0, slv.isochronous.latch0_edge).await;
+            self.master.fpwr(slv.address, registers::isochronous::latch::edge1, slv.isochronous.latch1_edge).await;
+        }).collect::<Vec<_>>().join().await;
 
         thread_priority::set_current_thread_priority(ThreadPriority::Max).unwrap();
 
@@ -477,18 +477,18 @@ impl SyncClock {
             if ! config.sync_0_time.is_none() {
                 slv.isochronous.enable.set_sync0(true);
                 slv.isochronous.interrupt0.set_enable(true);
-                slv.isochronous.sync_0_cycle_time = config.sync_0_time.unwrap();
+                slv.isochronous.sync0_cycle_time = config.sync_0_time.unwrap();
                 slv.clock_type = SlaveSyncType::DcSync0;
-                slv.isochronous.latch_0_edge.set_positive(config.pos_latch_flg.unwrap_or_default());
-                slv.isochronous.latch_0_edge.set_negative(config.neg_latch_flg.unwrap_or_default());
+                slv.isochronous.latch0_edge.set_positive(config.pos_latch_flg.unwrap_or_default());
+                slv.isochronous.latch0_edge.set_negative(config.neg_latch_flg.unwrap_or_default());
             }
             if ! config.sync_1_time.is_none() {
                 slv.isochronous.enable.set_sync1(true);
                 slv.isochronous.interrupt1.set_enable(true);
-                slv.isochronous.sync_1_cycle_time = config.sync_1_time.unwrap();
+                slv.isochronous.sync1_cycle_time = config.sync_1_time.unwrap();
                 slv.clock_type = SlaveSyncType::DcSync1;
-                slv.isochronous.latch_1_edge.set_positive(config.pos_latch_flg.unwrap_or_default());
-                slv.isochronous.latch_1_edge.set_negative(config.neg_latch_flg.unwrap_or_default());
+                slv.isochronous.latch1_edge.set_positive(config.pos_latch_flg.unwrap_or_default());
+                slv.isochronous.latch1_edge.set_negative(config.neg_latch_flg.unwrap_or_default());
             }
             slv.isochronous.enable.set_operation(slv.clock_type >= SlaveSyncType::DcSync0);
         }
