@@ -156,7 +156,7 @@ impl Master {
         // reset registers
         (
             self.raw.bwr(registers::dc::clock, Default::default()),
-            self.raw.bwr(registers::isochronous::slave_cfg, Default::default()),
+            self.raw.bwr(registers::isochronous::all, Default::default()),
         ).join().await;
     }
     

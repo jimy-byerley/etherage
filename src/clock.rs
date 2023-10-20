@@ -11,11 +11,11 @@
 
         The slaves whose clocks are synchronized will progress at the same rate (slight differences can be found due to synchronization jitter, but it will remain small), so data retreived from slaves will have been measured at the same time and to retreive one only timestamp per frame will be sufficient for these slaves.
 
-    All this is described in ETG.1000.4 + ETG.1000.6 and ETG.1020
+    All this is described in ETG.1000.4 + ETG.1000.6 and ETG.1020.21
 
     ## synchronization modes
 
-    There is 3 modes of slave task synchronization:
+    There is 3 modes of slave task synchronization (ETG.1020.21.1.1):
 
     - **free run**
         slaves tasks are not synchronized to ethercat. This mode is when no clock is initialized
@@ -45,11 +45,11 @@
 use crate::{
     data::PduData,
     registers::{self, AlState},
-    sdo::{self, SyncMangerFull},
+    sdo::{self, Sdo},
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     error::{EthercatError, EthercatResult}, 
     can::CanError,
-    Slave, Sdo,
+    Slave,
     };
 use std::{
     collections::HashMap,
@@ -121,8 +121,8 @@ pub struct SyncClock {
 /// struct caching per-slave variables for clock synchronization
 struct SlaveInfo {
     address: u16,
-    clock: registers::dc::DistributedClock,
-    isochronous: registers::isochronous::Isochronous,
+    clock: registers::DistributedClock,
+    isochronous: registers::Isochronous,
     clock_type: SlaveSyncType,
 }
 
@@ -244,7 +244,7 @@ impl SyncClock {
         // For each engine read rcv local time, port rcv time and status
         // Collect many values of DC
         const ARRAY_MAX_SIZE: usize = 8;
-        let mut dc_vec: [Vec<registers::dc::DistributedClock>; ARRAY_MAX_SIZE] = Default::default();
+        let mut dc_vec: [Vec<registers::DistributedClock>; ARRAY_MAX_SIZE] = Default::default();
         for i in 0 .. dc_vec.len() {
             self.slaves.iter_mut().map(|slv| async {
                 let dc = self.master.fprd(slv.address, registers::dc::clock).await;
@@ -475,22 +475,22 @@ impl SyncClock {
 
             slv.clock_type = SlaveSyncType::Free;
             if ! config.sync_0_time.is_none() {
-                slv.isochronous.sync.set_generate_sync0(true);
-                slv.isochronous.interrupt1.set_interrupt(true);
+                slv.isochronous.enable.set_sync0(true);
+                slv.isochronous.interrupt0.set_enable(true);
                 slv.isochronous.sync_0_cycle_time = config.sync_0_time.unwrap();
                 slv.clock_type = SlaveSyncType::DcSync0;
-                slv.isochronous.latch_0_pos_edge_value = u32::from(config.pos_latch_flg.unwrap_or_default());
-                slv.isochronous.latch_0_neg_edge_value = u32::from(config.neg_latch_flg.unwrap_or_default());
+                slv.isochronous.latch_0_edge.set_positive(config.pos_latch_flg.unwrap_or_default());
+                slv.isochronous.latch_0_edge.set_negative(config.neg_latch_flg.unwrap_or_default());
             }
             if ! config.sync_1_time.is_none() {
-                slv.isochronous.sync.set_generate_sync1(true);
-                slv.isochronous.interrupt2.set_interrupt(true);
+                slv.isochronous.enable.set_sync1(true);
+                slv.isochronous.interrupt1.set_enable(true);
                 slv.isochronous.sync_1_cycle_time = config.sync_1_time.unwrap();
                 slv.clock_type = SlaveSyncType::DcSync1;
-                slv.isochronous.latch_1_pos_edge_value = u32::from(config.pos_latch_flg.unwrap_or_default());
-                slv.isochronous.latch_1_neg_edge_value = u32::from(config.neg_latch_flg.unwrap_or_default());
+                slv.isochronous.latch_1_edge.set_positive(config.pos_latch_flg.unwrap_or_default());
+                slv.isochronous.latch_1_edge.set_negative(config.neg_latch_flg.unwrap_or_default());
             }
-            slv.isochronous.sync.set_enable_cyclic(slv.clock_type >= SlaveSyncType::DcSync0);
+            slv.isochronous.enable.set_operation(slv.clock_type >= SlaveSyncType::DcSync0);
         }
     }
 
@@ -719,72 +719,72 @@ impl Default for SlaveClockConfigHelper {
     }}
 }
 
-/// Use to implement advanced clock synchronization through syncmanager (mailbox is required)
-pub struct SynchronizationSdoHelper {}
-
-impl SynchronizationSdoHelper {
-
-    /// Send data for configurate the specified synchronisation chanel. Send sdo for the register `0x1C32`+ channel`.
-    pub async fn send(
-        sync_type: SlaveSyncType,
-        cycle_time: Option<u32>,
-        shift_time: Option<u32>,
-        get_cycle_time: Option<(bool,bool)>,
-        slv: &Slave<'_>,
-        channel: u16,
-    ) -> EthercatResult<(), CanError> {
-        let status = slv.expected();
-        if status == AlState::SafeOperational || status == AlState::Operational {
-
-            if channel > 32 { return Err(EthercatError::Protocol("Channel to high")); }
-
-            let mut canoe = slv.coe().await;
-            let sdo_sync = sdo::Synchronization {index: 0x1C32 + channel};
-            let typ = match sync_type {
-                SlaveSyncType::Free => sdo::SyncType::none(),
-                SlaveSyncType::Sm2 => sdo::SyncType::synchron(),
-                SlaveSyncType::Sm3 => sdo::SyncType::sync_manager(channel as u8),
-                SlaveSyncType::DcSync0 => sdo::SyncType::dc_sync0(),
-                SlaveSyncType::DcSync1 => sdo::SyncType::dc_sync1(),
-                _ => sdo::SyncType::none(),
-            };
-
-            // Check capability or return error
-            let smf = Self::receive(slv, channel).await.expect("Error channel not available");
-            let capability = sdo::SyncSupportedMode::from(smf.supported_sync_type);
-            if capability.sm()  && (sync_type == SlaveSyncType::Sm2 && sync_type == SlaveSyncType::Sm3 )
-                {return Err(EthercatError::Protocol("Synchronization not supported by this slave"))}
-            if capability.dc_sync0() && sync_type == SlaveSyncType::DcSync0
-                {return Err(EthercatError::Protocol("Synchronization not supported by this slave"))}
-            if capability.dc_sync1() && sync_type == SlaveSyncType::DcSync1
-                {return Err(EthercatError::Protocol("Synchronization not supported by this slave"))}
-            if capability.dc_fixed() && sync_type == SlaveSyncType::Subordinate
-                {return Err(EthercatError::Protocol("Synchronization not supported by this slave"))}
-
-            // Write synchronization sdo
-            canoe.sdo_write(&sdo_sync.ty(), u2::new(1), typ).await?;
-            if cycle_time.is_some() {
-                canoe.sdo_write(&sdo_sync.period(), u2::new(1), cycle_time.unwrap()).await?;
-            }
-            if shift_time.is_some() {
-                canoe.sdo_write(&sdo_sync.shift(), u2::new(1), shift_time.unwrap()).await?;
-            }
-            if capability.dc_sync0() || capability.dc_sync1() || capability.dc_fixed() && get_cycle_time.is_some() {
-                let mut data = sdo::SyncCycleTimeDsc::default();
-                data.set_measure_local_time(get_cycle_time.unwrap().0);
-                data.set_reset_event_counter(get_cycle_time.unwrap().1);
-                canoe.sdo_write(&sdo_sync.toggle_lt(), u2::new(1), data).await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Receive synchronization sdo for the specific channel. Receive sdo for the register `0x1C32`+ channel`.
-    /// Return a None if `channel > 32`
-    pub async fn receive(slv: &Slave<'_>, channel: u16) -> EthercatResult<SyncMangerFull, CanError> {
-        if channel > 32   {return Err(EthercatError::Master("channel index is too high"))}
-        let sdo_id = Sdo::<SyncMangerFull>::complete(0x1C32 + channel);
-        Ok( slv.coe().await
-                .sdo_read(&sdo_id, u2::new(1)).await? )
-    }
-}
+// /// Use to implement advanced clock synchronization through syncmanager (mailbox is required)
+// pub struct SynchronizationSdoHelper {}
+// 
+// impl SynchronizationSdoHelper {
+// 
+//     /// Send data for configurate the specified synchronisation chanel. Send sdo for the register `0x1C32`+ channel`.
+//     pub async fn send(
+//         sync_type: SlaveSyncType,
+//         cycle_time: Option<u32>,
+//         shift_time: Option<u32>,
+//         get_cycle_time: Option<(bool,bool)>,
+//         slv: &Slave<'_>,
+//         channel: u16,
+//     ) -> EthercatResult<(), CanError> {
+//         let status = slv.expected();
+//         if status == AlState::SafeOperational || status == AlState::Operational {
+// 
+//             if channel > 32 { return Err(EthercatError::Protocol("Channel to high")); }
+// 
+//             let mut canoe = slv.coe().await;
+//             let sdo_sync = sdo::Synchronization {index: 0x1C32 + channel};
+//             let typ = match sync_type {
+//                 SlaveSyncType::Free => sdo::SyncType::none(),
+//                 SlaveSyncType::Sm2 => sdo::SyncType::synchron(),
+//                 SlaveSyncType::Sm3 => sdo::SyncType::sync_manager(channel as u8),
+//                 SlaveSyncType::DcSync0 => sdo::SyncType::dc_sync0(),
+//                 SlaveSyncType::DcSync1 => sdo::SyncType::dc_sync1(),
+//                 _ => sdo::SyncType::none(),
+//             };
+// 
+//             // Check capability or return error
+//             let smf = Self::receive(slv, channel).await.expect("Error channel not available");
+//             let capability = sdo::SyncSupportedMode::from(smf.supported_sync_type);
+//             if capability.sm()  && (sync_type == SlaveSyncType::Sm2 && sync_type == SlaveSyncType::Sm3 )
+//                 {return Err(EthercatError::Protocol("Synchronization not supported by this slave"))}
+//             if capability.dc_sync0() && sync_type == SlaveSyncType::DcSync0
+//                 {return Err(EthercatError::Protocol("Synchronization not supported by this slave"))}
+//             if capability.dc_sync1() && sync_type == SlaveSyncType::DcSync1
+//                 {return Err(EthercatError::Protocol("Synchronization not supported by this slave"))}
+//             if capability.dc_fixed() && sync_type == SlaveSyncType::Subordinate
+//                 {return Err(EthercatError::Protocol("Synchronization not supported by this slave"))}
+// 
+//             // Write synchronization sdo
+//             canoe.sdo_write(&sdo_sync.ty(), u2::new(1), typ).await?;
+//             if cycle_time.is_some() {
+//                 canoe.sdo_write(&sdo_sync.period(), u2::new(1), cycle_time.unwrap()).await?;
+//             }
+//             if shift_time.is_some() {
+//                 canoe.sdo_write(&sdo_sync.shift(), u2::new(1), shift_time.unwrap()).await?;
+//             }
+//             if capability.dc_sync0() || capability.dc_sync1() || capability.dc_fixed() && get_cycle_time.is_some() {
+//                 let mut data = sdo::SyncCycleTimeDsc::default();
+//                 data.set_measure_local_time(get_cycle_time.unwrap().0);
+//                 data.set_reset_event_counter(get_cycle_time.unwrap().1);
+//                 canoe.sdo_write(&sdo_sync.toggle_lt(), u2::new(1), data).await?;
+//             }
+//         }
+//         Ok(())
+//     }
+// 
+//     /// Receive synchronization sdo for the specific channel. Receive sdo for the register `0x1C32`+ channel`.
+//     /// Return a None if `channel > 32`
+//     pub async fn receive(slv: &Slave<'_>, channel: u16) -> EthercatResult<SyncMangerFull, CanError> {
+//         if channel > 32   {return Err(EthercatError::Master("channel index is too high"))}
+//         let sdo_id = Sdo::<SyncMangerFull>::complete(0x1C32 + channel);
+//         Ok( slv.coe().await
+//                 .sdo_read(&sdo_id, u2::new(1)).await? )
+//     }
+// }

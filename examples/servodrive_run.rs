@@ -22,14 +22,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
         let _statuscom = slave.register(SyncDirection::Read, registers::al::status);
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, capacity: 10 });
+        let mut channel = slave.channel(sdo::sync_manager::logical_write);
             let mut pdo              = channel.push(sdo::Pdo::with_capacity(0x1600, false, 10));
                 let controlword      = pdo.push(sdo::cia402::controlword);
                 let target_mode      = pdo.push(sdo::cia402::target::mode);
                 let target_position  = pdo.push(sdo::cia402::target::position);
                 let _target_velocity = pdo.push(sdo::cia402::target::velocity);
                 let _target_torque = pdo.push(sdo::cia402::target::torque);
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, capacity: 10 });
+        let mut channel = slave.channel(sdo::sync_manager::logical_read);
             let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1a00, false, 10));
                 let statusword       = pdo.push(sdo::cia402::statusword);
                 let error            = pdo.push(sdo::cia402::error);

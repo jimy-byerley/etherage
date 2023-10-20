@@ -235,11 +235,12 @@ pub const receive_pdos: Range<u16> = Range {start: 0x1600, end: 0x1600+512};
 /// ETG.1000.6 table 75
 pub const transmit_pdos: Range<u16> = Range {start: 0x1a00, end: 0x1a00+512};
 /// ETG.1000.6 table 76
-pub const sync_manager_modes: SdoList<SyncMode> = SdoList::with_capacity(0x1c00, 32);
+pub const sync_channel_modes: SdoList<SyncChannelMode> = SdoList::with_capacity(0x1c00, 32);
 /// ETG.1000.6 table 67
-pub const sync_manager: SyncManager = SyncManager {index: 0x1c10, len: 32};
 /// ETG.1000.6 table 78
-pub const synchronization: SdoSerie<Synchronization> = SdoSerie::new(0x1c30, 32);
+pub const sync_manager: SyncManager = SyncManager {channels: 0x1c10, syncs: 0x1c30, len: 32};
+
+
 /**
     a SDO containing a boolean for each PDO, read true if the matching PDO has an invalid mapping
 
@@ -581,8 +582,15 @@ impl SyncChannel {
     pub const fn len(&self) -> Sdo<u8> {
         Sdo::sub(self.index, 0, 0)
     }
+    /// register matching this sync channel sdo
     pub fn register(&self) -> Field<registers::SyncManagerChannel> {
-        registers::sync_manager::interface.channel((self.index - FIRST_SYNC_CHANNEL).try_into().unwrap())
+        registers::sync_manager::interface.channel(
+            (self.index - sync_manager.channels)
+            .try_into().unwrap())
+    }
+    /// sdo setting up the task synchronization to the sync channel
+    pub fn sync(&self) -> Synchronization {
+        Synchronization {index: self.index - sync_manager.channels + sync_manager.syncs}
     }
 }
 impl fmt::Debug for SyncChannel {
@@ -598,15 +606,19 @@ impl fmt::Debug for SyncChannel {
 /// ETG.1000.6 table 67
 pub struct SyncManager {
     /// index of first SDO configuring a [SyncChannel]
-    pub index: u16,
-    /// number of SDOs configuring SyncChannels
+    /// ETG.1000.6 table 67
+    pub channels: u16,
+    /// index of the first SDO configuring a [Synchronization]
+    // ETG.1000.6 table 78
+    pub syncs: u16,
+    /// number of sync channels
     pub len: u8,
 }
 impl SyncManager {
-    /// return a description of the sdo controling the given channel
+    /// return a description of the sdo controling the given channel, using the recommended channel direction
     pub fn channel(&self, i: u8) -> SyncChannel {
         SyncChannel {
-            index: self.index + u16::from(i),
+            index: self.channels + u16::from(i),
             direction: match i%2 {
                 0 => SyncDirection::Write,
                 1 => SyncDirection::Read,
@@ -615,13 +627,58 @@ impl SyncManager {
             capacity: 254,
             }
     }
+    /// recommended channel for data sending to slave
+    pub fn logical_write(&self) -> SyncChannel  {self.channel(2)}
+    /// recommended channel for data reception from slave
+    pub fn logical_read(&self) -> SyncChannel  {self.channel(3)}
 }
+
+/// ETG.1000.6 table 76
+#[bitsize(8)]
+pub enum SyncChannelMode {
+    Disable = 0,
+    MailboxReceive = 1,
+    MailboxSend = 2,
+    ProcessDataOutput = 3,
+    ProcessDataInput = 4,
+}
+data::bilge_pdudata!(SyncChannelMode, u8);
+
 
 
 /**
     sync manager synchronization object
 
-    ETG.1000.6 table 78
+    ETG 1020 table 86 and 87 - `0x1C32` or `0x1C33`
+    original definition from ETG.1000.6 table 78 is outdated by ETG.1020 and do not apply here.
+    
+    If the matching sync channel is not available, the SDO does not exist.
+
+    If no outputs are transmitted in SAFE-OP and OP (Sync Manager Channel 2 is disabled), the Subindex 0 of object 0x1C32 shall return 0 in SAFE-OP and OP. The other subindixes shall return the Abort-Code 0x06090011 (Subindex does not exist).
+
+    The following table shows which field is mendatory for which tsk sync supported mode
+
+    | Var                  | Free |SM 2/3 | SM 2/3 Shift | DC  | DC shift | DC shift SYNC 1 | DC SYNC1 | DC subordinate|
+    |----------------------|------|-------|--------------|-----|----------|-----------------|----------|---------------|
+    | sync_type	           | C    | M     | M            | M   | M        | M               | M        | M             |
+    | cycle_time	       | O    | O     | O            | O   | M        | M               | O        | M             |
+    | shift_time	       | -    | -     | - M          | -   | M        | -               | -        | O             |
+    | supported_sync_type  | C    | M     | M            | M   | M        | M               | M        | M             |
+    | min_cycle_time	   | C    | M     | M            | M   | M        | M               | M        | M             |
+    | calc_copy_time	   | -    | -     | -            | M   | M        | M               | M        | M             |
+    | min_delay_time	   | -    | -     | -            | -   | -        | -               | -        | -             |
+    | get_cycle_time	   | -    | C     | C            | C   | C        | C               | C        | C             |
+    | delay_time	       | -    | -     | -            | M - | M -      | M               | M -      | M             |
+    | sync0_cycle_time	   | -    | -     | -            | -   | -        | -               | -        | M             |
+    | sm_evt_cnt	       | -    | O     | O            | O   | O        | O               | O        | O             |
+    | cycle_time_evt_small | -    | M     | M            | M   | M        | M               | M        | M             |
+    | shift_time_evt_small | -    | -     | -            | O   | O        | O               | O -      | O             |
+    | toggle_failure_cnt   | -    | O     | O            | O   | O        | O               | O        | O             |
+    | min_cycle_dist	   | -    | O -   | O -          | O - | O -      | O               | O -      | O             |
+    | max_cycle_dist	   | -    | O -   | O -          | O - | O -      | O               | O -      | O             |
+    | min_sm_sync_dist	   | -    | -     | -            | O - | O -      | O               | O -      | O             |
+    | max_sm_sync_dist	   | -    | -     | -            | O - | O -      | O               | O -      | O             |
+    | sync_error	       | -    | C     | C            | C   | C        | C               | C        | C             |
 */
 pub struct Synchronization {
     pub index: u16,
@@ -630,41 +687,143 @@ impl From<u16> for Synchronization {
     fn from(index: u16) -> Self {Self{index}}
 }
 impl Synchronization {
-    /// choose the event to synchronize with
-    pub fn ty(&self) -> Sdo<SyncType>  {Sdo::sub(self.index, 1, 8)}
-    /// time between two events in ns
-    pub fn period(&self) -> Sdo<u32>  {Sdo::sub(self.index, 2, 40)}
-    /// time between related AL event and the associated action in ns
-    pub fn shift(&self) -> Sdo<u32>  {Sdo::sub(self.index, 3, 72)}
-    /// toggle measurement for the local time and allow event counter reset (couter for time)
-    pub fn toggle_lt(&self) -> Sdo<SyncCycleTimeDsc> { Sdo::sub(self.index, 8, 184) }
-}
+    pub fn parameters(&self) -> Sdo<u8>  {Sdo::sub(self.index, 0, 0)}
+    /**    
+        **NOTE:** Entry only writable with new value in SafeOp or OP if Synchronization can be changed in those states
+    */
+    pub fn sync_mode(&self) -> Sdo<SyncMode>  {Sdo::sub(self.index, 1, 1*8)}
+    /**
+        The slave may support a flexible Cycle Time (the this field is writable). In this case this field shall be supported by the slave, too
+        
+        - Free Run (Synchronization Type = 0x00):
+            Time between two local timer events in ns
+        - Synchronous with SM2 (Synchronization Type = 0x01):
+            Minimum time between two SM2 events in ns
+        - DC Sync0 (Synchronization Type = 0x02):
+            Sync0 Cycle Time (Register 0x9A3-0x9A0) in ns
 
-/** Like an enum, but with a serie of value matching sync managers indices
+        NOTE: Entry only writable with new value in SafeOp or OP if Synchronization can be changed in those states
+    */
+    pub fn cycle(&self) -> Sdo<u32>  {Sdo::sub(self.index, 2, 3*8)}
+    /** 
+        Time between related event and the associated action (outputs valid hardware) in ns
+        Shift of Output valid equal or greater than 0x1C32:09
+        
+        NOTE: Entry only writable with new value in SafeOp or OP if Synchronization can be changed in those states
+    */
+    pub fn shift(&self) -> Sdo<u32>  {Sdo::sub(self.index, 3, 7*8)}
+    /// suported sync modes
+    pub fn supported_modes(&self) -> Sdo<SyncModes>  {Sdo::sub(self.index, 4, 11*8)}
+    /**
+        Minimum cycle time supported by the slave (maximum duration time of the local cycle) in ns 
+        
+        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleTimeDsc::measure_local_time] to get a valid value used in Synchronous or DC Mode
+    */
+    pub fn min_cycle_time(&self) -> Sdo<u32>  {Sdo::sub(self.index, 5, 13*8)}
+    /** 
+        - for an output SM:  Minimum time for Outputs to SYNC-Event used in DC mode
+            
+            Time needed by the application controller to copy the process data from the Sync Manager to the local memory and perform calculations if necessary before the data is sent to the process. 
+        
+            With a trigger event (local timer event, SM2/3 event Sync0/1 event) output data is read from the SyncManager Output area and, if necessary, mathematical operations are performed on those values.
+            Then, the physical output signal is generated. With the Outputs Valid mark the output signal is available at the process.
+            The Copy and Prepare Outputs time sums up the times for copying process data from the SyncManager to the local memory, mathematical operations if necessary and the hardware delays (depending on implementation including some software run time). The single times are not further determined. 
+        
+        - for an input SM:  Minimum time for Inputs after Input Latch
+            
+            Time in ns needed by the application controller to perform calculations on the input values if necessary and to copy the process data from the local memory to the Sync Manager before the data is available for EtherCAT.
+        
+            The Get and Copy Inputs time sums up the hardware delay of reading in the signal, the execution of mathematical operations, if necessary, and the copying of the input process data to the SyncManager 3 area. The single times are not further determined. 
+    */
+    pub fn calc_copy_time(&self) -> Sdo<u32>  {Sdo::sub(self.index, 6, 17*8)}
+    /**
+        Only important for [SyncMode::DCSync0] and [SyncMode::DCSync1]: Minimum Hardware delay time of the slave. 
+        because of software synchronization there could be a distance between the minimum and the maximum delay time
 
-    ETG.1000.6 table 78
-*/
-#[repr(packed)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct SyncType (u16);
-impl SyncType {
-    /// not synchronized
-    pub const fn none() -> Self {Self(0)}
-    /// Synchron – synchronized with AL Event on this Sync Manager
-    pub const fn synchron() -> Self {Self(1)}
-    /// DC Sync0 – synchronized with AL Event Sync0
-    pub const fn dc_sync0() -> Self {Self(2)}
-    /// DC Sync1 – synchronized with AL Event Sync1
-    pub const fn dc_sync1() -> Self {Self(3)}
-    /// SyncSmN – synchronized with AL Event of Sync Manager N
-    pub const fn sync_manager(n: u8) -> Self {
-        assert!(n < 32);
-        Self(4 + n as u16)
-    }
+        Distance between minimum and maximum delay time (Subindex 9) shall be smaller than 1 µs. 
+    
+        if SubIndex [SyncModes::delay_time_fixed] is true, this field contains the value of [Self::delay_time]
+    */
+    pub fn min_delay_time(&self) -> Sdo<u32>  {Sdo::sub(self.index, 7, 21*8)}
+     /// control of the local time measurement (RW access)
+    pub fn get_cycle_time(&self) -> Sdo<SyncCycleControl>  {Sdo::sub(self.index, 8, 25*8)}
+     /**
+        Hardware delay time of the slave. 
+        
+        Only important for DC Sync0/1 (Synchronization type = 0x02 or 0x03):
+        
+        Time from receiving the trigger (Sync0 or Sync1 Event) to drive output values to the time until they become valid in the process (e.g. electrical signal available). 
+        
+        if Subindex 7 Minimum Delay Time is supported and unequal 0, this Delay Time is the Maximum Delay Time
+    */
+    pub fn delay_time(&self) -> Sdo<u32>  {Sdo::sub(self.index, 9, 27*8)}
+    /**
+        Time between two Sync0 signals if fixed Sync0 Cycle Time is needed by the application
+        
+        Only important for DC Sync0 (Synchronization type = 0x03) and subordinated local cycles
+    */
+    pub fn sync0_cycle_time(&self) -> Sdo<u32>  {Sdo::sub(self.index, 10, 31*8)}
+    /**
+        This error counter is incremented when the application expects a SM event but does not receive it in time and as consequence the data cannot be copied any more. 
+        
+        used in DC Mode
+    */
+    pub fn counter_sm_missed(&self) -> Sdo<u16>  {Sdo::sub(self.index, 11, 35*8)}
+    /**
+        This error counter is incremented when the cycle time is too small so that the local cycle cannot be completed and input data cannot be provided before the next SM event. 
+        
+        used in Synchronous or DC Mode
+    */
+    pub fn counter_cycle_missed(&self) -> Sdo<u16>  {Sdo::sub(self.index, 12, 37*8)}
+    /**
+        This error counter is incremented when the time distance between the trigger (Sync0) and the Outputs Valid is too short because of a t
+        
+        used in DC Mode
+    */
+    pub fn counter_shift_missed(&self) -> Sdo<u16>  {Sdo::sub(self.index, 13, 39*8)}
+    /**
+        This error counter is incremented when the slave supports the RxPDO Toggle and does not receive new RxPDO data from the master (RxPDO Toggle set to TRUE)
+    */
+    pub fn counter_toggle_failure(&self) -> Sdo<u16>  {Sdo::sub(self.index, 14, 41*8)}
+    /**
+        Minimum Cycle Distance in ns
+        
+        used in conjunction with [Self::max_cycle_distance] to monitor the jitter between two SM-events
+    */
+    pub fn min_cycle_distance(&self) -> Sdo<u32>  {Sdo::sub(self.index, 15, 43*8)}
+    /**
+        Maximum cycle distance in ns
+
+        used in conjunction with [Self::min_cycle_distance] to monitor the jitter between two SM-events
+    */
+    pub fn max_cycle_distance(&self) -> Sdo<u32>  {Sdo::sub(self.index, 16, 47*8)}
+    /**
+        Minimum SM SYNC Distance in ns
+        
+        used in conjunction with [Self::max_sm_sync_distance] to monitor the jitter between the SM-event and SYNC0-event in DC-SYNC0-Mode
+    */
+    pub fn min_sm_sync_distance(&self) -> Sdo<u32>  {Sdo::sub(self.index, 17, 51*8)}
+    /**
+        Maximum SM SYNC Distance in ns 
+        
+        used in conjunction with [Self::min_sm_sync_distance] to monitor the jitter between the SM-event and SYNC0-event in DC-SYNC0-Mode
+    */
+    pub fn max_sm_sync_distance(&self) -> Sdo<u32>  {Sdo::sub(self.index, 18, 55*8)}
+        
+    /**
+        Shall be supported if [Self::sm_mter_sm_missed] or [self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
+
+        Mappable in TxPDO
+    
+        - false: no Synchronization Error or Sync Error not supported
+        - true: Synchronization Error
+    */
+    pub fn sync_error(&self) -> Sdo<bool>  {Sdo::sub(self.index, 32, 64*8)}
 }
-data::packed_pdudata!(SyncType);
 
 /** ETG 1020 table 86 and 87 - `0x1C32` or `0x1C33`
+
+The following table shows which field is mendatory for which tsk sync supported mode
 
 | Var                  | Free |SM 2/3 | SM 2/3 Shift | DC  | DC shift | DC shift SYNC 1 | DC SYNC1 | DC subordinate|
 |----------------------|------|-------|--------------|-----|----------|-----------------|----------|---------------|
@@ -690,70 +849,222 @@ data::packed_pdudata!(SyncType);
 */
 #[repr(packed)]
 #[derive(Default,Clone, PartialEq, Eq)]
-pub struct SyncMangerFull {
-    pub nb_sync_params : u8,
-    pub sync_type : u16,
-    pub cycle_time : u32,
-    pub shift_time : u32,
-    pub supported_sync_type : SyncSupportedMode,
-    pub min_cycle_time : u32,
+pub struct SynchronizationFull {
+    pub nb_sync_params: u8,
+    /**    
+        **NOTE:** Entry only writable with new value in SafeOp or OP if Synchronization can be changed in those states
+    */
+    pub sync_mode: SyncMode,
+    /**
+        The slave may support a flexible Cycle Time (the this field is writable). In this case this field shall be supported by the slave, too
+        
+        - Free Run (Synchronization Type = 0x00):
+            Time between two local timer events in ns
+        - Synchronous with SM2 (Synchronization Type = 0x01):
+            Minimum time between two SM2 events in ns
+        - DC Sync0 (Synchronization Type = 0x02):
+            Sync0 Cycle Time (Register 0x9A3-0x9A0) in ns
+
+        NOTE: Entry only writable with new value in SafeOp or OP if Synchronization can be changed in those states
+    */
+    pub cycle_time: u32,
+    /** 
+        Time between related event and the associated action (outputs valid hardware) in ns
+        
+        equal or greater than 0x1C32:09
+        
+        NOTE: Entry only writable with new value in SafeOp or OP if Synchronization can be changed in those states
+    */
+    pub shift_time: u32,
+    /// suported sync modes
+    pub supported_sync_type: SyncModes,
+    /**
+        Minimum cycle time supported by the slave (maximum duration time of the local cycle) in ns 
+        
+        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleTimeDsc::measure_local_time] to get a valid value used in Synchronous or DC Mode
+    */
+    pub min_cycle_time: u32,
+    /** 
+        - for an output SM:  Minimum time for Outputs to SYNC-Event used in DC mode
+            
+            Time needed by the application controller to copy the process data from the Sync Manager to the local memory and perform calculations if necessary before the data is sent to the process. 
+        
+            With a trigger event (local timer event, SM2/3 event Sync0/1 event) output data is read from the SyncManager Output area and, if necessary, mathematical operations are performed on those values.
+            Then, the physical output signal is generated. With the Outputs Valid mark the output signal is available at the process.
+            The Copy and Prepare Outputs time sums up the times for copying process data from the SyncManager to the local memory, mathematical operations if necessary and the hardware delays (depending on implementation including some software run time). The single times are not further determined. 
+        
+        - for an input SM:  Minimum time for Inputs after Input Latch
+            
+            Time in ns needed by the application controller to perform calculations on the input values if necessary and to copy the process data from the local memory to the Sync Manager before the data is available for EtherCAT.
+        
+            The Get and Copy Inputs time sums up the hardware delay of reading in the signal, the execution of mathematical operations, if necessary, and the copying of the input process data to the SyncManager 3 area. The single times are not further determined. 
+    */
     pub calc_copy_time : u32,
+    /**
+        Only important for [SyncMode::DCSync0] and [SyncMode::DCSync1]: Minimum Hardware delay time of the slave. 
+        because of software synchronization there could be a distance between the minimum and the maximum delay time
+
+        Distance between minimum and maximum delay time (Subindex 9) shall be smaller than 1 µs. 
+    
+        if SubIndex [SyncModes::delay_time_fixed] is true, this field contains the value of [Self::delay_time]
+    */
     pub min_delay_time : u32,
-    pub get_cycle_time : SyncCycleTimeDsc,
+    /// control of the local time measurement (RW access)
+    pub control: SyncCycleControl,
+    /**
+        Hardware delay time of the slave. 
+        
+        Only important for DC Sync0/1 (Synchronization type = 0x02 or 0x03):
+        
+        Time from receiving the trigger (Sync0 or Sync1 Event) to drive output values to the time until they become valid in the process (e.g. electrical signal available). 
+        
+        if Subindex 7 Minimum Delay Time is supported and unequal 0, this Delay Time is the Maximum Delay Time
+    */
     pub delay_time : u32,
+    /**
+        Time between two Sync0 signals if fixed Sync0 Cycle Time is needed by the application
+        
+        Only important for DC Sync0 (Synchronization type = 0x03) and subordinated local cycles
+    */
     pub sync0_cycle_time : u32,
-    pub sm_evt_cnt : u16,
-    pub cycle_time_evt_small : u16,
-    pub shift_time_evt_small : u16,
-    pub toggle_failure_cnt : u16,
-    pub min_cycle_dist : u32,       //Reserved on table 87
-    pub max_cycle_dist : u32,       //Reserved on table 87
-    pub min_sm_sync_dist : u32,     //Reserved on table 87
-    pub max_sm_sync_dist : u32,     //Reserved on table 87
+    /**
+        This error counter is incremented when the application expects a SM event but does not receive it in time and as consequence the data cannot be copied any more. 
+        
+        used in DC Mode
+    */
+    pub counter_sm_missed: u16,
+    /**
+        This error counter is incremented when the cycle time is too small so that the local cycle cannot be completed and input data cannot be provided before the next SM event. 
+        
+        used in Synchronous or DC Mode
+    */
+    pub counter_cycle_missed: u16,
+    /**
+        This error counter is incremented when the time distance between the trigger (Sync0) and the Outputs Valid is too short because of a t
+        
+        used in DC Mode
+    */
+    pub counter_shift_missed: u16,
+    /**
+        This error counter is incremented when the slave supports the RxPDO Toggle and does not receive new RxPDO data from the master (RxPDO Toggle set to TRUE)
+    */
+    pub counter_toggle_failure: u16,
+    /**
+        Minimum Cycle Distance in ns
+        
+        used in conjunction with [Self::max_cycle_distance] to monitor the jitter between two SM-events
+    */
+    pub min_cycle_distance: u32,       //Reserved on table 87
+    /**
+        Maximum cycle distance in ns
+
+        used in conjunction with [Self::min_cycle_distance] to monitor the jitter between two SM-events
+    */
+    pub max_cycle_distance: u32,       //Reserved on table 87
+    /**
+        Minimum SM SYNC Distance in ns
+        
+        used in conjunction with [Self::max_sm_sync_distance] to monitor the jitter between the SM-event and SYNC0-event in DC-SYNC0-Mode
+    */
+    pub min_sm_sync_distance: u32,     //Reserved on table 87
+    /**
+        Maximum SM SYNC Distance in ns 
+        
+        used in conjunction with [Self::min_sm_sync_distance] to monitor the jitter between the SM-event and SYNC0-event in DC-SYNC0-Mode
+    */
+    pub max_sm_sync_distance: u32,     //Reserved on table 87
+    
     reserved_1 : u32,               //Reserved 4 bytes
     reserved_2 : u64,               //Reserved 8 bytes
+    
+    /**
+        Shall be supported if [Self::sm_mter_sm_missed] or [self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
+
+        Mappable in TxPDO
+    
+        - false: no Synchronization Error or Sync Error not supported
+        - true: Synchronization Error
+    */
     pub sync_error : bool
 }
-data::packed_pdudata!(SyncMangerFull);
+data::packed_pdudata!(SynchronizationFull);
 
+/**
+    possible mode of synchronization 
+    
+    ETG 1020 table 86 and 87 - `0x1C32` or `0x1C33` 
+    
+    original definition from ETG.1000.6 table 78 is outdated by ETG.1020 and do not apply here.
+*/
 #[bitsize(16)]
-#[derive(Default,Clone, Copy, PartialEq, Eq)]
-pub struct SyncSupportedMode {
-    pub free : bool,
-    pub sm : bool,
-    pub dc_sync0 : bool,
-    pub dc_sync1 : bool,
-    pub dc_fixed : bool,
-    pub shift : bool,
-    pub shift_local_time : bool,
-    reserved1 : u3,
-    pub delay_time_compute : bool,
-    pub delay_time_fixed : bool,
-    reserved_2 : u2,
-    pub dynamic_cycle_time : bool,
-    reserved_3 : u1,
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum SyncMode {
+    /// Free Run (not synchronized)
+    #[default]
+    FreeRun = 0x0,
+    /// SM-Synchronous – synchronized with SM3 Event
+    SM3Sync = 0x1,
+    /// DC Sync0 – synchronized with Sync0 Event
+    DCSync0 = 0x2,
+    /// DC Sync1 – synchronized with Sync1 Event
+    DCSync1 = 0x3,
+    /// SM-Synchronous – synchronized with SM2 Event
+    /// this mode is only supported by sync channel 3
+    SM2Sync = 0x22,
 }
-data::bilge_pdudata!(SyncSupportedMode, u16);
+data::bilge_pdudata!(SyncMode, u16);
 
 #[bitsize(16)]
 #[derive(Default,Clone, Copy, PartialEq, Eq)]
-pub struct SyncCycleTimeDsc{
+pub struct SyncModes {
+    /// freerun supported
+    pub free : bool,
+    /// SM-sync supported
+    pub sm : bool,
+    /// DC-sync-0 supported
+    pub dc_sync0 : bool,
+    /// DC-sync-1 supported
+    pub dc_sync1 : bool,
+    /// Subordinated Application with fixed Sync0 is supported
+    pub dc_fixed : bool,
+    /// output shift with lical timer
+    pub shift : bool,
+    /// output shift with sync1
+    pub shift_local_time : bool,
+    reserved: u3,
+    /// Delay Times should be measured (because they depend on the configuration)
+    pub delay_time_compute : bool,
+    /// Delay Time is fix (synchronization is done by hardware)
+    pub delay_time_fixed : bool,
+    reserved: u2,
+    /**
+        Dynamic Cycle Times
+        
+        Times described in 0x1C32 are variable (depend on the actual configuration) This is used for e.g. EtherCAT gateway devices. The slave shall support cycle time measurement in OP state. The cycle time measurement is started by writing 1 to 0x1C32:08. If this bit is set, the default values of the times to be measured (Minimum Cycle Time, Calc And Copy Time, Delay Time) could be 0. The default values could be set in INIT and PREOP state. Bit 14 should only be set, if the slave cannot calculate the cycle time after receiving all Start-up SDO in transition PS.
+    */
+    pub dynamic_cycle_time : bool,
+    reserved: u1,
+}
+data::bilge_pdudata!(SyncModes, u16);
+
+#[bitsize(16)]
+#[derive(Default,Clone, Copy, PartialEq, Eq)]
+pub struct SyncCycleControl {
+    /**
+        false: Measurement of local cycle time stopped
+        true: Measurement of local cycle time started
+        
+        If written again, the measured values are reset Used in Synchronous or (DC Mode with variable Cycle Time)
+    */
     pub measure_local_time : bool,
+    /// Reset the error counters when set to true
     pub reset_event_counter : bool,
     reserved : u14
 }
-data::bilge_pdudata!(SyncCycleTimeDsc, u16);
+data::bilge_pdudata!(SyncCycleControl, u16);
 
-/// ETG.1000.6 table 76
-#[bitsize(8)]
-pub enum SyncMode {
-    Disable = 0,
-    MailboxReceive = 1,
-    MailboxSend = 2,
-    ProcessDataOutput = 3,
-    ProcessDataInput = 4,
-}
-data::bilge_pdudata!(SyncMode, u8);
+
+
 
 /// ETG.1000.6 table 68, ETG.6010 table 84
 #[bitsize(32)]

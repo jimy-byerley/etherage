@@ -126,6 +126,8 @@ macro_rules! bilge_pdudata {
             use $crate::data::Storage;
             if dst.len() < Self::Packed::LEN
                 {return Err($crate::data::PackingError::BadSize(dst.len(), "bilge struct needs exact size"))}
+//             assert_eq!((&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) }).len(), Self::Packed::LEN);
+//             assert_eq!(std::mem::size_of::<Self>(), Self::Packed::LEN);
             dst[..Self::Packed::LEN].copy_from_slice(&unsafe{ core::mem::transmute_copy::<Self, Self::Packed>(self) });
             Ok(())
         }

@@ -8,6 +8,7 @@ use etherage::{
     SlaveAddress,
     CommunicationState, Master, 
     registers,
+    sdo,
     };
 use ioprio::*;
 use futures::stream::StreamExt;
@@ -33,63 +34,102 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //Init master
     let master = Arc::new(Master::new(EthernetSocket::new("eno1")?));
     
+    master.switch(CommunicationState::Init).await.unwrap();
+    let raw = unsafe {master.get_raw()};
     (
-//         async { unsafe {master.get_raw()}.receive().await.unwrap() },
-//         async { unsafe {master.get_raw()}.send().await.unwrap() },
-        async {
-            master.switch(CommunicationState::Init).await.unwrap();
-            (
-                master.reset_addresses(),
-                master.reset_clock(),
-                master.reset_logical(),
-        //         master.reset_mailboxes(),
-                unsafe {master.get_raw()}.bwr(etherage::registers::ports_errors, etherage::registers::PortsErrorCount::default()),
-            ).join().await;
-
-            let mut tasks = Vec::new();
-            let mut iter = master.discover().await;
-            while let Some(mut s) = iter.next().await  {
-                tasks.push(async move {
-                    let SlaveAddress::AutoIncremented(i) = s.address()
-                        else { panic!("slave already has a fixed address") };
-                    s.set_address(i+1).await.unwrap();
-                    s.init_mailbox().await.unwrap();
-                    s.init_coe().await;
-                    i+1
-                });
-            }
-            let slaves = tasks.join().await;
-            
-            // initialize clocks and perform static drift
-            master.init_clock().await.unwrap();
-            
-            master.switch(CommunicationState::PreOperational).await.unwrap();
-        //     master.switch(CommunicationState::SafeOperational).await.unwrap();
-            
-            let clock = master.clock().await;
-            let mut interval = tokio_timerfd::Interval::new_interval(Duration::from_millis(2)).unwrap();
-            let mut interval2 = tokio_timerfd::Interval::new_interval(Duration::from_millis(5_367)).unwrap();
-
-            (
-                // dynamic drift
-                clock.sync(),
-                // survey divergence
-                async { loop {
-                    interval.next().await.unwrap().unwrap();
-                    
-                    for &slave in &slaves {
-                        print!("{} ", clock.divergence(slave));
-                    }
-                    print!("\n");
-                }},
-                // parasitic realtime data exchanges
-                async { loop {
-                    interval2.next().await.unwrap().unwrap();
-                    master.logical_exchange(etherage::Field::simple(0), [0u8; 64]).await;
-                }},
-            ).race().await.unwrap();
-        },
+        master.reset_addresses(),
+        master.reset_clock(),
+        master.reset_logical(),
+//         master.reset_mailboxes(),
+        raw.bwr(registers::ports_errors, registers::PortsErrorCount::default()),
     ).join().await;
+
+    let mut tasks = Vec::new();
+    let mut iter = master.discover().await;
+    while let Some(mut s) = iter.next().await  {
+        tasks.push(async move {
+            let SlaveAddress::AutoIncremented(i) = s.address()
+                else { panic!("slave already has a fixed address") };
+            s.set_address(i+1).await.unwrap();
+            s.init_mailbox().await.unwrap();
+            s.init_coe().await;
+            s
+        });
+    }
+    let slaves = tasks.join().await;
+    
+    // initialize clocks and perform static drift
+    master.init_clock().await.unwrap();
+    
+    master.switch(CommunicationState::PreOperational).await.unwrap();
+    
+    
+    for s in &slaves {
+        use etherage::Slave;
+        
+        let mut coe = s.coe().await;
+        let raw = unsafe {s.raw_master()};
+        let priority = bilge::prelude::u2::new(0);
+        
+//             use etherage::PduData;
+//             sdo::SyncMode::DCSync0.pack(&mut [0u8; 2]).unwrap();
+        
+        raw.write(s.address(), registers::isochronous::all, {
+            let mut isochronous = registers::Isochronous::default();
+            isochronous.enable.set_operation(true);
+            isochronous.enable.set_sync0(true);
+            isochronous.interrupt0.set_enable(true);
+            isochronous.sync_0_cycle_time = 2_000_000;
+            isochronous.latch_0_edge.set_positive(true);
+            isochronous
+            }).await.one();
+        
+        coe.sdo_write(&sdo::sync_manager.logical_write().sync().sync_mode(), priority, sdo::SyncMode::DCSync0).await.unwrap();
+//         raw.write(s.address(), registers::isochronous::slave_sync, {
+//             let mut value = registers::IsochronousSync::default();
+//             value.set_enable_cyclic(true);
+//             value.set_generate_sync0(true);
+//             value
+//             }).await.one().unwrap();
+//         raw.write(s.address(), registers::isochronous::all, {
+//             let mut value = registers::Isochronous::default();
+//             value.set(enables, {
+//                 let mut value = registers::IsochronousSync::default();
+//                 value.set_enable_cyclic(true);
+//                 value.set_generate_sync0(true);
+//                 value
+//                 });
+//             value.set_sync_0_cycle_time(2_000_000);
+//             value
+//             }).await.one().unwrap();
+//         raw.write(s.address(), registers::isochronous::sync_0_cycle_time, 2_000_000).await.one().unwrap();
+    }
+    
+    master.switch(CommunicationState::SafeOperational).await.unwrap();
+    
+    let clock = master.clock().await;
+    let mut interval = tokio_timerfd::Interval::new_interval(Duration::from_millis(2)).unwrap();
+    let mut interval2 = tokio_timerfd::Interval::new_interval(Duration::from_millis(5_367)).unwrap();
+
+    (
+        // dynamic drift
+        clock.sync(),
+        // survey divergence
+        async { loop {
+            interval.next().await.unwrap().unwrap();
+            
+            for slave in &slaves {
+                let SlaveAddress::Fixed(slave) = slave.address() else {panic!()};
+                print!("{} ", clock.divergence(slave));
+            }
+            print!("\n");
+        }},
+        // parasitic realtime data exchanges
+        async { loop {
+            interval2.next().await.unwrap().unwrap();
+            master.logical_exchange(etherage::Field::simple(0), [0u8; 64]).await;
+        }},
+    ).race().await.unwrap();
 
     Ok(())
 }
