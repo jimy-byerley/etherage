@@ -255,126 +255,196 @@ impl From<AlState> for AlMixedState {
 }
 
 /// ETG.1000.6 table 11
+/// Some description are provid from "Beckhoff Information System" documentation
 #[bitsize(16)]
-#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq, thiserror::Error)]
 pub enum AlError {
-   ///  No error Any Current state
+    ///  No error Any Current state
+    #[error("No error Any Current state")]
     NoError = 0x0000,
-    ///  Unspecified error
+    /// No error code is defined for occurred error
+    #[error("Unspecified error")]
     Unspecified = 0x0001,
-    ///  No Memory
+    ///  Less hardware memory, slave needs more memory
+    #[error("No memory")]
     NoMemory = 0x0002,
     ///  Invalid Device Setup
+    #[error("Invalid device setup")]
     InvalidDeviceSetup = 0x0003,
-//     0x0005 Reserved due to compatibility reasons
-    ///  Invalid requested state change
+    //0x004 Reserved - Output/Input mapping is not valid for this hardware or software revision (0x1018:03)
+    //0x0005 Reserved due to compatibility reasons
+    /// The EtherCAT State Machine (ESM) defines which state changes are allowed. All other state changes are not allowed
+    #[error("Invalid requested state change ")]
     InvalidStateRequest = 0x0011,
-    ///  Unknown requested state
+    /// The ESM defines the following states. They are coded with fixed values (only lower (=right) nibble):
+    /// - BOOT: AL Control = 0x03
+    /// - INIT: AL Control = 0x01
+    /// - PREOP: AL Control = 0x02
+    /// - SAFEOP: AL Control = 0x04
+    ///  - OP: AL Control = 0x08
+    ///
+    /// The fifth bit of the AL Control is the “Error Acknowledge Bit”. If the slave is in AL STATUS = 0x14, i.e. ERROR SAFEOP the master acknowledges this by setting the Acknowledge bit.
+    #[error("Unknown requested state")]
     UnknownStateRequest = 0x0012,
-    ///  Bootstrap not supported
+    /// Device does not support BOOT state, but the master requests the slave to go to BOOT
+    #[error("Bootstrap not supported")]
     BootstrapNotSupported = 0x0013,
-    ///  No valid firmware
+    /// This error code may be returned after a firmware download, if the downloaded file cannot be used by the application controller
+    #[error("No valid firmware")]
     NoValidFirmware = 0x0014,
-    ///  Invalid mailbox configuration for switching to [AlState::Init]
+    /// Mailbox memory configuration between input/outpout are overlapsed
+    #[error("Invalid mailbox configuration for switching to [AlState::Init]")]
     InvalidMailboxConfigBoot = 0x0015,
-    ///  Invalid mailbox configuration for switching to [AlState::PreoOperational]
+    /// Invalid mailbox configuration for switching to [AlState::PreoOperational]
+    #[error("Invalid mailbox configuration for switching to [AlState::PreoOperational]")]
     InvalidMailboxConfigPreop = 0x0016,
-    ///  Invalid sync manager configuration
+    /// Process data communication is done via extra memory areas on the slave, separated for outputs and inputs.
+    /// The process data length and the process data SyncManager length have to be the same.
+    /// If this is not the case or the start address or direction does not match this error is returned.
+    #[error("Invalid Sync Manager configuration ")]
     InvalidSyncConfig = 0x0017,
-    ///  No valid inputs available
+    /// The slave application cannot provide valid input values
+    #[error("No valid inputs available")]
     NoInputsAvailable = 0x0018,
-    ///  No valid outputs
+    /// The slave application cannot recieve valid output values.
+    #[error("No valid outputs")]
     NoValidInputs = 0x0019,
-    ///  Synchronization error
+    /// If too many RxPDO Toggle error occur, i.e. the RxPDO Toggle Failed Counter increases the internal limit the slave returns to SAFEOP error with 0x001A.
+    /// Multiple synchronization errors. Device is not synchronized any more (used if the causes mirrored by the AL Status Codes 0x2C, 0x2D, 0x32, 0x33, 0x34 cannot be distinguished).
+    #[error("Synchronization error")]
     Synchronization = 0x001A,
-    ///  Sync manager watchdog
+    /// The slave did not receive process data within the specified watchdog time. Usually, the WD time is 100ms.
+    /// The WD is re-started every time it receives new process data, usually when the Output SyncManager (SyncManager2) is written.
+    /// For devices which have only inputs usually no WD is used. Increasing the WD is not a solution.
+    #[error("Sync manager watchdog ")]
     SyncWatchdog = 0x001B,
-    ///  Invalid Sync Manager Types
-    InvalidSyncTypes = 0x001C, 
-    /**  
-        Invalid Output Configuration
-        
-        raise when a something is wrong in a sync channel or PDO mapping that should be written by the master
-    */
-    InvalidOutputConfig = 0x001D, 
-    /**  
-        Invalid Input Configuration
-        
-        raise when a something is wrong in a sync channel or PDO mapping that should be read by the master
-    */
-    InvalidInputConfig = 0x001E, 
-    ///  Invalid Watchdog Configuration
+    /// Invalid Sync Manager Types
+    #[error("Invalid Sync Manager Types")]
+    InvalidSyncTypes = 0x001C,
+    /// SM configuration for output process data is invalid, raise when a something is wrong in a sync channel or PDO mapping that should be read by the master
+    #[error("Invalid Output Configuration ")]
+    InvalidOutputConfig = 0x001D,
+    /// SM configuration for input process data is invalid, raise when a something is wrong in a sync channel or PDO mapping that should be read by the master
+    #[error("Invalid Input Configuration ")]
+    InvalidInputConfig = 0x001E,
+    /// The Watchdog is configured in the slave register 0x0400 and 0x0420. EtherCAT defines default watchdog settings (100ms) or they are defined in the ESI file.
+    /// If the slave does not accept a change of the expected settings it returns this AL Status Code Example: A slave may not accept that the WD is deactivated.
+    #[error("Invalid Watchdog Configuration")]
     InvalidWatchdogConfig = 0x001F,
-    ///  Slave needs cold start
+    /// Slave device require a power off - power on reset
+    #[error("Slave needs cold start")]
     NeedColdStart = 0x0020,
-    ///  Slave needs INIT
+    /// Slave application requests INIT state
+    #[error("Slave needs INIT")]
     NeedInit = 0x0021,
-    ///  Slave needs PREOP
+    /// Slave application requests PREOP state
+    #[error("Slave needs PREOP")]
     NeedPreop = 0x0022,
-    ///  Slave needs SAFEOP
+    /// Slave application requests SAFEOP state
+    #[error("Slave needs SAFEOP")]
     NeedSafeOp = 0x0023,
-    ///  Invalid Input Mapping
+    /// Invalid Input Mapping. The process data are described by the configuration (PdoConfig - list of actual variable, usually indexes from 0x6mnn to 0x7mnn) and PDO assignment (PdoAssign).
+    #[error("Invalid Input Mapping")]
     InvalidInputMapping = 0x0024,
-    ///  Invalid Output Mapping
+    /// Invalid Output Mapping. The process data are described by the configuration (PdoConfig - list of actual variables) and PDO assignment (PdoAssign).
+    #[error("Invalid Output Mapping")]
     InvalidOutputMapping = 0x0025,
-    ///  Inconsistent Settings
+    /// General settings mismatch
+    #[error("Inconsistent Settings")]
     InconsistentSettings = 0x0026,
-    ///  FreeRun not supported
+    /// FreeRun not supported
+    #[error("Freerun not supported ")]
     FreeRunNotSupported = 0x0027,
-    ///  SyncMode not supported
+    /// Synchronization not supported
+    #[error("SyncMode not supported")]
     SyncModeNotSupported = 0x0028,
-    ///  FreeRun needs 3Buffer Mode
+    /// FreeRun mode, SM has to run in 3-buffer mode
+    #[error("FreeRun needs 3 buffer Mode")]
     FreeRunNeedsBuffer = 0x0029,
-    ///  Background Watchdog
+    /// Background Watchdog
+    #[error("Background Watchdog")]
     BackgroundWatchdog = 0x002A,
-    ///  No Valid Inputs and Outputs
+    /// No Valid Inputs and Outputs
+    #[error("No Valid Inputs and Outputs")]
     NoValidIO = 0x002B,
-    ///  Fatal Sync Error
+    /// The hardware sync signal generated by the slave is not generated any more.
+    /// The master sets and activated the cycle time of the Sync signal during state transition from PREOP to SAFEOP.
+    /// If a slave was disconnected and reconnected (also due to lost frames or CRC errors) the generation of the SyncSignal may be lost.
+    #[error("Fatal Sync Error")]
     FatalSync = 0x002C,
-    ///  No Sync Error
+    /// Sync signal not received: In SAFEOP the slave waits for the first Sync0/Sync1 events before switching to OP,
+    /// if these events were not received during the SAFEOP to OP-Timeout time the slave refuses the state transition to OP
+    #[error("No sync error")]
     NoSync = 0x002D,
-    ///  Invalid DC SYNC Configuration
+    /// Distributed Clock Configuration is invalid due to application requirements
+    #[error("Invalid DC SYNC Configuration")]
     InvalidDcConfig = 0x0030,
-    ///  Invalid DC Latch Configuration
+    /// DC Latch configuration is invalid due to application requirements
+    #[error("Invalid DC Latch Configuration")]
     InvalidLatchConfig = 0x0031,
-    ///  Phase Link Lock Error
+    /// Master not synchronized, at least one DC event recieved
+    #[error("Phase Link Lock Error")]
     PLL = 0x0032,
-    ///  Distributed Clock Sync IO Error
+    /// Multiple Synchronization Errors: At least one SycnSignal was received before.
+    /// However, the PLL between slave and master is not synchronized any more. This may occur if the master application jitters too much
+    #[error(" Distributed Clock Sync IO Error")]
     DCSyncIO = 0x0033,
-    ///  Distributed Clock Sync Timeout Error
+    /// Multiple Synchronization Errors, too much SM events missed
+    #[error("Distributed Clock Sync Timeout Error")]
     DCSyncTimeout = 0x0034,
-    ///  Distributed Clock Invalid Sync Cycle Time
+    /// Distributed Clock Invalid Sync Cycle Time
+    #[error("Distributed Clock Invalid Sync Cycle Time")]
     DCInvalidPeriod = 0x0035,
-// 0x0036 Distributed Clock Sync0 Cycle Time
-// 0x0037 Distributed Clock Sync1 Cycle Time
-    ///  MBX_AOE
+    // 0x0036 Distributed Clock Sync0 Cycle Time - DC Sync0 cycle time does not fit to the application requirements
+    // 0x0037 Distributed Clock Sync1 Cycle Time - DC Sync1 cycle time does not fit to the application requirements
+    /// MBX_AOE
+    #[error("MBX_AOE")]
     MailboxAOE = 0x0041,
-    ///  MBX_EOE
+    /// MBX_EOE
+    #[error("MBX_EOE")]
     MailboxEOE = 0x0042,
-    ///  MBX_COE
+    /// MBX_COE
+    #[error("MBX_COE")]
     MailboxCOE = 0x0043,
-    ///  MBX_FOE
+    /// MBX_FOE
+    #[error("MBX_FOE")]
     MailboxFOE = 0x0044,
-    ///  MBX_SOE
+    /// MBX_SOE
+    #[error("MBX_SOE")]
     MailboxSOE = 0x0045,
-    ///  MBX_VOE
+    /// MBX_VOE
+    #[error("MBX_VOE")]
     MailboxVOE = 0x004F,
-    ///  raised when switching to PreOperational but SII access owner has not been switched to PDI
+    /// EEPROM not assigned to PDI, rraised when switching to PreOperational but SII access owner has not been switched to PDI
+    #[error("EEPROM no access ")]
     EepromNoAccess = 0x0050,
-    ///  EEPROM Error
+    /// EEPROM access error
+    #[error("EEPROM error")]
     Eeeprom = 0x0051,
-    ///  Slave restarted locally
+    /// Slave restarted locally
+    #[error("Slave restarted locally")]
     SlaveRestarted = 0x0060,
-    ///  Device Identification value updated
+    /// Device Identification value updated
+    #[error("Device Identification value updated")]
     DeviceIdentificationUpdated = 0x0061,
     // 0x0062 …0  reserved
-    ///  Application controller available
+    /// Application controller available
+    #[error("Application controller available")]
     ApplicationAvailable = 0x00F0,
     // 0x00F0 - 0xFFFF:  reserved
     // 0x8000 - 0xFFFF:  vendor specific
+    #[error("Vendor specific error")]
     Specific = 0xffff,
 }
 data::bilge_pdudata!(AlError, u16);
+
+/// Implement fmt display for AlError
+// impl fmt::Display for AlError {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         let err: &u16 = unsafe { std::mem::transmute::<&Self,&u16>(self) };
+//         write!(f, "AlError: {}, {}", self, AlErrorInfo[self])
+//     }
+// }
 
 /// ETG.1000.6 table 13
 #[bitsize(9)]
@@ -954,8 +1024,8 @@ pub mod dc {
         pub system_delay: u32,
         /**
             Bits 30..0: Mean difference between local copy of "system time" and "received system time" values.
-            Bit 31: 
-                - 0 - Local copy of "system time" > "received system time". 
+            Bit 31:
+                - 0 - Local copy of "system time" > "received system time".
                 - 1 - Othercase
         */
         pub system_difference: TimeDifference,
@@ -973,10 +1043,10 @@ pub mod dc {
         pub sign: bool,
     }
     data::bilge_pdudata!(TimeDifference, u32);
-    
+
     impl From<TimeDifference> for i32 {
         fn from(value: TimeDifference) -> i32  {
-            u32::from(value.mean().value()) as i32 
+            u32::from(value.mean().value()) as i32
                 * if value.sign() {-1} else {1}
         }
     }

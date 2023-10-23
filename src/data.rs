@@ -17,7 +17,7 @@ pub trait PduData: Sized {
 
     fn packed_size() -> usize  {Self::Packed::LEN}
     fn packed_bitsize() -> usize {Self::Packed::LEN*8}
-    
+
     fn packed(&self) -> PackingResult<Self::Packed> {
         let mut buffer = Self::Packed::uninit();
         self.pack(buffer.as_mut())?;
@@ -51,7 +51,8 @@ pub trait Storage: AsRef<[u8]> + AsMut<[u8]>
 }
 impl<const N: usize> Storage for [u8; N] {
     const LEN: usize = N;
-    fn uninit() -> Self {unsafe {core::mem::uninitialized()}}
+    #[allow(deprecated)]
+    fn uninit() -> Self {unsafe { core::mem::uninitialized()}}
 //     fn zeroed() -> Self {unsafe {core::mem::zeroed()}}
 }
 
