@@ -5,3 +5,5 @@
 .devcontainer/*
 target/*
 Cargo.lock
+tests/*
+test/*

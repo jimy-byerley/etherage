@@ -40,7 +40,7 @@ struct Direction {
 impl Mailbox {
     /**
         configure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
-        
+
         `slave` is the slave's fixed address, no implementation is made for mailbox with topological addresses
     */
     pub async fn new(master: Arc<RawMaster>, slave: u16, write: Range<u16>, read: Range<u16>) -> EthercatResult<Mailbox> {
@@ -77,10 +77,10 @@ impl Mailbox {
         ).join().await;
         if configured.0.one().is_err() || configured.1.one().is_err()
             {return Err(EthercatError::Master("failed to configure mailbox sync managers"))}
-        
+
         assert!(usize::from(read.end - read.start) < MAILBOX_MAX_SIZE);
         assert!(usize::from(write.end - write.start) < MAILBOX_MAX_SIZE);
-        
+
         Ok(Self {
             master,
             slave,
@@ -130,7 +130,7 @@ impl Mailbox {
         let buffer = &mut allocated[range];
         // read the mailbox content
         loop {
-            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1 
+            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1
                 {break}
 
             // trigger repeat
@@ -154,13 +154,13 @@ impl Mailbox {
         }
         if header.ty() != ty
             {return Err(EthercatError::Protocol("received unexpected mailbox frame type"))}
-        if u8::from(header.count()) != self.read.count 
+        if u8::from(header.count()) != self.read.count
             {return Err(EthercatError::Protocol("received mailbox frame has wrong counter"))}
         received.write(
             frame.read(header.length() as usize)
                 .map_err(|_| EthercatError::Protocol("inconsistent mailbox size"))?
             ).map_err(|_| EthercatError::Master("read buffer is too small for mailbox data"))?;
-        
+
         Ok(received.finish())
     }
     /**
@@ -266,24 +266,33 @@ data::bilge_pdudata!(MailboxErrorFrame, u32);
 
 // ETG 1000.4 table 30
 #[bitsize(16)]
-#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq, thiserror::Error)]
 pub enum MailboxError {
     /// Syntax of 6 octet Mailbox Header is wrong
+    #[error("Syntax is wrong")]
     Syntax = 0x1,
     /// The Mailbox protocol is not supported
+    #[error("Unsupported protocol")]
     UnsupportedProtocol = 0x2,
     /// Channel Field contains wrong value (a slave can ignore the channel field)
+    #[error("Invalid channel")]
     InvalidChannel = 0x3,
     /// the service in the Mailbox protocol is not supported
+    #[error("Service not supported")]
     ServiceNotSupported = 0x4,
     /// The mailbox protocol header of the mailbox protocol is wrong (without the 6 octet mailbox header)
+    #[error("Header of the protocol is wrong")]
     InvalidHeader = 0x5,
     /// length of received mailbox data is too short for slave's expectations
+    #[error("Size is too short")]
     SizeTooShort = 0x6,
     /// Mailbox protocol cannot be processed because of limited ressources
+    #[error("Not enough memory to process")]
     NoMoreMemory = 0x7,
     /// the length of data is inconsistent
+    #[error("Data length is inconsitent")]
     InvalidSize = 0x8,
     /// Mailbox service already in use
+    #[error("Service already in use")]
     ServiceInWork = 0x9,
 }

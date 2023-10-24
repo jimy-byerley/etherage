@@ -1,8 +1,7 @@
 //! definition of the general ethercat error type
 
-use std::{sync::Arc, any::TypeId};
+use std::{sync::Arc};
 use core::fmt;
-use crate::{registers::AlError, can::{CanError, SdoAbortCode}, mailbox::MailboxError};
 use chrono::{Datelike, Timelike};
 
 /**
@@ -43,10 +42,16 @@ pub enum EthercatError<T=()> {
 /// convenient alias to simplify return annotations
 pub type EthercatResult<T=(), E=()> = core::result::Result<T, EthercatError<E>>;
 
-impl<T: fmt::Debug> fmt::Display for EthercatError<T> {
+impl<T: fmt::Debug> fmt::Debug for EthercatError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as fmt::Debug>::fmt(self, f)
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for EthercatError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 
-        //Get timestamp of these error
+        //Get timestamp of these error - Placeholder
         let now: chrono::DateTime<chrono::Utc> = chrono::Utc::now();
         let timestamp : String = String::from(format!("{}/{:02}/{:02} {} {:02}:{:02}{:02}:{:06} - ",
         now.year(), now.month(), now.day(), now.weekday(),
@@ -58,8 +63,9 @@ impl<T: fmt::Debug> fmt::Display for EthercatError<T> {
             Self::Master(value)   => { (String::from("Master"), value.to_string()) },
             Self::Protocol(value) => { (String::from("Protocol"), value.to_string()) },
             Self::Timeout(value)  => { (String::from("Timeout"), value.to_string()) },
-            Self::Slave(value) => { (String::from("Slave"), "TODO value".to_string()) } // value.to_string() }
-                // let item0: String = String::from("Slave");
+            Self::Slave(value) => { (String::from("Slave"), format!("{}",value)) }
+            //{
+                // let item0: String = String::from("Slave")
                 // let mut item1 : String;
                 // if TypeId::of::<T>() == TypeId::of::<CanError>() {
                 //     let temp2: &CanError = unsafe { std::mem::transmute::<&T, &CanError>(value) };
@@ -84,7 +90,7 @@ impl<T: fmt::Debug> fmt::Display for EthercatError<T> {
         };
 
         f.debug_struct("EthercatError")
-            .field("timestamp", &timestamp)
+            //.field("timestamp", &timestamp) // Disable timestamp according to Jimmy wish
             .field("source", &src)
             .field("message", &msg)
             .finish()

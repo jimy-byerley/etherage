@@ -475,65 +475,92 @@ pub enum SdoCommandResponse {
 data::bilge_pdudata!(SdoCommandResponse, u3);
 
 #[bitsize(32)]
-#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq, thiserror::Error)]
 pub enum SdoAbortCode {
     /// Toggle bit not changed
+    #[error("Bit not changed")]
     BadToggle = 0x05_03_00_00,
     /// SDO protocol timeout
+    #[error("SDO timeout")]
     Timeout = 0x05_04_00_00,
     /// Client/Server command specifier not valid or unknown
+    #[error("Invalid or unknown command")]
     UnsupportedCommand = 0x05_04_00_01,
     /// Out of memory
+    #[error("Out of memory")]
     OufOfMemory = 0x05_04_00_05,
     /// Unsupported access to an object, this is raised when trying to access a complete SDO when complete SDO access is not supported
+    #[error("Access not supported")]
     UnsupportedAccess = 0x06_01_00_00,
     /// Attempt to read to a write only object
+    #[error("Write only")]
     WriteOnly = 0x06_01_00_01,
     /// Attempt to write to a read only object
+    #[error("Read only")]
     ReadOnly = 0x06_01_00_02,
     /// Subindex cannot be written, SI0 must be 0 for write access
+    #[error("Subindex cannot written")]
     WriteError = 0x06_01_00_03,
     /// SDO Complete access not supported for objects of variable length such as ENUM object types
+    #[error("SDO variable length not supported")]
     VariableLength = 0x06_01_00_04,
     /// Object length exceeds mailbox size
+    #[error("Object too big for mailbox")]
     ObjectTooBig = 0x06_01_00_05,
     /// Object mapped to RxPDO, SDO Download blocked
+    #[error("Resources locked by a PDO")]
     LockedByPdo = 0x06_01_00_06,
     /// The object does not exist in the object directory
+    #[error("Object not found")]
     InvalidIndex = 0x06_02_00_00,
     /// The object can not be mapped into the PDO
+    #[error("Cannot map object in PDO")]
     CannotMap = 0x06_04_00_41,
     /// The number and length of the objects to be mapped would exceed the PDO length
+    #[error("PDO too small")]
     PdoTooSmall = 0x06_04_00_42,
     /// General parameter incompatibility reason
+    #[error("Incompatibility detected - no further information")]
     IncompatibleParameter = 0x06_04_00_43,
     /// General internal incompatibility in the device
+    #[error("Device incompatible")]
     IncompatibleDevice = 0x06_04_00_47,
     /// Access failed due to a hardware error
+    #[error("Device access faillure")]
     HardwareError = 0x06_06_00_00,
     /// Data type does not match, length of service parameter does not match
+    #[error("Invalid length")]
     InvalidLength = 0x06_07_00_10,
     /// Data type does not match, length of service parameter too high
+    #[error("Service too big")]
     ServiceTooBig = 0x06_07_00_12,
     /// Data type does not match, length of service parameter too low
+    #[error("Service too small")]
     ServiceTooSmall = 0x06_07_00_13,
     /// Subindex does not exist
+    #[error("Subindex not found")]
     InvalidSubIndex = 0x06_09_00_11,
     /// Value range of parameter exceeded (only for write access)
+    #[error("Value out of range")]
     ValueOutOfRange = 0x06_09_00_30,
     /// Value of parameter written too high
+    #[error("Value too high")]
     ValueTooHigh = 0x06_09_00_31,
     /// Value of parameter written too low
+    #[error("Value to low")]
     ValueTooLow = 0x06_09_00_32,
     /// Maximum value is less than minimum value
+    #[error("Invalid range")]
     InvalidRange = 0x06_09_00_36,
     /// General error
+    #[error("Generic error")]
     GeneralError = 0x08_00_00_00,
     /**
     Data cannot be transferred or stored to the application
 
     NOTE: This is the general Abort Code in case no further detail on the reason can determined. It is recommended to use one of the more detailed Abort Codes (0x08000021, 0x08000022)
     */
+    #[error("Data transfer refuse")]
     Refused = 0x08_00_00_20,
     /**
     Data cannot be transferred or stored to the application because of local control
@@ -541,14 +568,17 @@ pub enum SdoAbortCode {
     NOTE: “local control” means an application specific reason. It does not mean the
     ESM-specific control
     */
+    #[error("Data transfer refuse by local control")]
     ApplicationRefused = 0x08_00_00_21,
     /**
     Data cannot be transferred or stored to the application because of the present device state
 
     NOTE: “device state” means the ESM state
     */
+    #[error("Invalid device state for data transfer")]
     StateRefused = 0x08_00_00_22,
     /// Object dictionary dynamic generation fails or no object dictionary is present
+    #[error("Empty dictionnary")]
     DictionnaryEmpty = 0x08_00_00_23,
 }
 data::bilge_pdudata!(SdoAbortCode, u32);
