@@ -59,7 +59,10 @@ pub mod dls_user {
     pub const p11: Field<u32> = Field::simple(0x09c0);
     pub const p12: Field<u32> = Field::simple(0x09c8);
 
+    /// ETG.1000.4 table 36
     pub const event: Field<DLSUserEvents> = Field::simple(0x0220);
+    /// ETG.1000.4 table 37
+    /// 0 to disable the matching event in [event], 1 to enable
     pub const event_mask: Field<DLSUserEvents> = Field::simple(0x0202);
     pub const watchdog: Field<u16> = Field::simple(0x0410);
 }
@@ -424,6 +427,7 @@ pub enum AlError {
     ///  Fatal Sync Error
     FatalSync = 0x002C,
     ///  No Sync Error
+    /// SyncSignal not received: In SAFEOP the slave waits for the first Sync0/Sync1 events before switching to OP, if these events were not received during the SAFEOP to OP-Timeout time the slave refuses the state transition to OP
     NoSync = 0x002D,
     ///  Invalid DC SYNC Configuration
     InvalidDcConfig = 0x0030,
@@ -670,7 +674,7 @@ data::bilge_pdudata!(LoopStatus, u2);
 
 /// The event registers are used to indicate an event to the DL -user. The event shall be acknowledged if the corresponding event source is read. The events can be masked.
 #[bitsize(32)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct DLSUserEvents {
 	/// R1 was written
 	pub r1_change: bool,
@@ -692,15 +696,15 @@ data::bilge_pdudata!(DLSUserEvents, u32);
 	ETG.1000.4 table 38
 */
 #[bitsize(16)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct ExternalEvent {
 	/// dc event 0
 	pub dc0: bool,
 	reserved: u1,
 	/// dl status register was changed
-	pub dl_status_change: bool,
-	/// R3 or R4 was written
-	pub r3_r4_change: bool,
+	pub dl: bool,
+	/// R3 or R4 was written, meaning an ALStatus change
+	pub al: bool,
 	/// sync manager channel was accessed by slave
 	pub sync_manager_channel: [bool; 8],
 	reserved: u4,
@@ -1087,7 +1091,7 @@ impl From<i32> for TimeDifference {
 pub struct Isochronous {
     pub reserved1: IsochronousAccess,                // DC Cyclic unit control
     pub enable: IsochronousEnables,                      // Taken from SII: CyclicOperationTime + Sync0 + Sync1 + u5
-    pub sync_pulse: u16,                            // Optional multiple of 10ns
+    pub pulse: u16,                            // Optional multiple of 10ns
     reserved2: [u8; 10],
     pub interrupt0: IsochronousInterrupt,           // Interrupt enable/disable struct
     pub interrupt1: IsochronousInterrupt,           // Interrupt enable/disable struct

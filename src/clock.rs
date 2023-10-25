@@ -348,14 +348,14 @@ impl SyncClock {
 
         // Start sync - Wait that all slave obtains the frame
         let t = self.global_time() + start_time.as_nanos() as u64;
-        self.slaves.iter().map(|slv| async {
-//             self.master.fpwr(slv.address, registers::isochronous::slave_sync, slv.isochronous.sync).await;
-            self.master.fpwr(slv.address, registers::isochronous::sync::start_time, t as u32).await;
-            self.master.fpwr(slv.address, registers::isochronous::sync::sync0_cycle_time, slv.isochronous.sync0_cycle_time).await;
-            self.master.fpwr(slv.address, registers::isochronous::sync::sync1_cycle_time, slv.isochronous.sync1_cycle_time).await;
-            self.master.fpwr(slv.address, registers::isochronous::latch::edge0, slv.isochronous.latch0_edge).await;
-            self.master.fpwr(slv.address, registers::isochronous::latch::edge1, slv.isochronous.latch1_edge).await;
-        }).collect::<Vec<_>>().join().await;
+//         self.slaves.iter().map(|slv| async {
+// //             self.master.fpwr(slv.address, registers::isochronous::slave_sync, slv.isochronous.sync).await;
+//             self.master.fpwr(slv.address, registers::isochronous::sync::start_time, t as u32).await;
+//             self.master.fpwr(slv.address, registers::isochronous::sync::sync0_cycle_time, slv.isochronous.sync0_cycle_time).await;
+//             self.master.fpwr(slv.address, registers::isochronous::sync::sync1_cycle_time, slv.isochronous.sync1_cycle_time).await;
+//             self.master.fpwr(slv.address, registers::isochronous::latch::edge0, slv.isochronous.latch0_edge).await;
+//             self.master.fpwr(slv.address, registers::isochronous::latch::edge1, slv.isochronous.latch1_edge).await;
+//         }).collect::<Vec<_>>().join().await;
 
         thread_priority::set_current_thread_priority(ThreadPriority::Max).unwrap();
 
@@ -370,7 +370,7 @@ impl SyncClock {
 
         // Wait the DC synchro start
         // TODO: see if this is necessary
-        while self.global_time() < t {std::thread::yield_now()}
+//         while self.global_time() < t {std::thread::yield_now()}
 
 //         interval.reset();
         while ! self.stopped.load(Relaxed) {
@@ -427,8 +427,8 @@ impl SyncClock {
         self.slaves.first().unwrap().address
     }
     /// return the current time on the reference clock
-    pub fn reference(&self) -> SystemTime  {
-        self.epoch + self.start.elapsed() + Duration::from_nanos(u64::from(self.slaves.first().unwrap().clock.system_delay))
+    pub fn reference(&self) -> u64  {
+        u64::try_from( i128::try_from(self.start.elapsed().as_nanos()).unwrap() - self.offset ).unwrap()
     }
 
     /// time offset between the master (the computer's system clock, aka local time) and the reference clock

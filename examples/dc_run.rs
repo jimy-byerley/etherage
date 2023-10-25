@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
     master.switch(CommunicationState::PreOperational).await.unwrap();
     
-    
+    println!("custom init");
     for s in &slaves {
         use etherage::Slave;
         
@@ -71,41 +71,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let raw = unsafe {s.raw_master()};
         let priority = bilge::prelude::u2::new(0);
         
-//             use etherage::PduData;
-//             sdo::SyncMode::DCSync0.pack(&mut [0u8; 2]).unwrap();
-        
         raw.write(s.address(), registers::isochronous::all, {
             let mut isochronous = registers::Isochronous::default();
             isochronous.enable.set_operation(true);
             isochronous.enable.set_sync0(true);
-            isochronous.interrupt0.set_enable(true);
-            isochronous.sync_0_cycle_time = 2_000_000;
-            isochronous.latch_0_edge.set_positive(true);
+//             isochronous.interrupt0.set_enable(true);
+            isochronous.sync0_cycle_time = 2_000_000;
+//             isochronous.latch0_edge.set_positive(true);
             isochronous
-            }).await.one();
-        
+            }).await.one().unwrap();
         coe.sdo_write(&sdo::sync_manager.logical_write().sync().sync_mode(), priority, sdo::SyncMode::DCSync0).await.unwrap();
-//         raw.write(s.address(), registers::isochronous::slave_sync, {
-//             let mut value = registers::IsochronousSync::default();
-//             value.set_enable_cyclic(true);
-//             value.set_generate_sync0(true);
-//             value
-//             }).await.one().unwrap();
-//         raw.write(s.address(), registers::isochronous::all, {
-//             let mut value = registers::Isochronous::default();
-//             value.set(enables, {
-//                 let mut value = registers::IsochronousSync::default();
-//                 value.set_enable_cyclic(true);
-//                 value.set_generate_sync0(true);
-//                 value
-//                 });
-//             value.set_sync_0_cycle_time(2_000_000);
-//             value
-//             }).await.one().unwrap();
-//         raw.write(s.address(), registers::isochronous::sync_0_cycle_time, 2_000_000).await.one().unwrap();
+//         coe.sdo_write(&sdo::sync_manager.logical_write().sync().cycle(), priority, 2_000_000).await.unwrap();
     }
+    println!("initialized");
+    
     
     master.switch(CommunicationState::SafeOperational).await.unwrap();
+    println!("safeop");
     
     let clock = master.clock().await;
     let mut interval = tokio_timerfd::Interval::new_interval(Duration::from_millis(2)).unwrap();

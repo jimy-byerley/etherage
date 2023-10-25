@@ -515,6 +515,7 @@ impl RawMaster {
                 self.socket.poll_send(cx, &send)
                 ).await?;
             {
+//                 println!("reset buffer");
                 let mut state = self.pdu_state.lock().unwrap();
                 // reset state
                 state.ready = false;

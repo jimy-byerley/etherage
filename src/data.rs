@@ -130,6 +130,7 @@ macro_rules! bilge_pdudata {
             let common = Self::Packed::LEN.min(core::mem::size_of::<Self>());
             let src = unsafe{ core::mem::transmute::<&Self, &Self::Packed>(self) };
             dst[.. common].copy_from_slice(&src[.. common]);
+            dst[common .. Self::Packed::LEN].fill(0);
             Ok(())
         }
         fn unpack(src: &[u8]) -> $crate::data::PackingResult<Self> {
