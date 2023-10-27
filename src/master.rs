@@ -5,9 +5,10 @@ use crate::{
 	slave::{Slave, CommunicationState},
 	mapping::{Allocator, Mapping, Group},
 	clock::SyncClock,
-	registers, EthercatError,
+    EthercatError,
 	error::EthercatResult,
     registers::AlError,
+	registers,
 	};
 use std::{
     collections::HashSet,
@@ -19,7 +20,7 @@ use core::{
     };
 use futures_concurrency::future::Join;
 use tokio::sync::RwLockReadGuard;
-
+use magetex::*;
 pub type MixedState = registers::AlMixedState;
 
 
@@ -49,9 +50,10 @@ pub type MixedState = registers::AlMixedState;
     }
     ```
 */
+
 pub struct Master {
     pub(crate) raw: Arc<RawMaster>,
-    pub(crate) slaves: std::sync::Mutex<HashSet<SlaveAddress>>,
+    pub(crate) slaves: Mutex<HashSet<SlaveAddress>>,
     allocator: Allocator,
     clock: tokio::sync::RwLock<Option<SyncClock>>,
 }
@@ -111,13 +113,13 @@ impl Master {
 
     /**
         reset all slaves fixed addresses in the ethercat segment.
-        
+
         To call this function is generally good before connecting to slaves, to allow configuring new addresses without having any previous configured addresses interfering
 
         this function will panic if there is instances of [Slave] alive
     */
     pub async fn reset_addresses(&self) {
-        assert_eq!(self.slaves.lock().unwrap().len(), 0);
+        assert_eq!(self.slaves.lock().await.len(), 0);
         assert!(self.clock.read().await.is_none());
         (
             self.raw.bwr(registers::address::fixed, 0),
@@ -126,28 +128,28 @@ impl Master {
     }
     /**
         reset all slaves mappings to logical memory, and sync managers channels
-        
+
         To call this function is generally a good idea before configuring mappings on slaves, to avoid former mappings to overlap with the new ones.
-        
+
         This function will panic if ther is instances of [Slave] alive
     */
     pub async fn reset_logical(&self) {
-        assert_eq!(self.slaves.lock().unwrap().len(), 0);
+        assert_eq!(self.slaves.lock().await.len(), 0);
         self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::fmmu.address)), [0; 256]).await;
         self.raw.bwr(Field::<[u8; 128]>::simple(usize::from(registers::sync_manager::interface.address)), [0; 128]).await;
     }
     /**
         reset mailbox configurations for all slaves, freeing their reserved memory space.
-        
+
         This function will panic if ther is instances of [Slave] alive
     */
     pub async fn reset_mailboxes(&self) {
-        assert_eq!(self.slaves.lock().unwrap().len(), 0);
+        assert_eq!(self.slaves.lock().await.len(), 0);
         self.raw.bwr(Field::<[u8; 256]>::simple(usize::from(registers::sync_manager::interface.address)), [0; 256]).await;
     }
     /**
         reset all slaves clock synchronization configurations
-        
+
         To call this function is generally a good idea during slaves configuration if you are not using clock at all because preexisting clock setup may prevent slaves from switching to operation mode.
     */
     pub async fn reset_clock(&self) {
@@ -159,7 +161,7 @@ impl Master {
             self.raw.bwr(registers::isochronous::slave_cfg, Default::default()),
         ).join().await;
     }
-    
+
     /// initialize distributed clock on all slaves that support it
     pub async fn init_clock(&self) -> Result<(), EthercatError> {
         self.reset_clock().await;
@@ -168,15 +170,15 @@ impl Master {
             );
         Ok(())
     }
-    
+
     /// return the underlying instance of [SyncClock] synchronizing slaves clocks
     pub async fn clock(&self) -> RwLockReadGuard<'_, SyncClock> {
         RwLockReadGuard::map(
-            self.clock.read().await, 
+            self.clock.read().await,
             |o|  o.as_ref().expect("clock not initialized"),
             )
     }
-    
+
     /// number of slaves in the ethercat segment (only answering slaves will be accounted for)
     pub async fn slaves(&self) -> u16 {
         self.raw.brd(registers::al::status).await.answers
@@ -199,7 +201,7 @@ impl Master {
             config.set_request_id(true);
             config
         }).await;
-        
+
         // wait for state change, or error
         loop {
             let status = self.raw.brd(registers::al::response).await;
@@ -210,7 +212,7 @@ impl Master {
                         {return Err(EthercatError::Slave(error))}
                 }
             }
-            if status.value().unwrap().state() == target.into()  
+            if status.value().unwrap().state() == target.into()
                 {break}
         }
         Ok(())

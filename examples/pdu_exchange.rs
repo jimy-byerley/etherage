@@ -1,11 +1,10 @@
-use std::sync::Arc;
 use futures_concurrency::future::Join;
 use etherage::{Field, EthernetSocket, RawMaster, EthercatResult};
 
 #[tokio::main]
 async fn main() -> EthercatResult<()> {
     let master = RawMaster::new(EthernetSocket::new("eno1")?);
-    
+
     let reg = Field::<u16>::simple(0x1234);
     let slave = 0;
 

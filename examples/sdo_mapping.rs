@@ -1,8 +1,4 @@
-use std::{
-    sync::Arc,
-    error::Error,
-    };
-use core::time::Duration;
+use std::error::Error;
 use etherage::{
     EthernetSocket, RawMaster,
     Slave, SlaveAddress, CommunicationState,
@@ -47,7 +43,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     group.configure(&slave).await?;
     slave.switch(CommunicationState::SafeOperational).await?;
     slave.switch(CommunicationState::Operational).await?;
-    
+
     for _ in 0 .. 20 {
         let mut group = group.data().await;
         group.exchange().await;

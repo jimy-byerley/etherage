@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    error::Error,
-    };
+use std::error::Error;
 use futures_concurrency::future::Join;
 use etherage::{
     EthernetSocket, RawMaster,
@@ -12,7 +9,7 @@ use bilge::prelude::u2;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let master = RawMaster::new(EthernetSocket::new("eno1")?);
-    
+
     let mut slave = Slave::raw(master.clone(), SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await.unwrap();
     slave.set_address(1).await.unwrap();
@@ -27,7 +24,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // test read/write
     let received = slave.coe().await.sdo_read(&sdo, priority).await.unwrap();
     slave.coe().await.sdo_write(&sdo, priority, received).await.unwrap();
-    
+
     // test concurrent read/write
     (
         async {
@@ -45,6 +42,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("end");
         },
     ).join().await;
-    
+
     Ok(())
 }

@@ -2,15 +2,14 @@
 
 use crate::{
     mailbox::{Mailbox, MailboxType, MailboxError},
-    registers,
-    sdo::Sdo,
     data::{self, PduData, Storage, Cursor},
     error::{EthercatError, EthercatResult},
+    sdo::Sdo,
+    registers,
     };
 use bilge::prelude::*;
-use tokio::sync::Mutex;
 use std::sync::Arc;
-
+use magetex::*;
 
 
 const MAILBOX_MAX_SIZE: usize = registers::mailbox_buffers[0].len;
@@ -50,20 +49,25 @@ pub struct Can {
 }
 impl Can {
     pub fn new(mailbox: Arc<Mutex<Mailbox>>) -> Can {
-        Can {mailbox}
+        Can { mailbox }
     }
+
+    // Return an arc mutex to the mailbox
+    pub fn get_mailbox(&self) -> Arc<Mutex<Mailbox>> {
+        self.mailbox.clone()
+    }
+
     /// read an SDO, any size
-    pub async fn sdo_read<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2) 
-        -> EthercatResult<T, CanError> 
+    pub async fn sdo_read<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2)
+        -> EthercatResult<T, CanError>
     {
         let mut data = T::Packed::uninit();
         Ok(T::unpack(self.sdo_read_slice(&sdo.downcast(), priority, data.as_mut()).await?)?)
     }
-        
-    pub async fn sdo_read_slice<'b>(&mut self, sdo: &Sdo, priority: u2, data: &'b mut [u8]) 
-        -> EthercatResult<&'b mut [u8], CanError>   
+
+    pub async fn sdo_read_slice<'b>(&mut self, sdo: &Sdo, priority: u2, data: &'b mut [u8])
+        -> EthercatResult<&'b mut [u8], CanError>
     {
-        let mut mailbox = self.mailbox.lock().await;
         let mut buffer = [0; MAILBOX_MAX_SIZE];
 
         // generic request
@@ -79,23 +83,28 @@ impl Can {
                 sdo.sub.unwrap(),
             )).unwrap();
         frame.write(&[0; 4]).unwrap();
-        mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
-        
+
+        let mut guard: LockGuard<'_, Mailbox> = LockGuard::new(&self.mailbox);
+        guard.write(MailboxType::Can, priority, frame.finish()).await?;
+        // self.mailbox.lock().await
+        //     .write(MailboxType::Can, priority, frame.finish()).await?;
+        //let mut mailbox = self.mailbox.lock().await;
+        //mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
+
         // receive data
         let (header, frame) = Self::receive_sdo_response(
-                &mut mailbox,
-                &mut buffer, 
-                SdoCommandResponse::Upload, 
+                &mut guard,
+                &mut buffer,
+                SdoCommandResponse::Upload,
                 sdo,
                 ).await?;
         if ! header.sized()
             {return Err(Error::Protocol("got SDO response without data size"))}
-        
-        
+
         if header.expedited() {
             // expedited transfer
             let total = EXPEDITED_MAX_SIZE - u8::from(header.size()) as usize;
-            if total > data.len() 
+            if total > data.len()
                 {return Err(Error::Master("data buffer is too small for requested SDO"))}
             data[.. total].copy_from_slice(Cursor::new(frame)
                 .read(total)
@@ -111,12 +120,13 @@ impl Can {
                 .try_into().expect("SDO is too big for master memory");
             if total > data.len()
                 {return Err(Error::Master("read buffer is too small for requested SDO"))}
-            
+
             let mut received = Cursor::new(&mut data.as_mut()[.. total]);
             let mut toggle = false;
             received.write(frame.remain())
                 .map_err(|_| Error::Protocol("received more data than declared from SDO"))?;
-            
+
+            let mut guard = LockGuard::new(&self.mailbox);
             // receive more data from segments
             // TODO check for possible SDO error
             while received.remain().len() != 0 {
@@ -131,21 +141,21 @@ impl Can {
                             u3::from(SdoCommandRequest::UploadSegment),
                         )).unwrap();
                     frame.write(&[0; 7]).unwrap();
-                    mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
+                    guard.write(MailboxType::Can, priority, frame.finish()).await?;
                 }
 
                 // receive segment
                 {
                     let (header, segment) = Self::receive_sdo_segment(
-                            &mut mailbox, 
-                            &mut buffer, 
-                            SdoCommandResponse::UploadSegment, 
+                            &mut guard,
+                            &mut buffer,
+                            SdoCommandResponse::UploadSegment,
                             toggle,
                             ).await?;
                     let segment = &segment[.. received.remain().len()];
                     received.write(segment)
                         .map_err(|_| Error::Protocol("received more data than declared from SDO"))?;
-                    
+
                     if ! header.more () {break}
                 }
 
@@ -156,19 +166,21 @@ impl Can {
 
         // TODO send SdoCommand::Abort in case any error
     }
+
     /// write an SDO, any size
-    pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T) 
-        -> EthercatResult<(), CanError>  
+    pub async fn sdo_write<T: PduData>(&mut self, sdo: &Sdo<T>, priority: u2, data: T)
+        -> EthercatResult<(), CanError>
     {
         let mut packed = T::Packed::uninit();
         data.pack(packed.as_mut())
             .expect("unable to pack data for sending");
         self.sdo_write_slice(&sdo.downcast(), priority, packed.as_ref()).await
     }
-    pub async fn sdo_write_slice(&mut self, sdo: &Sdo, priority: u2, data: &[u8]) 
-        -> EthercatResult<(), CanError>  
+
+    pub async fn sdo_write_slice(&mut self, sdo: &Sdo, priority: u2, data: &[u8])
+        -> EthercatResult<(), CanError>
     {
-        let mut mailbox = self.mailbox.lock().await;		
+        let mut mailbox = self.mailbox.lock().await;
         let mut buffer = [0; MAILBOX_MAX_SIZE];
         if data.len() <= EXPEDITED_MAX_SIZE {
             // expedited transfer
@@ -224,11 +236,11 @@ impl Can {
             // receive acknowledge
             Self::receive_sdo_response(
                 &mut mailbox,
-                &mut buffer, 
-                SdoCommandResponse::Download, 
+                &mut buffer,
+                SdoCommandResponse::Download,
                 sdo,
                 ).await?;
-            
+
             // send many segments for the rest of the data, aknowledge each time
             let mut toggle = false;
             while data.remain().len() != 0 {
@@ -250,37 +262,37 @@ impl Can {
                 // receive aknowledge
                 Self::receive_sdo_segment(
                     &mut mailbox,
-                    &mut buffer, 
-                    SdoCommandResponse::DownloadSegment, 
+                    &mut buffer,
+                    SdoCommandResponse::DownloadSegment,
                     toggle,
                     ).await?;
                 toggle = !toggle;
             }
         }
         Ok(())
-        
+
         // TODO send SdoCommand::Abort in case any error
     }
 
     /// read the mailbox, check for
     async fn receive_sdo_response<'b, T: PduData>(
         mailbox: &mut Mailbox,
-        buffer: &'b mut [u8], 
+        buffer: &'b mut [u8],
         expected: SdoCommandResponse,
-        sdo: &Sdo<T>, 
-        ) -> EthercatResult<(SdoHeader, &'b [u8]), CanError> 
+        sdo: &Sdo<T>,
+        ) -> EthercatResult<(SdoHeader, &'b [u8]), CanError>
     {
         let mut frame = Cursor::new(mailbox.read(MailboxType::Can, buffer).await?);
-        
+
         let check_header = |header: SdoHeader| {
             if header.index() != sdo.index        {return Err(Error::Protocol("slave answered about wrong item"))}
             if header.sub() != sdo.sub.unwrap()   {return Err(Error::Protocol("slave answered about wrong subitem"))}
             Ok(())
         };
-        
+
         match frame.unpack::<CoeHeader>()
             .map_err(|_| Error::Protocol("unable to unpack COE frame header"))?
-            .service() 
+            .service()
         {
             CanService::SdoResponse => {
                 let header = frame.unpack::<SdoHeader>()
@@ -306,23 +318,23 @@ impl Can {
 
     async fn receive_sdo_segment<'b>(
         mailbox: &mut Mailbox,
-        buffer: &'b mut [u8], 
+        buffer: &'b mut [u8],
         expected: SdoCommandResponse,
-        toggle: bool, 
-        ) -> EthercatResult<(SdoSegmentHeader, &'b [u8]), CanError> 
+        toggle: bool,
+        ) -> EthercatResult<(SdoSegmentHeader, &'b [u8]), CanError>
     {
         let mut frame = Cursor::new(mailbox.read(MailboxType::Can, buffer).await?);
-        
+
         match frame.unpack::<CoeHeader>()
             .map_err(|_|  Error::Protocol("unable to unpack COE frame header"))?
-            .service() 
+            .service()
         {
             CanService::SdoResponse => {
                 let header = frame.unpack::<SdoSegmentHeader>()
                     .map_err(|_|  Error::Protocol("unable to unpack segment response header"))?;
                 if SdoCommandResponse::try_from(header.command()) != Ok(expected)
                     {return Err(Error::Protocol("slave answered with a COE request"))}
-                if header.toggle() != toggle   
+                if header.toggle() != toggle
                     {return Err(Error::Protocol("bad toggle bit in segment received"))}
                 Ok((header, frame.remain()))
                 },
@@ -579,4 +591,3 @@ impl From<EthercatError<MailboxError>> for EthercatError<CanError> {
 impl From<EthercatError<()>> for EthercatError<CanError> {
     fn from(src: EthercatError<()>) -> Self {src.upgrade()}
 }
-

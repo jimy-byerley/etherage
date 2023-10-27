@@ -1,13 +1,12 @@
 use std::sync::Arc;
-use core::time::Duration;
 use etherage::{
     EthernetSocket, RawMaster, Sdo,
     mailbox::Mailbox,
     can::Can,
     registers,
     };
-use tokio::sync::Mutex;
 use bilge::prelude::u2;
+use magetex::*;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {

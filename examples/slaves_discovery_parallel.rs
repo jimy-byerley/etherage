@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    error::Error,
-    };
+use std::error::Error;
 use etherage::{
     EthernetSocket, SlaveAddress, CommunicationState,
     master::Master,
@@ -14,7 +11,7 @@ use futures_concurrency::future::Join;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let master = Master::new(EthernetSocket::new("eno1")?);
-    
+
     master.reset_addresses().await;
 
     // concurrent version
@@ -24,23 +21,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pool.push(async move {
             let SlaveAddress::AutoIncremented(i) = slave.address()
                 else {panic!("slave already has a fixed address")};
-            
+
             let task = async {
                 slave.switch(CommunicationState::Init).await?;
                 slave.set_address(i+1).await?;
                 slave.init_mailbox().await?;
                 slave.init_coe().await;
                 slave.switch(CommunicationState::PreOperational).await?;
-                
+
                 let mut can = slave.coe().await;
                 let priority = u2::new(0);
-                
+
                 let info = slave.physical_read(registers::dl::information).await?;
                 let mut name = [0; 50];
                 let mut hardware = [0; 50];
                 let mut software = [0; 50];
-                
-                println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}", 
+
+                println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}",
                         i,
                         std::str::from_utf8(
                             &can.sdo_read_slice(&sdo::device::name, priority, &mut name).await?

@@ -8,14 +8,11 @@ use crate::{
     registers::{self, AlError},
     error::{EthercatError, EthercatResult},
     };
-use tokio::sync::{Mutex, MutexGuard};
+use magetex::*;
 use core::ops::Range;
 use std::sync::Arc;
-
-
-
-pub type CommunicationState = registers::AlState;
 use registers::AlState::*;
+pub type CommunicationState = registers::AlState;
 
 
 /// slave physical memory range used for mailbox, to be written by the master
@@ -89,8 +86,8 @@ impl<'a> Slave<'a> {
     */
     pub async fn new(master: &'a Master, address: SlaveAddress) -> EthercatResult<Slave<'a>> {
         let fixed = SlaveAddress::Fixed(master.raw.read(address, registers::address::fixed).await.one()?);
-        let mut book = master.slaves.lock().unwrap();
-        
+        let mut book = master.slaves.lock().await;
+
         if book.contains(&address)
         || book.contains(&fixed)
             {Err(EthercatError::Master("slave already in use by an other instance"))}
@@ -167,7 +164,7 @@ impl<'a> Slave<'a> {
         let new = SlaveAddress::Fixed(fixed);
         // report existing address if a safemaster is used
         if let Some(safe) = self.safemaster {
-            let mut book = safe.slaves.lock().unwrap();
+            let mut book = safe.slaves.lock().await;
             book.remove(&self.address);
             book.insert(new);
         }
@@ -208,12 +205,12 @@ impl<'a> Slave<'a> {
     /// initialize CoE (Canopen over Ethercat) communication (if supported by the slave), this requires the mailbox to be initialized
     pub async fn init_coe(&mut self) {
         // override the mailbox reference lifetime, we will have to make sure we free any stored object using it before destroying the mailbox
-        let mailbox = self.mailbox.clone().expect("mailbox not initialized");
+        let mailbox: Arc<Mutex<Mailbox>> = self.mailbox.clone().expect("mailbox not initialized");
         self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
     }
 
     /// locks access to CoE communication and return the underlying instance of [Can] running CoE
-    pub async fn coe(&self) -> MutexGuard<'_, Can>    {
+    pub async fn coe(&self) -> LockGuard<'_, Can>    {
         self.coe
             .as_ref().expect("coe not initialized")
             .lock().await
@@ -232,7 +229,7 @@ impl Drop for Slave<'_> {
     fn drop(&mut self) {
         // deregister from the safemaster if any
         if let Some(safe) = self.safemaster {
-            let mut book = safe.slaves.lock().unwrap();
+            let mut book = LockGuard::new(&safe.slaves);
             book.remove(&self.address);
         }
     }
