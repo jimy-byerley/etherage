@@ -251,11 +251,11 @@ impl RawMaster {
                 )),
             SlaveAddress::Logical => memory,
         };
-        
+
         let (token, ready, _finisher);
         loop {
             // buffering the pdu sending
-            
+
             // this weird scope is here to prevent the rust thread checker to set this async future `!Send` just because there is remaining freed variables with `MutexGuard` type
             // TODO: restore the previous code (more readable and flexible) once https://github.com/rust-lang/rust/issues/104883 is fixed
             {
@@ -267,10 +267,10 @@ impl RawMaster {
                 }
                 else if ! space_available()  {
                     // sending the current buffer
-                    assert!(self.socket.max_frame() > 
-                        EthercatHeader::packed_size() 
-                        + data.len() 
-                        + PduHeader::packed_size() 
+                    assert!(self.socket.max_frame() >
+                        EthercatHeader::packed_size()
+                        + data.len()
+                        + PduHeader::packed_size()
                         + PduFooter::packed_size(), "data too big for an ethercat frame");
                     state.ready = true;
                     self.sendable.notify_one();
@@ -288,7 +288,7 @@ impl RawMaster {
                         ready: false,
                         answers: 0,
                         });
-                    
+
                     // change last value's PduHeader.next
                     if state.last_start <= state.last_end {
                         let range = state.last_start .. state.last_end;
@@ -300,7 +300,7 @@ impl RawMaster {
                     else {
                         state.last_end = state.last_start;
                     }
-                    
+
                     // stacking the PDU
                     let advance = {
                         let range = state.last_end ..;
@@ -321,9 +321,9 @@ impl RawMaster {
                     state.last_start = state.last_end;
                     state.last_end = state.last_start + advance;
                     state.ready = flush;
-                    
+
                     self.sendable.notify_one();
-                
+
                     // memory safety: this item in the array cannot be moved since self is borrowed, and will only be removed later by the current function
                     // we will access it potentially concurrently, but since we only want to detect a change in the value, that's fine
                     ready = unsafe {&*(&state.receive[token].as_ref().unwrap().ready as *const bool)};
@@ -332,10 +332,10 @@ impl RawMaster {
                         let mut state = self.pdu_state.lock().unwrap();
                         state.receive[token] = None;
                         state.free.push(token).unwrap();
-                        
+
                         // BUG: freeing the token on future cancelation does not cancel the packet reception, so the received packet may interfere with any next PDU using this token
                     });
-                    
+
                     break
                 }
             }
@@ -348,17 +348,17 @@ impl RawMaster {
             if *ready {break}
             notification.await;
         }
-        
+
         {
             // free the token
             let state = self.pdu_state.lock().unwrap();
             state.receive[token].as_ref().unwrap().answers
         }
     }
-    
-    /** 
+
+    /**
         trigger sending the buffered PDUs, they will be sent as soon as possible by [Self::send] instead of waiting for the frame to be full or for the timeout
-        
+
         Note: this method is helpful to manage the stream and make space in the buffer before sending PDUs, but does not help to make sure a PDU is sent deterministic time. To trigger the sending of a PDU, use argument `flush` of [Self::pdu]
     */
     pub fn flush(&self) {
@@ -376,15 +376,15 @@ impl RawMaster {
         loop {
             let header = frame.unpack::<PduHeader>()
                             .map_err(|_| EthercatError::Protocol("unable to unpack PDU header, skiping all remaning PDUs in frame"))?;
-            
+
             let token = usize::from(header.token());
             if token >= state.receive.len()
                 {return Err(EthercatError::Protocol("received inconsistent PDU token"))}
-            
+
             if let Some(storage) = state.receive[token].as_mut() {
                 let content = frame.read(usize::from(u16::from(header.len())))
                     .map_err(|_|  EthercatError::Protocol("unable to unpack PDU size"))?;
-                
+
                 // copy the PDU content in the reception buffer
                 // concurrency safety: this slice is written only by receiver task and read only once the receiver has set it ready
                 storage.data.copy_from_slice(content);
@@ -394,29 +394,29 @@ impl RawMaster {
                 storage.ready = true;
             }
             if ! header.next() {break}
-            if frame.remain().len() == 0 
+            if frame.remain().len() == 0
                 {return Err(EthercatError::Protocol("inconsistent ethercat frame size: remaining unused data after PDUs"))}
         }
         Ok(())
     }
-    
+
     /**
         this is the socket reception handler
-        
+
         it receives and process one datagram, it may be called in loop with no particular timer since the sockets are assumed blocking
-        
+
         In case something goes wrong during PDUs unpacking, the PDUs successfully processed will be reported to their pending futures, the futures for PDU which caused the read to fail and all following PDUs in the frame will be left pending (since the data is corrupted, there is no way to determine which future should be aborted)
     */
     pub fn receive(&self) -> EthercatResult {
         let mut receive = self.ethercat_receive.lock().unwrap();
         let size = self.socket.receive(receive.deref_mut())?;
         let mut frame = Cursor::new(&receive[.. size]);
-        
+
         let header = frame.unpack::<EthercatHeader>()?;
         if frame.remain().len() < header.len().value() as usize
             {return Err(EthercatError::Protocol("received frame header has inconsistent length"))}
         let content = &frame.remain()[.. header.len().value() as usize];
-        
+
         assert!(header.len().value() as usize <= content.len());
         // TODO check working count to detect possible refused requests
         match header.ty() {
@@ -493,7 +493,7 @@ impl<T: PduData> PduAnswer<T> {
     /// extract the value only if the given amount of slaves answered
     pub fn exact(&self, n: u16) -> EthercatResult<T> {
         if self.answers != n {
-            if self.answers == 0 
+            if self.answers == 0
                 {return Err(EthercatError::Protocol("no slave answered"))}
             else if self.answers < n
                 {return Err(EthercatError::Protocol("to few slaves answered"))}
@@ -590,44 +590,59 @@ data::bilge_pdudata!(PduFooter, u16);
 
 /// the possible PDU commands
 #[bitsize(8)]
-#[derive(FromBits, Debug, Copy, Clone, Default)]
+#[derive(FromBits, Debug, Copy, Clone, Default, thiserror::Error)]
 pub enum PduCommand {
     /// no operation
     #[fallback]
     #[default]
+    #[error("NOP")]
     NOP = 0x0,
 
     /// broadcast read
+    #[error("BRD")]
     BRD = 0x07,
     /// broadcast write
+    #[error("BWR")]
     BWR = 0x08,
     /// broadcast read & write
+    #[error("BRW")]
     BRW = 0x09,
 
     /// auto-incremented slave read
+    #[error("APRD")]
     APRD = 0x01,
     /// auto-incremented slave write
+    #[error("APWR")]
     APWR = 0x02,
     /// auto-incremented slave read & write
+    #[error("APRW")]
     APRW = 0x03,
 
     /// fixed slave read
+    #[error("FPRD")]
     FPRD = 0x04,
     /// fixed slave write
+    #[error("FPWR")]
     FPWR = 0x05,
     /// fixed slave read & write
+    #[error("FPRW")]
     FPRW = 0x06,
 
     /// logical memory read
+    #[error("LRD")]
     LRD = 0x0A,
     /// logical memory write
+    #[error("LWR")]
     LWR = 0x0B,
     /// logical memory read & write
+    #[error("LRW")]
     LRW = 0x0C,
 
     /// auto-incremented slave read multiple write
+    #[error("ARMW")]
     ARMW = 0x0D,
     /// fixed slave read multiple write
+    #[error("FRMW")]
     FRMW = 0x0E,
 }
 
