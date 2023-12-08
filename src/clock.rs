@@ -208,12 +208,21 @@ impl DistributedClock {
 				let parent = &stamps[i*samples + parent];
 				let delay = parent[parent_after].overflowing_sub(parent[parent_before]).0
 							- child[child_after].overflowing_sub(child[child_before]).0;
-				// TODO: use intermediate sums
-				total += delay;
+				// TODO: use intermediate sums for increase the tolerated delay from 4s in total to 4s per branch
+				// summation is exact since we are using integers
+				total += delay.into();
 			}
 			
-			slaves[index].delay = total / (2*samples);
+			slaves[index].delay = total / (2*(samples as u64));
 		}
+		// send delays
+		slaves.iter().map(|slave| async {
+				master.write(slave.address, registers::dc::system_delay, slave.delay).await.one()
+			})
+			.collect::<Vec<_>>()
+			.join().await
+			.drain(..)
+			.collect::<EthercatResult<_>>()?;
 		
 		// compute offsets (static drift compensation)
 		todo!()
