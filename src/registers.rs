@@ -128,12 +128,16 @@ pub mod al {
     pub const sync_config: Field<AlSyncConfig> = Field::simple(dls_user::r8.byte);
 }
 
-/// registers controlling the distributed clock
+/**
+	registers controlling the distributed clock. See [DistributedClock]
+	
+	ETG.1000.4.6.8
+*/
 pub mod dc {
     use super::*;
 
-    // DC parameter offset
-    pub const clock: Field<DistributedClock> = Field::simple(0x0900);
+    /// full structure gathering all the dc registers
+    pub const all: Field<DistributedClock> = Field::simple(0x0900);
     // direct access to DC struct fields
     pub const received_time: Field<u32> = Field::simple(0x0900);
     pub const system_time: Field<u64> = Field::simple(0x0910);
@@ -146,7 +150,7 @@ pub mod dc {
 }
 
 /**
-    registers allowing to generate slave task synchronization to the distributed clock 
+    registers allowing to trigger slave cyclic task using to the distributed clock ticks or ethercat frames. See [Isochronous]
     
     ETG.1000.5.6.1.3.2.2
 */
@@ -602,22 +606,42 @@ data::bilge_pdudata!(MailboxSupport, u16);
 
 
 
-/// ETG.1000.4 table 33
+/**
+	control the operation of the DL ports of the slave controller by the master.
+
+	ETG.1000.4 table 33
+*/
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct DLControl {
-	/// enables forwarding non-ethercat frames
+	/**
+		enables forwarding non-ethercat frames.
+		Restricted forwarding will destroy non EtherCAT frames
+	*/
 	forwarding: Forwarding,
-	/// 0:permanent setting
-	/// 1: temporary use of Loop Control Settings for ~1 second
+	/**
+		This optional parameter enables temporary use of the loop control parameters written in the same frame for about one second. After this timeout, the original Loop control settings are restored automatically
+		
+		- false: permanent setting
+		- true: temporary use of Loop Control Settings for ~1 second
+	*/
 	temporary: bool,
 	reserved: u6,
+	/// if there is an automatic activation of the port in case of a physical link or if the port is opened and or closed by commands of the master
 	ports: [LoopControl; 4],
-	/// Buffer between preparation and send. Send will be if buffer is half full (7).
+	/**
+		Buffer between preparation and send. Send will be if buffer is half full (7).
+		
+		This optional parameter should be used to optimize the delay within a station. If this station and its neighbours have a stable rate of transmitting, this parameter may be reduced. The default settings are determined by the required clock accuracy of ISO/IEC 8802-3.
+	*/
 	transmit_buffer_size: u3,
-	/// set to true to activate
+	/** 
+		This optional parameter indicates that the reduct ion of frame forwarding jitter for EBUS is enabled.
+		set to true to activate
+	*/
 	low_jitter_ebus: bool,
 	reserved: u4,
+	/// should be used to enable the alias name
 	alias_enable: bool,
 	reserved: u7,
 }
@@ -645,15 +669,25 @@ pub enum LoopControl {
 }
 data::bilge_pdudata!(LoopControl, u2);
 
-/// ETG.1000.4 table 34
+/**
+	indicate the state of the DL ports and the state of the interface between DL-user and DL.
+	
+	ETG.1000.4 table 34
+*/
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
 pub struct DLStatus {
-	/// trie if operational
+	/** 
+		if a DL-user is connected to the process data interface of the slave controller.
+		true if operational
+	*/
 	pub dls_user_operational: bool,
 	/// true if watchdog not expired
 	pub dls_user_watchdog: bool,
-	/// true if activated for at least one port
+	/**
+		status of the activation of the extended link detection.
+		true if activated for at least one port
+	*/
 	pub extended_link_detection: bool,
 	reserved: u1,
 	/// indicates physical link on each port
@@ -663,11 +697,13 @@ pub struct DLStatus {
 }
 data::bilge_pdudata!(DLStatus, u16);
 
+/// ETG.1000.4 table 34
 #[bitsize(2)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
 pub struct LoopStatus {
 	/// indicates forwarding on the same port i.e. loop back.
 	pub loop_back: bool,
+	///  signal detected on the port's RX
 	pub signal_detection: bool,
 }
 data::bilge_pdudata!(LoopStatus, u2);
@@ -1030,7 +1066,19 @@ pub enum SyncDirection {
 
 
 
-/// ETG.1000.4 table 60
+/**
+	DC allows for very precise timing requirements and for using timing signals that can be generated independent of the communication cycle. Systems with not so high requirements on synchronization may be synchronized by sharing a service (preferable LRW or LRD or LWR) or using the same Ethernet frame for access to buffers.
+	
+	### delay measurement
+	
+	Delay measurement needs time stamping information which is related to a single frame. The slave just provides means for time stamping, the calculation of the delay is the task of the master.
+	
+	### local time values
+	
+	The local time parameters contains the local system time and parameter for the control loop which are dedicate to implement a control loop for coordinating the local system time with a global time.
+
+	ETG.1000.4 table 60
+*/
 #[repr(packed)]
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub struct DistributedClock {
@@ -1083,35 +1131,53 @@ impl From<i32> for TimeDifference {
 
 
 
-
-/// ETG.1000.6 table 27
-/// ETG.1000.4 table 61
+/**
+    registers allowing to trigger slave cyclic task using to the distributed clock ticks or ethercat frames
+	
+	ETG.1000.6 table 27, ETG.1000.4 table 61
+*/
 #[repr(packed)]
 #[derive(Clone, Default, Debug, PartialEq)]
 pub struct Isochronous {
-    pub reserved1: IsochronousAccess,                // DC Cyclic unit control
-    pub enable: IsochronousEnables,                      // Taken from SII: CyclicOperationTime + Sync0 + Sync1 + u5
-    pub pulse: u16,                            // Optional multiple of 10ns
+	// DC Cyclic unit control
+    reserved1: IsochronousAccess,
+	
+	/// boolean flags enabling sync operations (RW)
+    pub enable: IsochronousEnables,
+    /// This optional attribute specifies the duration for the Sync Impulse in multiples of 10 ns. (R)
+    pub pulse: u16,
     reserved2: [u8; 10],
-    pub interrupt0: IsochronousInterrupt,           // Interrupt enable/disable struct
-    pub interrupt1: IsochronousInterrupt,           // Interrupt enable/disable struct
-    pub start_time: u32,                  // The interrupt generation will start when the lower 32bits of the the system time will reach this value (ns)
+    /// These optional booleans attribute indicates an active Sync interrupts. (R)
+    pub interrupt0: IsochronousInterrupt,
+    pub interrupt1: IsochronousInterrupt,
+	/**
+		This optional attribute sets a start time related to system time for cyclic operation. (RW)
+		
+		The interrupt generation will start when the lower 32 bits of the system time will reach this value (in ns)
+	*/
+    pub start_time: u32,
     reserved3: [u8; 12],
-    pub sync0_cycle_time: u32,                     // SYNC 0 cycle time. Optional multiple of 1ns
-    pub sync1_cycle_time: u32,                     // SYNC 1 cycle time. Optional multiple of 1ns
-    pub latch0_edge: IsochronousLatch,        // Latch 0:
-    pub latch1_edge: IsochronousLatch,        // Latch 1:
-    pub reserved4: [u8; 4],                             // Reserved equivalent to [u8;4]
-    pub latch0_event: IsochronousLatch,      // Enable or disable event storage for SYNC 0
-    pub latch1_event: IsochronousLatch,      // Enable or disable event storage for SYNC 1
-    pub latch0_time_positive: u32,                // latch0 value + event
-    reserved5: u32,                                 // Reserved equivalent to [u8;4]
-    pub latch0_time_negative: u32,                // latch0 value - event
-    reserved6: u32,                                 // Reserved equivalent to [u8;4]
-    pub latch1_time_positive: u32,                // latch1 value + event
-    reserved7: u32,                                 // Reserved equivalent to [u8;4]
-    pub latch1_time_negative: u32,                // latch1 value - event
-    reserved8: u32,                                 // Reserved equivalent to [u8;4]
+	/// set the cycle time of Sync0 in multiples of 1ns for Sync0 (RW)
+    pub sync0_cycle_time: u32,
+	/// set the cycle time of Sync0 in multiples of 1ns for Sync1 (RW)
+    pub sync1_cycle_time: u32,
+	
+	/// enables Latch operation for a single event (true) or continuous latching. (RW)
+    pub latch0_edge: IsochronousLatch,
+    pub latch1_edge: IsochronousLatch,
+    pub reserved4: [u8; 4],
+	/// indicates Latch edge events. (R)
+    pub latch0_event: IsochronousLatch,
+    pub latch1_event: IsochronousLatch,
+	/// stores the system time value in case of a Latch edge events. (R)
+    pub latch0_time_positive: u32,
+    reserved5: u32,
+    pub latch0_time_negative: u32,
+    reserved6: u32,
+    pub latch1_time_positive: u32,
+    reserved7: u32,
+    pub latch1_time_negative: u32,
+    reserved8: u32,
 }
 data::packed_pdudata!(Isochronous);
 
