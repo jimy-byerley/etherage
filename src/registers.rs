@@ -139,9 +139,9 @@ pub mod dc {
     /// full structure gathering all the dc registers
     pub const all: Field<DistributedClock> = Field::simple(0x0900);
     // direct access to DC struct fields
-    pub const received_time: Field<u32> = Field::simple(0x0900);
+    pub const received_time: Field<[u32; 4]> = Field::simple(0x0900);
     pub const system_time: Field<u64> = Field::simple(0x0910);
-    pub const system_time_unit: Field<u64> = Field::simple(0x0918);
+    pub const local_time: Field<u64> = Field::simple(0x0918);
     pub const system_offset: Field<u64> = Field::simple(0x920);
     pub const system_delay: Field<u32> = Field::simple(0x928);
     pub const system_difference: Field<TimeDifference> = Field::simple(0x092C);
