@@ -172,6 +172,20 @@ macro_rules! packed_pdudata {
 }
 pub use packed_pdudata;
 
+/// unsafe macro implementing [PduData] for arrays of a given struct with `repr(packed)`
+#[macro_export]
+macro_rules! array_pdudata {
+    ($t: ty, $n: literal, $($rest: literal),+) => {
+		packed_pdudata!([$t; $n]); 
+		array_pdudata!($t, $($rest),+);
+	};
+    ($t: ty, $n: literal) => {
+		packed_pdudata!([$t; $n]); 
+	};
+    ($t: ty) => {array_pdudata!($t, 0, 1, 2, 3, 4, 5, 6, 7, 8);};
+}
+pub use array_pdudata;
+
 /// macro implementing [PduData] for numeric types
 macro_rules! num_pdudata {
     ($t: ty, $id: ident) => { impl $crate::data::PduData for $t {
@@ -203,6 +217,15 @@ num_pdudata!(i64, I64);
 num_pdudata!(f32, F32);
 num_pdudata!(f64, F64);
 
+array_pdudata!(u16);
+array_pdudata!(u32);
+array_pdudata!(u64);
+array_pdudata!(i8);
+array_pdudata!(i16);
+array_pdudata!(i32);
+array_pdudata!(i64);
+array_pdudata!(f32);
+array_pdudata!(f64);
 
 
 /**
