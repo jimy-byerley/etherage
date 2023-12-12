@@ -48,7 +48,7 @@ const MAX_ETHERCAT_PDU: usize = MAX_ETHERCAT_FRAME / MIN_PDU;
 
     This struct does not do any compile-time checking of the communication states on the slaves, and has no notion of slave, it is just executing the basic commands.
 
-    The ethercat low level is all about PDUs: an ethercat frame intended for slaves is a PDU frame and PDU frames contain any number of PDU (Process Data Unit), each PDU is a command, acting on one of the 2 memories types:
+    The ethercat low level is all about PDUs: an ethercat frame intended for slaves is a PDU frame. PDU frames contain any number of PDU (Process Data Unit), each PDU is a command, acting on one of the 2 memories types:
 
 - **Physical Memory** (aka. registers)
 
@@ -235,6 +235,20 @@ impl RawMaster {
             answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len], false).await,
             data: buffer,
             }
+    }
+    /// maps to a PDU *RMW
+    pub async fn multiple<T: PduData>(&self, slave: SlaveAddress, memory: Field<T>, data: T) -> PduAnswer<T> {
+		let command = match slave {
+			SlaveAddress::AutoIncremented(_) => PduCommand::ARMW,
+			SlaveAddress::Fixed(_) => PduCommand::FRMW,
+			_ => unimplemented!("read-multiple-write can only be used with a specific slave for reading"),
+			};
+		let mut buffer = T::Packed::uninit();
+		data.pack(buffer.as_mut()).unwrap();
+		PduAnswer {
+            answers: self.pdu(command, slave, memory.byte as u32, &mut buffer.as_mut()[.. memory.len], false).await,
+            data: buffer,
+			}
     }
 
     /**
@@ -693,36 +707,53 @@ pub enum PduCommand {
     NOP = 0x0,
 
     /// broadcast read
+    /// all slaves will read their physical memory and retransmit a bitwise-or of their local data with the received data
     BRD = 0x07,
     /// broadcast write
+    /// all slaves will write their physical memory with the received data
     BWR = 0x08,
     /// broadcast read & write
+    /// actually it is write-then-read
     BRW = 0x09,
 
     /// auto-incremented slave read
+    /// the specified slave will read its physical memory and transmit it
+    /// the slave is specified using its rank in the ethercat ring
     APRD = 0x01,
     /// auto-incremented slave write
+    /// the specified slave will write its physical memory with the received data
+    /// the slave is specified using its rank in the ethercat ring
     APWR = 0x02,
     /// auto-incremented slave read & write
+    /// actually it is write-then-read
+    /// the slave is specified using its rank in the ethercat ring
     APRW = 0x03,
 
     /// fixed slave read
+    /// the specified slave will read its physical memory and transmit it
+    /// the slave is specified using a previously fixed address
     FPRD = 0x04,
     /// fixed slave write
+    /// the specified slave will write its physical memory with the received data
+    /// the slave is specified using a previously fixed address
     FPWR = 0x05,
     /// fixed slave read & write
     FPRW = 0x06,
 
     /// logical memory read
+    /// all slave will read their memory mapped using FMMUs enabled for reading, and complete the data received before transmiting
     LRD = 0x0A,
     /// logical memory write
+    /// all slave will write their memory mapped using FMMUs enabled for writting
     LWR = 0x0B,
     /// logical memory read & write
     LRW = 0x0C,
 
     /// auto-incremented slave read multiple write
+    /// the slave matching this PDU'address will read the data and retransmit, other slaves will write it
     ARMW = 0x0D,
     /// fixed slave read multiple write
+    /// the slave matching this PDU'address will read the data and retransmit, other slaves will write it
     FRMW = 0x0E,
 }
 
