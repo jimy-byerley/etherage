@@ -4,7 +4,7 @@ use crate::{
 	data::{PduData, Field},
 	slave::{Slave, CommunicationState},
 	mapping::{Allocator, Mapping, Group},
-	clock::SyncClock,
+	clock::DistributedClock,
 	registers, EthercatError,
 	error::EthercatResult,
     registers::AlError,
@@ -53,7 +53,7 @@ pub struct Master {
     pub(crate) raw: Arc<RawMaster>,
     pub(crate) slaves: std::sync::Mutex<HashSet<SlaveAddress>>,
     allocator: Allocator,
-    clock: tokio::sync::RwLock<Option<SyncClock>>,
+    clock: tokio::sync::RwLock<Option<DistributedClock>>,
 }
 impl Master {
     /**
@@ -152,10 +152,10 @@ impl Master {
     */
     pub async fn reset_clock(&self) {
         // stop and void the previous clock
-        self.clock.write().await.take().map(|clock| clock.stop());
+        self.clock.write().await.take();
         // reset registers
         (
-            self.raw.bwr(registers::dc::clock, Default::default()),
+            self.raw.bwr(registers::dc::all, Default::default()),
             self.raw.bwr(registers::isochronous::all, Default::default()),
         ).join().await;
     }
@@ -164,13 +164,13 @@ impl Master {
     pub async fn init_clock(&self) -> Result<(), EthercatError> {
         self.reset_clock().await;
         self.clock.write().await.replace(
-            SyncClock::all(self.raw.clone(), None, None).await?
+            DistributedClock::new(self.raw.clone(), None, None).await?
             );
         Ok(())
     }
     
-    /// return the underlying instance of [SyncClock] synchronizing slaves clocks
-    pub async fn clock(&self) -> RwLockReadGuard<'_, SyncClock> {
+    /// return the underlying instance of [DistributedClock] synchronizing slaves clocks
+    pub async fn clock(&self) -> RwLockReadGuard<'_, DistributedClock> {
         RwLockReadGuard::map(
             self.clock.read().await, 
             |o|  o.as_ref().expect("clock not initialized"),
