@@ -84,32 +84,23 @@ impl Can {
             )).unwrap();
         frame.write(&[0; 4]).unwrap();
 
-        let mut guard: LockGuard<'_, Mailbox> = LockGuard::new(&self.mailbox);
-        guard.write(MailboxType::Can, priority, frame.finish()).await?;
-        // self.mailbox.lock().await
-        //     .write(MailboxType::Can, priority, frame.finish()).await?;
-        //let mut mailbox = self.mailbox.lock().await;
-        //mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
-
+        let mut mailbox: LockGuard<'_, Mailbox> = LockGuard::new(&self.mailbox);
+        mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
         // receive data
-        let (header, frame) = Self::receive_sdo_response(
-                &mut guard,
-                &mut buffer,
-                SdoCommandResponse::Upload,
-                sdo,
-                ).await?;
-        if ! header.sized()
-            {return Err(Error::Protocol("got SDO response without data size"))}
+        let (header, frame) =
+            Self::receive_sdo_response(&mut mailbox, &mut buffer, SdoCommandResponse::Upload, sdo).await?;
+        if ! header.sized() {
+            return Err(Error::Protocol("got SDO response without data size")) }
+        drop(mailbox);
 
         if header.expedited() {
             // expedited transfer
             let total = EXPEDITED_MAX_SIZE - u8::from(header.size()) as usize;
-            if total > data.len()
-                {return Err(Error::Master("data buffer is too small for requested SDO"))}
+            if total > data.len() {
+                return Err(Error::Master("data buffer is too small for requested SDO")) }
             data[.. total].copy_from_slice(Cursor::new(frame)
                 .read(total)
-                .map_err(|_| Error::Protocol("inconsistent expedited response data size"))?
-                );
+                .map_err(|_| Error::Protocol("inconsistent expedited response data size"))?);
             Ok(&mut data[.. total])
         }
         else {
@@ -118,48 +109,34 @@ impl Can {
             let total = frame.unpack::<u32>()
                 .map_err(|_| Error::Protocol("unable unpack sdo size from SDO response"))?
                 .try_into().expect("SDO is too big for master memory");
-            if total > data.len()
-                {return Err(Error::Master("read buffer is too small for requested SDO"))}
+            if total > data.len() {
+                return Err(Error::Master("read buffer is too small for requested SDO")) }
 
             let mut received = Cursor::new(&mut data.as_mut()[.. total]);
             let mut toggle = false;
-            received.write(frame.remain())
-                .map_err(|_| Error::Protocol("received more data than declared from SDO"))?;
+            received.write(frame.remain()).map_err(|_| Error::Protocol("received more data than declared from SDO"))?;
 
-            let mut guard = LockGuard::new(&self.mailbox);
             // receive more data from segments
             // TODO check for possible SDO error
+            let mut mailbox = LockGuard::new(&self.mailbox);
             while received.remain().len() != 0 {
-                // send segment request
-                {
-                    let mut frame = Cursor::new(buffer.as_mut_slice());
-                    frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
-                    frame.pack(&SdoSegmentHeader::new(
-                            false,
-                            u3::new(0),
-                            toggle,
-                            u3::from(SdoCommandRequest::UploadSegment),
-                        )).unwrap();
-                    frame.write(&[0; 7]).unwrap();
-                    guard.write(MailboxType::Can, priority, frame.finish()).await?;
-                }
+                // format segment request
+                let mut lframe = Cursor::new(buffer.as_mut_slice());
+                lframe.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+                lframe.pack(&SdoSegmentHeader::new(false, u3::new(0), toggle, u3::from(SdoCommandRequest::UploadSegment))).unwrap();
+                lframe.write(&[0; 7]).unwrap();
 
-                // receive segment
-                {
-                    let (header, segment) = Self::receive_sdo_segment(
-                            &mut guard,
-                            &mut buffer,
-                            SdoCommandResponse::UploadSegment,
-                            toggle,
-                            ).await?;
-                    let segment = &segment[.. received.remain().len()];
-                    received.write(segment)
-                        .map_err(|_| Error::Protocol("received more data than declared from SDO"))?;
+                // send and receive segment
+                mailbox.write(MailboxType::Can, priority, lframe.finish()).await?;
+                let (header, segment) =
+                    Self::receive_sdo_segment(&mut mailbox, &mut buffer, SdoCommandResponse::UploadSegment, toggle).await?;
 
-                    if ! header.more () {break}
-                }
+                let segment = &segment[.. received.remain().len()];
+                received.write(segment).map_err(|_| Error::Protocol("received more data than declared from SDO"))?;
 
-                toggle = ! toggle;
+                if !header.more() { break }
+
+                toggle = !toggle;
             }
             Ok(received.finish())
         }
@@ -180,92 +157,71 @@ impl Can {
     pub async fn sdo_write_slice(&mut self, sdo: &Sdo, priority: u2, data: &[u8])
         -> EthercatResult<(), CanError>
     {
-        let mut mailbox = self.mailbox.lock().await;
         let mut buffer = [0; MAILBOX_MAX_SIZE];
+        let mut frame : Cursor<&mut [u8]>;
+
         if data.len() <= EXPEDITED_MAX_SIZE {
             // expedited transfer
-            // send data in the 4 bytes instead of data size
-            {
-                let mut frame = Cursor::new(buffer.as_mut_slice());
-                frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
-                frame.pack(&SdoHeader::new(
-                            true,
-                            true,
-                            u2::new((EXPEDITED_MAX_SIZE - data.len()) as u8),
-                            sdo.sub.is_complete(),
-                            u3::from(SdoCommandRequest::Download),
-                            sdo.index,
-                            sdo.sub.unwrap(),
-                        )).unwrap();
-                frame.write(data).unwrap();
-                frame.write(&[0; 4][data.len() ..]).unwrap();
-                mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
-            }
+            // format data in the 4 bytes instead of data size
+            frame = Cursor::new(buffer.as_mut_slice());
+            frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+            frame.pack(&SdoHeader::new(
+                        true,
+                        true,
+                        u2::new((EXPEDITED_MAX_SIZE - data.len()) as u8),
+                        sdo.sub.is_complete(),
+                        u3::from(SdoCommandRequest::Download),
+                        sdo.index,
+                        sdo.sub.unwrap(),
+                    )).unwrap();
+            frame.write(data).unwrap();
+            frame.write(&[0; 4][data.len() ..]).unwrap();
 
-            // receive acknowledge
-            Self::receive_sdo_response(
-                &mut mailbox,
-                &mut buffer,
-                SdoCommandResponse::Download,
-                sdo,
-                ).await?;
+            //Send data and receive acknowledge
+            let mut mailbox = self.mailbox.lock().await;
+            mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
+            Self::receive_sdo_response(&mut mailbox, &mut buffer, SdoCommandResponse::Download,sdo).await?;
         }
         else {
             // normal transfer, eventually segmented
-            let mut data = Cursor::new(data.as_ref());
+            let mut data: Cursor<&[u8]> = Cursor::new(data.as_ref());
 
-            // send one download request with the start of data
-            {
-                let mut frame = Cursor::new(buffer.as_mut_slice());
-                frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
-                frame.pack(&SdoHeader::new(
-                            true,
-                            false,
-                            u2::new(0),
-                            sdo.sub.is_complete(),
-                            u3::from(SdoCommandRequest::Download),
-                            sdo.index,
-                            sdo.sub.unwrap(),
-                        )).unwrap();
-                frame.pack(&(data.remain().len() as u32)).unwrap();
-                let segment = data.remain().len().min(SDO_SEGMENT_MAX_SIZE);
-                frame.write(data.read(segment).unwrap()).unwrap();
-                mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
-            }
+            // format download request with the start of data
+            frame = Cursor::new(buffer.as_mut_slice());
+            frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+            frame.pack(&SdoHeader::new(
+                        true,
+                        false,
+                        u2::new(0),
+                        sdo.sub.is_complete(),
+                        u3::from(SdoCommandRequest::Download),
+                        sdo.index,
+                        sdo.sub.unwrap(),
+                    )).unwrap();
+            frame.pack(&(data.remain().len() as u32)).unwrap();
+            let segment = data.remain().len().min(SDO_SEGMENT_MAX_SIZE);
+            frame.write(data.read(segment).unwrap()).unwrap();
 
-            // receive acknowledge
-            Self::receive_sdo_response(
-                &mut mailbox,
-                &mut buffer,
-                SdoCommandResponse::Download,
-                sdo,
-                ).await?;
+            //Send data and receive acknowledge
+            let mut mailbox = self.mailbox.lock().await;
+            mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
+            Self::receive_sdo_response(&mut mailbox, &mut buffer, SdoCommandResponse::Download, sdo).await?;
+            drop(mailbox);
 
             // send many segments for the rest of the data, aknowledge each time
             let mut toggle = false;
             while data.remain().len() != 0 {
-                // send segment
-                {
-                    let segment = data.remain().len().min(SDO_SEGMENT_MAX_SIZE);
-                    let mut frame = Cursor::new(buffer.as_mut_slice());
-                    frame.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
-                    frame.pack(&SdoSegmentHeader::new(
-                            data.remain().len() != 0,
-                            u3::new(0),
-                            toggle,
-                            u3::from(SdoCommandRequest::DownloadSegment),
-                        )).unwrap();
-                    frame.write(data.read(segment).unwrap()).unwrap();
-                    mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
-                }
+                // format segment to send
+                let segment = data.remain().len().min(SDO_SEGMENT_MAX_SIZE);
+                let mut lframe = Cursor::new(buffer.as_mut_slice());
+                lframe.pack(&CoeHeader::new(u9::new(0), CanService::SdoRequest)).unwrap();
+                lframe.pack(&SdoSegmentHeader::new(data.remain().len() != 0, u3::new(0), toggle, u3::from(SdoCommandRequest::DownloadSegment))).unwrap();
+                lframe.write(data.read(segment).unwrap()).unwrap();
 
-                // receive aknowledge
-                Self::receive_sdo_segment(
-                    &mut mailbox,
-                    &mut buffer,
-                    SdoCommandResponse::DownloadSegment,
-                    toggle,
-                    ).await?;
+                // Send and receive aknowledge
+                let mut mailbox = self.mailbox.lock().await;
+                mailbox.write(MailboxType::Can, priority, lframe.finish()).await?;
+                Self::receive_sdo_segment(&mut mailbox, &mut buffer, SdoCommandResponse::DownloadSegment, toggle).await?;
                 toggle = !toggle;
             }
         }

@@ -40,7 +40,7 @@ struct Direction {
 impl Mailbox {
     /**
         configure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
-        
+
         `slave` is the slave's fixed address, no implementation is made for mailbox with topological addresses
     */
     pub async fn new(master: Arc<RawMaster>, slave: u16, write: Range<u16>, read: Range<u16>) -> EthercatResult<Mailbox> {
@@ -77,10 +77,10 @@ impl Mailbox {
         ).join().await;
         if configured.0.one().is_err() || configured.1.one().is_err()
             {return Err(EthercatError::Master("failed to configure mailbox sync managers"))}
-        
+
         assert!(usize::from(read.end - read.start) < MAILBOX_MAX_SIZE);
         assert!(usize::from(write.end - write.start) < MAILBOX_MAX_SIZE);
-        
+
         Ok(Self {
             master,
             slave,
@@ -112,7 +112,7 @@ impl Mailbox {
         let mailbox_control = registers::sync_manager::interface.mailbox_read();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
 
-        self.read.count = (self.read.count % 7)+1;
+        self.read.count = (self.read.count % 7) + 1;
 
         // wait for data
         let mut state = loop {
@@ -130,10 +130,11 @@ impl Mailbox {
         let buffer = &mut allocated[range];
         // read the mailbox content
         loop {
-            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1 
-                {break}
+            // exit loop if ok
+            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1
+            { break }
 
-            // trigger repeat
+            // otherwise... trigger repeat
             state.set_repeat(true);
             while self.master.fpwr(self.slave, mailbox_control, state).await.answers == 0  {}
             // wait for repeated data to be available
@@ -154,13 +155,13 @@ impl Mailbox {
         }
         if header.ty() != ty
             {return Err(EthercatError::Protocol("received unexpected mailbox frame type"))}
-        if u8::from(header.count()) != self.read.count 
+        if u8::from(header.count()) != self.read.count
             {return Err(EthercatError::Protocol("received mailbox frame has wrong counter"))}
         received.write(
             frame.read(header.length() as usize)
                 .map_err(|_| EthercatError::Protocol("inconsistent mailbox size"))?
             ).map_err(|_| EthercatError::Master("read buffer is too small for mailbox data"))?;
-        
+
         Ok(received.finish())
     }
     /**
@@ -186,7 +187,7 @@ impl Mailbox {
             )).unwrap();
         frame.write(data)
             .map_err(|_|  EthercatError::Master("data too big for mailbox buffer"))?;
-        let sent = frame.finish();
+        let _sent = frame.finish(); //TODO: Unused, is it wanted ?
 
         // wait for mailbox to be empty
         loop {

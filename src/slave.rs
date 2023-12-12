@@ -93,7 +93,6 @@ impl<'a> Slave<'a> {
             {Err(EthercatError::Master("slave already in use by an other instance"))}
         else {
             book.insert(address);
-            drop(book);
             Ok(Self {
                 master: master.raw.clone(),
                 safemaster: Some(master),
@@ -183,6 +182,7 @@ impl<'a> Slave<'a> {
             SlaveAddress::Fixed(i) => i,
             _ => panic!("mailbox is unsafe without fixed addresses"),
         };
+
         // setup the mailbox
         let mailbox = Mailbox::new(
             self.master.clone(),
@@ -190,6 +190,7 @@ impl<'a> Slave<'a> {
             MAILBOX_BUFFER_WRITE,
             MAILBOX_BUFFER_READ,
             ).await?;
+
         // switch SII owner to PDI, so mailbox can init
         self.master.write(self.address, registers::sii::access, {
             let mut config = registers::SiiAccess::default();
@@ -210,7 +211,7 @@ impl<'a> Slave<'a> {
     }
 
     /// locks access to CoE communication and return the underlying instance of [Can] running CoE
-    pub async fn coe(&self) -> LockGuard<'_, Can>    {
+    pub async fn coe(&self) -> LockGuard<'_, Can> {
         self.coe
             .as_ref().expect("coe not initialized")
             .lock().await
@@ -229,8 +230,8 @@ impl Drop for Slave<'_> {
     fn drop(&mut self) {
         // deregister from the safemaster if any
         if let Some(safe) = self.safemaster {
-            let mut book = LockGuard::new(&safe.slaves);
-            book.remove(&self.address);
+            let mut slaves = LockGuard::new(&safe.slaves);
+            slaves.remove(&self.address);
         }
     }
 }
