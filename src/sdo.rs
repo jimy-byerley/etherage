@@ -1305,7 +1305,7 @@ pub enum OperationMode {
 
         In the csv mode [ControlWord::halt] shall be ignored because the halt function is controlled by the control device.
 
-    [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented
+        [ControlWord::cycle] can be used as Output Cycle Counter. This 2-Bit counter can be used by the control device to indicate if updated output data are available. The counter shall be incremented
     */
     SynchronousVelocity = 9,
     /**

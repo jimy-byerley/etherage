@@ -139,6 +139,7 @@ pub mod dc {
     /// full structure gathering all the dc registers
     pub const all: Field<DistributedClock> = Field::simple(0x0900);
     // direct access to DC struct fields
+    pub const measure_time: Field<u32> = Field::simple(0x0900);
     pub const received_time: Field<[u32; 4]> = Field::simple(0x0900);
     pub const system_time: Field<u64> = Field::simple(0x0910);
     pub const local_time: Field<u64> = Field::simple(0x0918);
@@ -509,6 +510,7 @@ data::bilge_pdudata!(AlSyncConfig, u8);
 
 /// ETG.1000.4 table 31
 #[bitsize(80)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct DLInformation {
     /// type of the slave controller
     pub ty: u8,
@@ -1107,12 +1109,13 @@ pub struct DistributedClock {
 }
 data::packed_pdudata!(DistributedClock);
 
+/// ETG.1000.4 table 60
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone, Default, PartialEq)]
 pub struct TimeDifference {
     /// Mean difference between local copy of System Time and received System Time values
     pub mean: u31,
-    /// true if local copy of system time smaller than received system time
+    /// true if local copy of system time smaller than received system time (offset is negative)
     pub sign: bool,
 }
 data::bilge_pdudata!(TimeDifference, u32);

@@ -43,15 +43,15 @@ const MAX_ETHERCAT_PDU: usize = MAX_ETHERCAT_FRAME / MIN_PDU;
 
 /**
     low level ethercat communication functions, with no notion of slave.
-
+    
     genericity allows to use a UDP socket or raw ethernet socket, see [crate::socket] for more details.
-
+    
     This struct does not do any compile-time checking of the communication states on the slaves, and has no notion of slave, it is just executing the basic commands.
-
+    
     The ethercat low level is all about PDUs: an ethercat frame intended for slaves is a PDU frame. PDU frames contain any number of PDU (Process Data Unit), each PDU is a command, acting on one of the 2 memories types:
-
-- **Physical Memory** (aka. registers)
-
+    
+    - **Physical Memory** (aka. registers)
+    
         each slave has its own physical memory, commands for physical memory (`*P*`, `B*`) are addressing a specific slave, or combining the memory reads from all slaves
 
         The physical memory is divided into registers declared in [crate::registers]

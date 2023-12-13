@@ -22,10 +22,10 @@
     - **SM-synchronous**
         slaves tasks are triggered by an ethercat sending
     - **DC-synchronous**
-        slaves tasks are triggered by their clock synchronized with other slaves and the master. This mode is implemented in [SyncClock]
+        slaves tasks are triggered by their clock synchronized with other slaves and the master. This mode is implemented in [DistributedClock]
         according to ETG.1020, this mode is required only for the application that require high precision (<ms) in operation.
         
-        Multiple mode of DC synchronous for DC unit in slave are available. The default one used only the sync_0 impulse to trigger based time. (see [this](/etherage/schemes/synchronization-DC-submodes.svg) schematoic to get more information)
+        Multiple mode of DC synchronous for DC unit in slave are available. The default one used only the sync_0 impulse to trigger based time. (see [this](/etherage/schemes/synchronization-DC-submodes.svg) schematic to get more information)
 
 
     ![synchronization modes](/etherage/schemes/synchronization-modes.svg)
@@ -45,7 +45,7 @@
 use crate::{
     data::PduData,
     registers::{self, AlState},
-    sdo::{self, Sdo},
+//     sdo::{self, Sdo},
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     error::{EthercatError, EthercatResult}, 
     can::CanError,
@@ -56,14 +56,12 @@ use std::{
     time::{SystemTime, Instant, Duration},
     sync::Arc,
     };
-use core::sync::atomic::{
-    AtomicBool, AtomicI64,
-    Ordering::*,
-    };
+// use core::sync::atomic::{
+//     AtomicBool, AtomicI64,
+//     Ordering::*,
+//     };
 
-use bilge::prelude::*;
 use futures_concurrency::future::Join;
-use thread_priority::*;
 
 
 
@@ -72,8 +70,6 @@ use thread_priority::*;
 /**
     implementation of the Distributed Clock (DC) at the master level.
 
-    Other kinds of clock do not concern this struct (at least for now).
-
     The time offsets and delays measured by this clock synchronization mode are shows in the following chronogram for one packet sending.
 
     ![clock offsets references](/etherage/schemes/clock-references.svg)
@@ -81,8 +77,6 @@ use thread_priority::*;
 pub struct DistributedClock {
     // Raw master reference
     master: Arc<RawMaster>,
-    /// flag stopping synchronization execution
-    stopped: AtomicBool,
     
     /// start instant used as master's clock, it serves as monotonic clock for all offset computations to guarantee the synchronization success
     start: Instant,
@@ -92,11 +86,12 @@ pub struct DistributedClock {
     /// topological index of clock reference slave
     referent: usize,
     /// per-slave variables, slaves are indexed by topological order
-    slaves: Vec<SlaveTiming>,
+    slaves: Vec<ClockSlave>,
     /// topological position of slaves indexed by fixed address (for user needs)
     index: HashMap<SlaveAddress, usize>,
 }
-struct SlaveTiming {
+#[derive(Debug)]
+struct ClockSlave {
 	/// fixed address of slave
 	address: SlaveAddress,
 	/// whether the slave supports DC
@@ -107,8 +102,8 @@ struct SlaveTiming {
 	offset: i64,
 	/// transmission delay from clock reference slave to present slave
 	delay: u32,
-	/// last measured difference between local estimated system time and received system time
-	divergence: AtomicI64,
+// 	/// last measured difference between local estimated system time and received system time
+// 	divergence: AtomicI64,
 }
 
 	
@@ -116,173 +111,16 @@ type DLSlave = Vec<(u16, registers::DLInformation, registers::DLStatus)>;
 
 
 impl DistributedClock {
-	/*
-	pub async fn new(
-			master: Arc<RawMaster>,
-			delays_samples: Option<usize>,
-			offsets_samples: Option<usize>,
-			) -> EthercatResult<Self> {
-		// check number of slaves
-        let support = master.brd(registers::dl::information).await;
-        if support.answers == 0 || ! support.value()?.dc_supported()
-            {return Err(EthercatError::Master("no slave supporting clock"))}
+	/**
+		initialize the distributed clock on the ethercat segment
 		
-		// retreive informations about all slaves in the network
-		let infos = (0 .. support.answers).map(|slave| async {
-				let (address, support, status) = (
-					self.master.aprd(slave, registers::address::fixed),
-					self.master.aprd(slave, registers::dl::information),
-					self.master.aprd(slave, registers::dl::status),
-					).join().await;
-				Ok((address.one()?, support.one()?, status.one()?))
-			})
-			.collect::<Vec<_>>()
-			.join().await;
-            
-		// check addresses and dc-enabled slaves
-		let mut slaves = infos.iter().enumerate()
-			.map(|(index, (fixed, information, status))| SlaveTiming {
-				address: 
-					if fixed == 0  {SlaveAddress::AutoIncremented(index)}
-					else           {SlaveAddress::Fixed(fixed)},
-				enabled: 
-					information.dc_enabled(),
-				.. Default::default(),
-			})
-			.collect::<Vec<_>>();
+		Since the slaves responsibilities in the distributed clock only depend from the topology of the network, this initializer will automatically detect the topology and act accordingly
 		
-		// build topology
-		let mut stack = vec![];
-		for (index, info) in infos.enumerate() {
-			let (address, support, status) = info?;
-			
-			if index != 0 {
-				let (parent, port) = loop {
-					let Some(parent) = stack.pop() 
-						else {return Err(EthercatError::Protocol("topology identification failed due to wrong slave port activation"))};
-					if let Some(port) = (0 .. topology.len())
-							.find(|port|  infos[parent].2.port_link_status_at(port) && topology[parent][port].is_none()) 
-						{break (parent, port)}
-				}
-				slaves[index].topology[parent][port] = Some(index);
-				slaves[index].topology[index][0] = Some(parent);
-			}
-			stack.push(index);
-		}
+		## parameters
 		
-		// compute delays
-		// get samples
-		let samples = delays_samples.unwrap_or(8);
-		let stamps = vec![[0; 4], infos.len()*samples];
-		for i in 0 .. samples {
-			master.bwr(registers::dc::received_time, 0).await;
-			for (index, times) in infos.iter()
-				.enumerate()
-				.filter(|(index, slave)|  slave.enabled)
-				.map(|(index, slave)|  async {
-					(index, master.read(slave.address, registers::dc::received_time).await)
-					})
-				.collect::<Vec<_>>()
-				.join().await
-			{
-				stamps[i*samples + index] = times.one()?;
-			}
-		}
-		// mean samples
-		for index in 1 .. slaves.len() {
-			let parent = slaves[index].topology[0].unwrap();
-			
-			// find enclosing timestamps (activated ports) in parent and child
-			let parent_after = slaves[parent].topology.iter().enumerate()
-				.find(|(i, next)|  next == Some(index)).unwrap().0;
-			let parent_before = slaves[parent].topology[0 .. parent_before].iter().enumerate().rev()
-				.find(|(i, next)|  next.is_some()).unwrap().0;
-				
-			let child_before = 0;
-			let child_after = slaves[index].topology.iter().enumerate()
-				.find(|(i, next)|  next.is_some()).unwrap().0;
-			
-			let mut total: u64 = 0;
-			for i in 0 .. samples {
-				let child = &stamps[i*samples + index];
-				let parent = &stamps[i*samples + parent];
-				let delay = parent[parent_after].wrapping_sub(parent[parent_before])
-							- child[child_after].wrapping_sub(child[child_before]);
-				// TODO: use intermediate sums for increase the tolerated delay from 4s in total to 4s per branch
-				// summation is exact since we are using integers
-				total += delay.into();
-			}
-			
-			slaves[index].delay = slaves[parent].delay + total / (2*(samples as u64));
-		}
-		// send delays
-		slaves.iter().map(|slave| async {
-				master.write(slave.address, registers::dc::system_delay, slave.delay).await.one()
-			})
-			.collect::<Vec<_>>()
-			.join().await
-			.drain(..).collect()?;
-		
-		// compute offsets (static drift compensation)
-		let samples = offsets_samples.unwrap_or(15_000);
-		// approximate offset first to get the most significant digits because divergence measurement is only 32 bits
-		slaves.iter_mut()
-			.filter(|slave|  slave.enabled)
-			.map(|slave| async {
-				let remote = master.read(slave.address, registers::dc::local_time).await.one()?;
-				let local = start.elapsed().as_nanos() % u128::from(u64::MAX);
-				slave.offset = local.wrapping_sub(remote);
-				master.write(slave.address, registers::dc::system_difference, slave.offset).await.one()?;
-				Ok(())
-			})
-			.collect::<Vec<_>>()
-			.join().await
-			.drain(..).collect()?;
-		// send many samples of system time (master time), the slave will mean it
-        for _ in 0 .. samples {
-            master.pdu(
-                PduCommand::BWR, 
-                SlaveAddress::Broadcast, 
-                registers::dc::system_time.byte as u32, 
-                &mut self.reduced().packed(), 
-                true,
-                ).await; 
-			// we don't care if some packets are lost, so no error checking here
-        }
-        // retreive divergence and correct offsets
-        slaves.iter_mut()
-			.filter(|slave|  slave.enabled)
-			.map(|slave| async {
-				slave.offset = i64::from(i32::from(master.read(slave.address, registers::dc::system_difference).await.one()?));
-				master.write(
-					slave.address, 
-					registers::dc::system_offset, 
-					u64::from_ne_bytes(slave.offset.to_ne_bytes()),
-					).await.one()?;
-				Ok(())
-			}))
-			.collect::<Vec<_>>()
-			.join().await 
-			.drain(..).collect()?;
-		
-		// create struct
-		let mut clock = Self {
-			master,
-            stopped: AtomicBool::new(false),
-            
-            start: Instant::now(),
-            epoch: SystemTime::now(),
-            offset: 0,
-            delay: 0,
-            
-            referent,
-            slaves,
-            index,
-			};
-		todo!();
-	}*/
-	
-	
+		- `delays_samples`: number of clock sampling used in estimating the propagation delays between slaves (defaults to `8`)
+		- `offsets_samples`: number of clock sampling used in estimating the offsets between slaves clocks (defaults to `15_000`)
+	*/
 	pub async fn new(
 			master: Arc<RawMaster>,
 			delays_samples: Option<usize>,
@@ -291,7 +129,6 @@ impl DistributedClock {
 		// create struct
 		let mut clock = Self {
 			master,
-            stopped: AtomicBool::new(false),
             
             start: Instant::now(),
             epoch: SystemTime::now(),
@@ -304,6 +141,8 @@ impl DistributedClock {
 		clock.init_topology(&infos).await?;
 		clock.init_delays(&infos, delays_samples.unwrap_or(8)).await?;
 		clock.init_offsets(offsets_samples.unwrap_or(15_000)).await?;
+		
+		dbg!(&clock.slaves);
 		Ok(clock)
 	}
 	
@@ -314,11 +153,12 @@ impl DistributedClock {
             {return Err(EthercatError::Master("no slave supporting clock"))}
 		
 		// retreive informations about all slaves in the network
-		let infos = (0 .. support.answers).map(|slave| async {
+		let master = self.master.as_ref();
+		let infos = (0 .. support.answers).map(|slave| async move {
 				let (address, support, status) = (
-					self.master.aprd(slave, registers::address::fixed),
-					self.master.aprd(slave, registers::dl::information),
-					self.master.aprd(slave, registers::dl::status),
+					master.aprd(slave, registers::address::fixed),
+					master.aprd(slave, registers::dl::information),
+					master.aprd(slave, registers::dl::status),
 					).join().await;
 				Ok((address.one()?, support.one()?, status.one()?))
 			})
@@ -328,7 +168,7 @@ impl DistributedClock {
 		
 		// check addresses and dc-enabled slaves
 		self.slaves = infos.iter().enumerate()
-			.map(|(index, (fixed, information, status))| SlaveTiming {
+			.map(|(index, (fixed, information, _))| ClockSlave {
 				address: 
 					if *fixed == 0  {SlaveAddress::AutoIncremented(index as _)}
 					else           {SlaveAddress::Fixed(*fixed)},
@@ -337,7 +177,7 @@ impl DistributedClock {
 				topology: [None; 4],
 				offset: 0,
 				delay: 0,
-				divergence: AtomicI64::new(0),
+// 				divergence: AtomicI64::new(0),
 			})
 			.collect::<Vec<_>>();
 		
@@ -351,16 +191,17 @@ impl DistributedClock {
 	
 	/// build topology
 	async fn init_topology(&mut self, infos: &DLSlave) -> EthercatResult {
-		let mut stack = vec![];
-		for (index, info) in infos.enumerate() {
-			let (address, support, status) = info?;
-			
-			if index != 0 {
+		let mut stack = Vec::<usize>::new();
+		for index in 0 .. infos.len() {
+			if index == 0 {
+				self.slaves[index].topology[0] = Some(0);
+			}
+			else {
 				let (parent, port) = loop {
-					let Some(parent) = stack.last()
+					let Some(&parent) = stack.last()
 						else {return Err(EthercatError::Protocol("topology identification failed due to wrong slave port activation"))};
 					if let Some(port) = (0 .. self.slaves[parent].topology.len())
-							.find(|port|  infos[parent].2.port_link_status_at(port) && self.slaves[parent].topology[port].is_none()) 
+							.find(|&port|  infos[parent].2.port_link_status_at(port) && self.slaves[parent].topology[port].is_none()) 
 						{break (parent, port)}
 					stack.pop();
 				};
@@ -374,14 +215,15 @@ impl DistributedClock {
 	/// compute delays
 	async fn init_delays(&mut self, infos: &DLSlave, samples: usize) -> EthercatResult {
 		// get samples
-		let stamps = vec![[0; 4], infos.len()*samples];
+		let mut stamps = vec![[0; 4]; infos.len()*samples];
 		for i in 0 .. samples {
-			self.master.bwr(registers::dc::received_time, 0).await;
-			for (index, times) in infos.iter()
+			self.master.bwr(registers::dc::measure_time, 0).await;
+			let master = self.master.as_ref();
+			for (index, times) in self.slaves.iter()
 				.enumerate()
-				.filter(|(index, slave)|  slave.enabled)
-				.map(|(index, slave)|  async {
-					(index, self.master.read(slave.address, registers::dc::received_time).await)
+				.filter(|(_, slave)|  slave.enabled)
+				.map(|(index, slave)| async move {
+					(index, master.read(slave.address, registers::dc::received_time).await)
 					})
 				.collect::<Vec<_>>()
 				.join().await
@@ -389,20 +231,22 @@ impl DistributedClock {
 				stamps[i*samples + index] = times.one()?;
 			}
 		}
+		dbg!(&stamps);
+		dbg!(&infos);
+		
 		// mean samples
-		let mut delay = 0;
 		for index in 1 .. self.slaves.len() {
 			let parent = self.slaves[index].topology[0].unwrap();
 			
 			// find enclosing timestamps (activated ports) in parent and child
 			let parent_after = self.slaves[parent].topology.iter().enumerate()
-				.find(|(i, next)|  next == Some(index)).unwrap().0;
+				.find(|(_, &next)|  next == Some(index)).unwrap().0;
 			let parent_before = self.slaves[parent].topology[0 .. parent_after].iter().enumerate().rev()
-				.find(|(i, next)|  next.is_some()).unwrap().0;
+				.find(|(_, &next)|  next.is_some()).unwrap().0;
 				
 			let child_before = 0;
-			let child_after = self.slaves[index].topology.iter().enumerate()
-				.find(|(i, next)|  next.is_some()).unwrap().0;
+			let child_after = self.slaves[index].topology.iter().enumerate().rev()
+				.find(|(_, &next)|  next.is_some()).unwrap().0;
 			
 			// sum of transition delays times from parent to child
 			let mut transitions: u64 = 0;
@@ -414,12 +258,12 @@ impl DistributedClock {
 				let parent = &stamps[i*samples + parent];
 				let transition = parent[parent_after].wrapping_sub(parent[parent_before])
 								 - child[child_after].wrapping_sub(child[child_before]);
-				let port = parent[parent_after].wrapping_sub(parent[0]);
+				let port = parent[parent_before].wrapping_sub(parent[0]);
 				// TODO: use intermediate sums for increase the tolerated delay from 4s in total to 4s per branch
 				// TODO: take into account that the slaves clocks might be 32bits using [DLInformaton::dc_range]
 				// summation is exact since we are using integers
-				transitions += transition.into();
-				ports += port.into()
+				transitions += u64::from(transition);
+				ports += u64::from(port)
 			}
 			
 			self.slaves[index].delay = self.slaves[parent].delay + u32::try_from(
@@ -428,61 +272,60 @@ impl DistributedClock {
 		}
 		// send delays
 		self.slaves.iter().map(|slave| async {
-				self.master.write(slave.address, registers::dc::system_delay, slave.delay).await.one()?
-				Ok(())
+				self.master.write(slave.address, registers::dc::system_delay, slave.delay).await.one()
 			})
 			.collect::<Vec<_>>()
 			.join().await
-			.drain(..).collect()?;
+			.drain(..).collect::<EthercatResult>()?;
+			
 		Ok(())
 	}
 	
 	/// compute offsets (static drift compensation)
 	async fn init_offsets(&mut self, samples: usize) -> EthercatResult {
-		let samples = 15_000;
+		// we will need an immutable reference to self while modifying the indivudual slave structs. This is safe because we will not access these structs concurrently and will not use methods of self that need them
+		let clock = self as *mut Self;
+		
 		// approximate offset first to get the most significant digits because divergence measurement is only 32 bits
 		self.slaves.iter_mut()
 			.filter(|slave|  slave.enabled)
-			.map(|slave| async {
-				let remote = self.master.read(slave.address, registers::dc::local_time).await.one()?;
-				let local = self.reduced();
-				slave.offset = local.wrapping_sub(remote);
-				self.master.write(
+			.map(|slave| async move {
+				let clock = unsafe {&*clock};
+				let remote = clock.master.read(slave.address, registers::dc::local_time).await.one()?;
+				let local = clock.reduced();
+				let offset = local.wrapping_sub(remote);
+				clock.master.write(
 					slave.address, 
 					registers::dc::system_offset, 
-					u64::from_ne_bytes(slave.offset.to_ne_bytes()),
+					offset,
 					).await.one()?;
+				slave.offset = i64::from_ne_bytes(offset.to_ne_bytes());
 				Ok(())
 			})
 			.collect::<Vec<_>>()
 			.join().await
-			.drain(..).collect()?;
+			.drain(..).collect::<EthercatResult>()?;
+		
 		// send many samples of system time (master time), the slave will mean it
         for _ in 0 .. samples {
-            self.master.pdu(
-				PduCommand::ARMW, 
-                self.referent(), 
-                registers::dc::system_time.byte as u32, 
-                &mut self.reduced().packed().unwrap(), 
-                true,
-                ).await; 
-			// we don't care if some packets are lost, so no error checking here, it will not bother slaves
+            self.sync().await;
         }
         // retreive divergence and correct offsets
         self.slaves.iter_mut()
 			.filter(|slave|  slave.enabled)
-			.map(|slave| async {
-				slave.offset += i64::from(i32::from(self.master.read(slave.address, registers::dc::system_difference).await.one()?));
-				self.master.write(
+			.map(|slave| async move {
+				let clock = unsafe {&*clock};
+				slave.offset += i64::from(i32::from(clock.master.read(slave.address, registers::dc::system_difference).await.one()?));
+				clock.master.write(
 					slave.address, 
 					registers::dc::system_offset, 
 					u64::from_ne_bytes(slave.offset.to_ne_bytes()),
 					).await.one()?;
-				Ok(())
+				EthercatResult::<(), ()>::Ok(())
 			})
 			.collect::<Vec<_>>()
 			.join().await 
-			.drain(..).collect()?;
+			.drain(..).collect::<EthercatResult>()?;
 		Ok(())
 	}
 	
@@ -522,24 +365,31 @@ impl DistributedClock {
     pub fn delay(&self, slave: SlaveAddress) -> i128  {
         self.slaves[self.index[&slave]].delay.into()
     }
-    /**
-        return the current synchronization error (time gap) between the reference clock and the given slave clock.
-        If perfectly synchronized, this value should be `0` for all slaves even with a transmission delay between slaves
-    */
-    pub fn divergence(&self, slave: SlaveAddress) -> i128  {
-		self.slaves[self.index[&slave]].divergence.load(SeqCst).into()
-    }
+//     /**
+//         return the current synchronization error (time gap) between the reference clock and the given slave clock.
+//         If perfectly synchronized, this value should be `0` for all slaves even with a transmission delay between slaves
+//     */
+//     pub fn divergence(&self, slave: SlaveAddress) -> i128  {
+// 		self.slaves[self.index[&slave]].divergence.load(SeqCst).into()
+//     }
     
 
     /**
         distributed clock synchronisation step. It must be called periodically to save the distributed clock from divergence
     */
     pub async fn sync(&self) {
+		let referent = self.referent();
+		let command = match referent {
+			SlaveAddress::AutoIncremented(_) => PduCommand::ARMW,
+			SlaveAddress::Fixed(_) => PduCommand::FRMW,
+			_ => unreachable!(),
+		};
 		self.master.pdu(
-			PduCommand::ARMW, 
-			self.referent(), 
+			command, 
+			referent, 
 			registers::dc::system_time.byte as u32, 
-			&mut self.reduced().packed().unwrap(), 
+			&mut (0u64).packed().unwrap(), 
+// 			&mut self.reduced().packed().unwrap(), 
 			true,
 			).await; 
 		// we don't care if packet is lost, so no error checking here, it will not bother slaves
@@ -559,10 +409,8 @@ impl DistributedClock {
         
         loop {
 			interval.next().await.unwrap().unwrap();
-			self.sync();
+			self.sync().await;
 		}
 	}
 }
-
-
 
