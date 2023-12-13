@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use core::time::Duration;
 use etherage::{
     EthernetSocket, RawMaster, Sdo,
     mailbox::Mailbox,

@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use futures_concurrency::future::Join;
 use etherage::{Field, EthernetSocket, RawMaster, EthercatResult};
 

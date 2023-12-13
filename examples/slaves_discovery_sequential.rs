@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    error::Error,
-    };
+use std::error::Error;
 use etherage::{
     EthernetSocket, SlaveAddress, CommunicationState,
     master::Master,

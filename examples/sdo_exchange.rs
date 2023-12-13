@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    error::Error,
-    };
+use std::error::Error;
 use futures_concurrency::future::Join;
 use etherage::{
     EthernetSocket, RawMaster,

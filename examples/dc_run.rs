@@ -8,7 +8,7 @@ use etherage::{
     SlaveAddress,
     CommunicationState, Master, 
     registers,
-    sdo,
+//     sdo,
     };
 use ioprio::*;
 use futures::stream::StreamExt;
@@ -63,26 +63,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
     master.switch(CommunicationState::PreOperational).await.unwrap();
     
-    println!("custom init");
-    for s in &slaves {
-        use etherage::Slave;
-        
-        let mut coe = s.coe().await;
-        let raw = unsafe {s.raw_master()};
-        let priority = bilge::prelude::u2::new(0);
-        
-        raw.write(s.address(), registers::isochronous::all, {
-            let mut isochronous = registers::Isochronous::default();
-            isochronous.enable.set_operation(true);
-            isochronous.enable.set_sync0(true);
-//             isochronous.interrupt0.set_enable(true);
-            isochronous.sync0_cycle_time = 2_000_000;
-//             isochronous.latch0_edge.set_positive(true);
-            isochronous
-            }).await.one().unwrap();
-        coe.sdo_write(&sdo::sync_manager.logical_write().sync().sync_mode(), priority, sdo::SyncMode::DCSync0).await.unwrap();
-//         coe.sdo_write(&sdo::sync_manager.logical_write().sync().cycle(), priority, 2_000_000).await.unwrap();
-    }
+//     println!("custom init");
+//     for s in &slaves {
+//         use etherage::Slave;
+//         
+//         let mut coe = s.coe().await;
+//         let raw = unsafe {s.raw_master()};
+//         let priority = bilge::prelude::u2::new(0);
+//         
+//         raw.write(s.address(), registers::isochronous::all, {
+//             let mut isochronous = registers::Isochronous::default();
+//             isochronous.enable.set_operation(true);
+//             isochronous.enable.set_sync0(true);
+// //             isochronous.interrupt0.set_enable(true);
+//             isochronous.sync0_cycle_time = 2_000_000;
+// //             isochronous.latch0_edge.set_positive(true);
+//             isochronous
+//             }).await.one().unwrap();
+//         coe.sdo_write(&sdo::sync_manager.logical_write().sync().sync_mode(), priority, sdo::SyncMode::DCSync0).await.unwrap();
+// //         coe.sdo_write(&sdo::sync_manager.logical_write().sync().cycle(), priority, 2_000_000).await.unwrap();
+//     }
     println!("initialized");
     
     
@@ -95,14 +95,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     (
         // dynamic drift
-        clock.sync(),
+        clock.sync_loop(Duration::from_millis(3)),
         // survey divergence
         async { loop {
             interval.next().await.unwrap().unwrap();
             
             for slave in &slaves {
-                let SlaveAddress::Fixed(slave) = slave.address() else {panic!()};
-                print!("{} ", clock.divergence(slave));
+                print!("{} ", i32::from(slave.physical_read(registers::dc::system_difference).await.unwrap()));
             }
             print!("\n");
         }},
@@ -111,7 +110,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             interval2.next().await.unwrap().unwrap();
             master.logical_exchange(etherage::Field::simple(0), [0u8; 64]).await;
         }},
-    ).race().await.unwrap();
+    ).race().await;
 
     Ok(())
 }
