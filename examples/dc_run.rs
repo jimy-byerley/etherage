@@ -2,13 +2,15 @@ use std::{
     sync::Arc,
     time::Duration,
     error::Error,
+//     default::Default,
     };
 use etherage::{
     EthernetSocket,
     SlaveAddress,
     CommunicationState, Master, 
     registers,
-//     sdo,
+    mapping,
+    sdo,
     };
 use ioprio::*;
 use futures::stream::StreamExt;
@@ -40,28 +42,47 @@ async fn main() -> Result<(), Box<dyn Error>> {
         master.reset_addresses(),
         master.reset_clock(),
         master.reset_logical(),
-//         master.reset_mailboxes(),
-        raw.bwr(registers::ports_errors, registers::PortsErrorCount::default()),
+        master.reset_mailboxes(),
+        raw.bwr(registers::ports_errors, Default::default()),
     ).join().await;
-
+    
     let mut tasks = Vec::new();
     let mut iter = master.discover().await;
-    while let Some(mut s) = iter.next().await  {
+    while let Some(mut slave) = iter.next().await  {
         tasks.push(async move {
-            let SlaveAddress::AutoIncremented(i) = s.address()
+            let SlaveAddress::AutoIncremented(i) = slave.address()
                 else { panic!("slave already has a fixed address") };
-            s.set_address(i+1).await.unwrap();
-            s.init_mailbox().await.unwrap();
-            s.init_coe().await;
-            s
+			slave.expect(etherage::CommunicationState::Init);
+            slave.set_address(i+1).await.unwrap();
+            slave.init_mailbox().await.unwrap();
+            slave.init_coe().await;
+            
+            slave
         });
     }
-    let slaves = tasks.join().await;
+    let mut slaves = tasks.join().await;
     
     // initialize clocks and perform static drift
     master.init_clock().await.unwrap();
     
-    master.switch(CommunicationState::PreOperational).await.unwrap();
+//     master.switch(CommunicationState::PreOperational).await.unwrap();
+    
+	let config = mapping::Config::default();
+	let mapping = mapping::Mapping::new(&config);
+    for slave in &slaves {
+		let SlaveAddress::Fixed(i) = slave.address()
+			else { panic!("slave has no fixed address") };
+		mapping.slave(i).register(sdo::SyncDirection::Read, registers::dc::system_difference);
+	}
+	let group = master.group(&mapping);
+	for slave in &mut slaves {
+		slave.switch(CommunicationState::PreOperational).await.unwrap();
+// 		slave.expect(CommunicationState::PreOperational);
+
+		group.configure(&slave).await.unwrap();
+		
+		slave.switch(CommunicationState::SafeOperational).await.unwrap();
+	}
     
 //     println!("custom init");
 //     for s in &slaves {

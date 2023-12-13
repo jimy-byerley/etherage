@@ -142,6 +142,7 @@ impl DistributedClock {
 		clock.init_delays(&infos, delays_samples.unwrap_or(8)).await?;
 		clock.init_offsets(offsets_samples.unwrap_or(15_000)).await?;
 		
+		dbg!(&infos);
 		dbg!(&clock.slaves);
 		Ok(clock)
 	}
@@ -185,7 +186,12 @@ impl DistributedClock {
 		self.referent = (0 .. self.slaves.len())
 			.find(|index|  self.slaves[*index].enabled)
 			.ok_or(EthercatError::Protocol("cannot find first slave supporting clock"))?;
-			
+		
+		self.index = HashMap::from_iter(self.slaves
+				.iter().enumerate()
+				.map(|(index, slave)|  (slave.address, index))
+				);
+		
 		Ok(infos)
 	}
 	
@@ -217,6 +223,7 @@ impl DistributedClock {
 		// get samples
 		let mut stamps = vec![[0; 4]; infos.len()*samples];
 		for i in 0 .. samples {
+			// TODO: sample the master time so its delay to the reference can be computed
 			self.master.bwr(registers::dc::measure_time, 0).await;
 			let master = self.master.as_ref();
 			for (index, times) in self.slaves.iter()
@@ -231,11 +238,12 @@ impl DistributedClock {
 				stamps[i*samples + index] = times.one()?;
 			}
 		}
-		dbg!(&stamps);
-		dbg!(&infos);
 		
 		// mean samples
+		// TODO: compute master delay to reference
 		for index in 1 .. self.slaves.len() {
+			// TODO: check whether dc is supported and account for a null delay otherwise
+			
 			let parent = self.slaves[index].topology[0].unwrap();
 			
 			// find enclosing timestamps (activated ports) in parent and child
@@ -389,7 +397,6 @@ impl DistributedClock {
 			referent, 
 			registers::dc::system_time.byte as u32, 
 			&mut (0u64).packed().unwrap(), 
-// 			&mut self.reduced().packed().unwrap(), 
 			true,
 			).await; 
 		// we don't care if packet is lost, so no error checking here, it will not bother slaves

@@ -256,7 +256,7 @@ impl<'a> Group<'a> {
             };
         let config = &self.config[&address];
 
-        assert_eq!(slave.expected(), CommunicationState::PreOperational);
+        assert_eq!(slave.expected(), CommunicationState::PreOperational, "slave must be in preop state to configure a mapping");
 
         // range of physical memory to be mapped
         let physical = SLAVE_PHYSICAL_MAPPABLE;
