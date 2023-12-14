@@ -136,13 +136,13 @@ impl<'a> Slave<'a> {
         loop {
             let status = self.master.read(self.address, registers::al::response).await.one()?;
             if status.error() {
-                if status.id() {
+//                 if status.id() {
                     let error = self.master.read(self.address, registers::al::error).await.one()?;
                     if error != registers::AlError::NoError
-                        {return Err(EthercatError::Slave(error))}
-                }
-                else 
-                    {return Err(EthercatError::Protocol("error during state change, but no error code provided"))}
+                        {return Err(EthercatError::Slave(self.address, error))}
+//                 }
+//                 else 
+//                     {return Err(EthercatError::Protocol("error during state change, but no error code provided"))}
             }
             if status.state() == target.into()  {break}
         }

@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 use core::fmt;
-use crate::data::PackingError;
+use crate::{
+	data::PackingError,
+	rawmaster::SlaveAddress,
+	};
 
 /**
     general object reporting an unexpected result regarding ethercat communication
@@ -21,7 +24,7 @@ pub enum EthercatError<T=()> {
     /// error reported by a slave, its type depend on the operation returning this error
     ///
     /// these errors can generally be handled and fixed by retrying the operation or reconfiguring the slave
-    Slave(T),
+    Slave(SlaveAddress, T),
     
     /// error reported by the master
     ///
@@ -80,7 +83,7 @@ impl<E> EthercatError<E> {
     where F: Fn(E) -> T
     {
         match self {
-            EthercatError::Slave(value) => EthercatError::Slave(callback(value)),
+            EthercatError::Slave(address, value) => EthercatError::Slave(address, callback(value)),
             EthercatError::Io(e) => EthercatError::Io(e),
             EthercatError::Master(message) => EthercatError::Master(message),
             EthercatError::Protocol(message) => EthercatError::Protocol(message),

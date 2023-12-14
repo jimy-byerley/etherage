@@ -298,7 +298,7 @@ impl Can {
                 check_header(header)?;
                 let error = frame.unpack::<SdoAbortCode>()
                         .map_err(|_| Error::Protocol("unable to unpack SDO error code"))?;
-                Err(Error::Slave(CanError::Sdo(error)))
+                Err(Error::Slave(mailbox.slave(), CanError::Sdo(error)))
                 },
             _ => {return Err(Error::Protocol("unexpected COE service during SDO operation"))},
         }
@@ -333,7 +333,7 @@ impl Can {
                     {return Err(Error::Protocol("slave answered a COE request"))}
                 let error = frame.unpack::<SdoAbortCode>()
                         .map_err(|_| Error::Protocol("unable to unpack SDO error code"))?;
-                Err(Error::Slave(CanError::Sdo(error)))
+                Err(Error::Slave(mailbox.slave(), CanError::Sdo(error)))
                 },
             _ => {return Err(Error::Protocol("unexpected COE service during SDO segment operation"))},
         }

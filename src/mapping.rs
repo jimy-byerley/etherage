@@ -280,7 +280,7 @@ impl<'a> Group<'a> {
                 }
             }
             else {
-                // TODO: send as a complete SDO rather than subitems
+                // TODO: send as a complete SDO rather than subitems if supported
                 // pdo size must be set to zero before assigning items
                 coe.sdo_write(&pdo.config.len(), priority, 0).await?;
                 for (i, sdo) in pdo.sdos.iter().enumerate() {
@@ -319,7 +319,7 @@ impl<'a> Group<'a> {
                 config.set_direction(channel.config.direction);
                 config.set_dls_user_event(true);
                 config.set_watchdog(channel.config.direction == registers::SyncDirection::Write);
-                config.set_enable(true);
+                config.set_enable(channel.pdos.len() != 0);
                 config
                 }).await.one()?;
         }
@@ -617,11 +617,10 @@ impl<'a> MappingChannel<'a> {
         assert!(self.entries.len()+1 < self.capacity);
 
         self.entries.push(pdo.index);
-        let c = ConfigPdo {
+        self.slave.config.pdos.insert(pdo.index, ConfigPdo {
             config: pdo,
             sdos: Vec::new(),
-            };
-        self.slave.config.pdos.insert(pdo.index, c);
+            });
 
         MappingPdo {
             // uncontroled reference to self and to configuration

@@ -38,6 +38,9 @@ struct Direction {
 }
 
 impl Mailbox {
+	pub fn slave(&self) -> SlaveAddress {SlaveAddress::Fixed(self.slave)}
+	pub unsafe fn raw_master(&self) -> &Arc<RawMaster> {&self.master}
+	
     /**
         configure the mailbox on the slave, using the given `read` and `write` memory areas as mailbox buffers
         
@@ -150,7 +153,7 @@ impl Mailbox {
         if header.ty() == MailboxType::Exception {
             let error = frame.unpack::<MailboxErrorFrame>()
                         .map_err(|_| EthercatError::Protocol("unable to unpack received mailbox error"))?;
-            return Err(EthercatError::Slave(error.detail()))
+            return Err(EthercatError::Slave(self.slave(), error.detail()))
         }
         if header.ty() != ty
             {return Err(EthercatError::Protocol("received unexpected mailbox frame type"))}

@@ -207,7 +207,7 @@ impl Master {
                 for slave in 0 .. status.answers {
                     let error = self.raw.aprd(slave, registers::al::error).await.one()?;
                     if error != AlError::NoError
-                        {return Err(EthercatError::Slave(error))}
+                        {return Err(EthercatError::Slave(SlaveAddress::AutoIncremented(slave), error))}
                 }
             }
             if status.value().unwrap().state() == target.into()  
