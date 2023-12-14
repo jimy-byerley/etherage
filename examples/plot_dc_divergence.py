@@ -19,6 +19,7 @@ def style(color):
 def show():
 
 	source = sys.argv[1]
+	period = 2e-3
 
 	record = []
 	for line in open(source, 'r').readlines():
@@ -35,9 +36,11 @@ def show():
 	win = qtwindow(pg.GraphicsLayoutWidget(title=source))
 	win.resize(1000, 300)
 	fig = win.addPlot()
+	
+	time = np.arange(0, len(record)) * period
 
 	colorcycle = [(100, 255, 100), (100, 100, 255), (100, 200, 200), (200, 200, 200), (200, 100, 255), (200, 255, 100)]
 	for i, slave in enumerate(record.transpose()):
-		fig.plot(slave, **style(colorcycle[i%len(colorcycle)]))
+		fig.plot(time, slave, label=f'slave {i}', **style(colorcycle[i%len(colorcycle)]))
 
 qtmain()

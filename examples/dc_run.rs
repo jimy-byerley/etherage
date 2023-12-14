@@ -64,24 +64,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
     // initialize clocks and perform static drift
     master.init_clock().await.unwrap();
-    
-//     master.switch(CommunicationState::PreOperational).await.unwrap();
-    
+        
+	// create a mapping buffering all divergences
 	let config = mapping::Config::default();
 	let mapping = mapping::Mapping::new(&config);
+	let mut offsets = Vec::new();
     for slave in &slaves {
 		let SlaveAddress::Fixed(i) = slave.address()
 			else { panic!("slave has no fixed address") };
-		mapping.slave(i).register(sdo::SyncDirection::Read, registers::dc::system_difference);
+		let mut slave = mapping.slave(i);
+		offsets.push(slave.register(sdo::SyncDirection::Read, registers::dc::system_difference));
+		slave.channel(sdo::sync_manager.logical_read());
+		slave.channel(sdo::sync_manager.logical_write());
 	}
 	let group = master.group(&mapping);
+	dbg!(mapping.config());
+	
+    master.switch(CommunicationState::PreOperational).await.unwrap();
 	for slave in &mut slaves {
-		slave.switch(CommunicationState::PreOperational).await.unwrap();
-// 		slave.expect(CommunicationState::PreOperational);
-
+		slave.expect(CommunicationState::PreOperational);
 		group.configure(&slave).await.unwrap();
-		
-		slave.switch(CommunicationState::SafeOperational).await.unwrap();
 	}
     
 //     println!("custom init");
@@ -104,32 +106,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
 //         coe.sdo_write(&sdo::sync_manager.logical_write().sync().sync_mode(), priority, sdo::SyncMode::DCSync0).await.unwrap();
 // //         coe.sdo_write(&sdo::sync_manager.logical_write().sync().cycle(), priority, 2_000_000).await.unwrap();
 //     }
-    println!("initialized");
     
-    
-    master.switch(CommunicationState::SafeOperational).await.unwrap();
-    println!("safeop");
+//     println!("switching safeop");
+//     master.switch(CommunicationState::SafeOperational).await.unwrap();
+//     println!("safeop");
     
     let clock = master.clock().await;
     let mut interval = tokio_timerfd::Interval::new_interval(Duration::from_millis(2)).unwrap();
-    let mut interval2 = tokio_timerfd::Interval::new_interval(Duration::from_millis(5_367)).unwrap();
-
+	
     (
         // dynamic drift
-        clock.sync_loop(Duration::from_millis(3)),
+//         clock.sync_loop(Duration::from_millis(3)),
         // survey divergence
         async { loop {
             interval.next().await.unwrap().unwrap();
+            clock.sync().await;
             
-            for slave in &slaves {
-                print!("{} ", i32::from(slave.physical_read(registers::dc::system_difference).await.unwrap()));
+            let mut group = group.data().await;
+            group.read().await;
+            
+//             for slave in &slaves {
+//                 print!("{} ", i32::from(slave.physical_read(registers::dc::system_difference).await.unwrap()));
+// 			}
+			for &divergence in &offsets {
+                print!("{} ", i32::from(group.get(divergence)));
             }
             print!("\n");
-        }},
-        // parasitic realtime data exchanges
-        async { loop {
-            interval2.next().await.unwrap().unwrap();
-            master.logical_exchange(etherage::Field::simple(0), [0u8; 64]).await;
         }},
     ).race().await;
 

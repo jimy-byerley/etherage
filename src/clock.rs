@@ -137,10 +137,19 @@ impl DistributedClock {
             slaves: Vec::new(),
             index: HashMap::new(),
 			};
+		/*
+        // these hardcoded constants are from the ETG.1020 22.2.4
+        clock.master.bwr(registers::dc::param_2, DC_CONTROL_LOOP_2_STARTUP).await;
+        clock.master.bwr(registers::dc::param_0, DC_CONTROL_LOOP_0_RESET).await;*/
+			
 		let infos = clock.init_slaves().await?;
 		clock.init_topology(&infos).await?;
 		clock.init_delays(&infos, delays_samples.unwrap_or(8)).await?;
 		clock.init_offsets(offsets_samples.unwrap_or(15_000)).await?;
+		/*
+        // these hardcoded constants are from the ETG.1020 22.2.4
+        clock.master.bwr(registers::dc::param_2, DC_CONTROL_LOOP_2_ADJUST).await;
+        clock.master.bwr(registers::dc::param_0, DC_CONTROL_LOOP_0_RESET).await;*/
 		
 		dbg!(&infos);
 		dbg!(&clock.slaves);
@@ -421,3 +430,7 @@ impl DistributedClock {
 	}
 }
 
+/// Value required to enable the DC clock - see ETG.1020 - 22.2.4
+const DC_CONTROL_LOOP_0_RESET: u16 = 0x1000;
+const DC_CONTROL_LOOP_2_STARTUP: u16 = u16::from_le_bytes([4, 12]);
+const DC_CONTROL_LOOP_2_ADJUST:  u16 = u16::from_le_bytes([4, 0]);
