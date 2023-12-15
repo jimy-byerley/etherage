@@ -115,12 +115,12 @@ impl Mailbox {
         self.read.count = (self.read.count % 7) + 1;
 
         // wait for data
-        let mut state = loop {
-            let state = self.master.fprd(self.slave, mailbox_control).await;
+        let mut state: registers::SyncManagerChannel = loop {
+            let state= self.master.fprd(self.slave, mailbox_control).await;
             if state.answers == 1 {
                 let value = state.value()?;
-                if value.mailbox_full()
-                    {break value}
+                if value.mailbox_full() {
+                    break value }
             }
         };
         // the destination data is expected to be big enough for the data, so we will read only this data size
@@ -131,8 +131,7 @@ impl Mailbox {
         // read the mailbox content
         loop {
             // exit loop if ok
-            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1
-            { break }
+            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1 { break }
 
             // otherwise... trigger repeat
             state.set_repeat(true);
@@ -147,10 +146,10 @@ impl Mailbox {
         let mut frame = Cursor::new(buffer.as_mut());
         let mut received = Cursor::new(data);
         let header = frame.unpack::<MailboxHeader>()
-                        .map_err(|_| EthercatError::Protocol("unable to unpack mailbox header"))?;
+            .map_err(|_| EthercatError::Protocol("unable to unpack mailbox header"))?;
         if header.ty() == MailboxType::Exception {
             let error = frame.unpack::<MailboxErrorFrame>()
-                        .map_err(|_| EthercatError::Protocol("unable to unpack received mailbox error"))?;
+                .map_err(|_| EthercatError::Protocol("unable to unpack received mailbox error"))?;
             return Err(EthercatError::Slave(error.detail()))
         }
         if header.ty() != ty

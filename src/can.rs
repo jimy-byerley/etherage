@@ -84,14 +84,14 @@ impl Can {
             )).unwrap();
         frame.write(&[0; 4]).unwrap();
 
-        let mut mailbox: LockGuard<'_, Mailbox> = LockGuard::new(&self.mailbox);
+        let mut mailbox: LockGuard<'_, Mailbox> = self.mailbox.lock().await;
         mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
         // receive data
         let (header, frame) =
             Self::receive_sdo_response(&mut mailbox, &mut buffer, SdoCommandResponse::Upload, sdo).await?;
         if ! header.sized() {
             return Err(Error::Protocol("got SDO response without data size")) }
-        drop(mailbox);
+        //drop(mailbox);
 
         if header.expedited() {
             // expedited transfer
@@ -118,7 +118,7 @@ impl Can {
 
             // receive more data from segments
             // TODO check for possible SDO error
-            let mut mailbox = LockGuard::new(&self.mailbox);
+            let mut mailbox = self.mailbox.lock().await;
             while received.remain().len() != 0 {
                 // format segment request
                 let mut lframe = Cursor::new(buffer.as_mut_slice());

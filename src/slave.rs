@@ -230,7 +230,7 @@ impl Drop for Slave<'_> {
     fn drop(&mut self) {
         // deregister from the safemaster if any
         if let Some(safe) = self.safemaster {
-            let mut slaves = LockGuard::new(&safe.slaves);
+            let mut slaves = safe.slaves.sync_lock(5);
             slaves.remove(&self.address);
         }
     }

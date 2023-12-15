@@ -23,15 +23,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 else {panic!("slave already has a fixed address")};
 
             let task = async {
-                println!("Init task");
+                println!("Init task {}", i+1);
                 slave.switch(CommunicationState::Init).await?;
                 slave.set_address(i+1).await?;
-                println!("Init mailbox");
+                println!("Init mailbox {}", i+1);
                 slave.init_mailbox().await?;
-                println!("Init coe");
+                println!("Init coe {}", i+1);
                 slave.init_coe().await;
                 slave.switch(CommunicationState::PreOperational).await?;
-                println!("get lock on slave");
                 let mut can = slave.coe().await;
                 let priority = u2::new(0);
 
