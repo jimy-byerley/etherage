@@ -84,15 +84,15 @@ impl Can {
             )).unwrap();
         frame.write(&[0; 4]).unwrap();
 
-        let mut mailbox: LockGuard<'_, Mailbox> = self.mailbox.lock().await;
+        // send and receive data
+        let mut mailbox = self.mailbox.lock().await;
         mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
-        // receive data
         let (header, frame) =
             Self::receive_sdo_response(&mut mailbox, &mut buffer, SdoCommandResponse::Upload, sdo).await?;
+        drop(mailbox);
+
         if ! header.sized() {
             return Err(Error::Protocol("got SDO response without data size")) }
-        //drop(mailbox);
-
         if header.expedited() {
             // expedited transfer
             let total = EXPEDITED_MAX_SIZE - u8::from(header.size()) as usize;
@@ -106,7 +106,7 @@ impl Can {
         else {
             // normal transfer, eventually segmented
             let mut frame = Cursor::new(frame);
-            let total = frame.unpack::<u32>()
+            let total: usize = frame.unpack::<u32>()
                 .map_err(|_| Error::Protocol("unable unpack sdo size from SDO response"))?
                 .try_into().expect("SDO is too big for master memory");
             if total > data.len() {
@@ -118,7 +118,6 @@ impl Can {
 
             // receive more data from segments
             // TODO check for possible SDO error
-            let mut mailbox = self.mailbox.lock().await;
             while received.remain().len() != 0 {
                 // format segment request
                 let mut lframe = Cursor::new(buffer.as_mut_slice());
@@ -127,6 +126,7 @@ impl Can {
                 lframe.write(&[0; 7]).unwrap();
 
                 // send and receive segment
+                let mut mailbox = self.mailbox.lock().await;
                 mailbox.write(MailboxType::Can, priority, lframe.finish()).await?;
                 let (header, segment) =
                     Self::receive_sdo_segment(&mut mailbox, &mut buffer, SdoCommandResponse::UploadSegment, toggle).await?;

@@ -274,38 +274,36 @@ impl RawMaster {
 
         // Buffering the pdu sending
         //println!("Pdu - buffering request");
-        let token: usize;
-        let _finisher;
-        loop {
-            let mut sstate = self.pdu_state.lock().await;
-            let (is_empty, is_ready, lend) = (sstate.free.is_empty(), sstate.ready, sstate.last_end);
-            let space_available = || self.socket.max_frame() > lend + data.len() + PduHeader::packed_size() + PduFooter::packed_size();
+        let mut state = loop {
+            let mut state = self.pdu_state.lock().await;
+            //let space_available = || self.socket.max_frame() > state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size();
+            let space_available = || state.last_end + data.len() + PduHeader::packed_size() + PduFooter::packed_size();
 
-            if is_empty {
-                drop(sstate);
-                self.received.notified().await; // there is nothing to do except waiting
+            if state.free.is_empty() {
+                // there is nothing to do except waiting
+                drop(state);
+                self.received.notified().await;
             }
-            else if is_ready {
-                drop(sstate);
+            else if state.ready {
+                drop(state);
                 self.sent.notified().await;
             }
-            else if !space_available()  {
+            else if self.socket.max_frame() <= space_available()  {
                 // Sending the current buffer
-                assert!(self.socket.max_frame() >
-                    EthercatHeader::packed_size() + data.len() + PduHeader::packed_size() + PduFooter::packed_size(), "data too big for an ethercat frame");
-                sstate.ready = true;
+                assert!(self.socket.max_frame() > space_available() - state.last_end, "data too big for an ethercat frame");
+                state.ready = true;
+                drop(state);
                 self.sendable.notify_one();
-                drop(sstate);
                 self.sent.notified().await;
             }
-            else { break; }// sstate; }
+            else { break state; }
         };
 
         // Reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
-        let is_ready: &bool = {
-            //println!("Pdu - create token and notify");
-            let mut state = self.pdu_state.lock().await;
-            token = state.free.pop().unwrap();
+        let (is_ready, token) = {
+            let token = state.free.pop().unwrap();
+            println!("take token {}", token);
+            assert!(state.receive[token].is_none());
             state.receive[token] = Some(PduStorage {
                 // cast lifetime as static
                 // memory safety: this slice is pinned by the caller and its access is managed by field `ready`
@@ -341,38 +339,42 @@ impl RawMaster {
 
             // memory safety: this item in the array cannot be moved since self is borrowed, and will only be removed later by the current function
             // we will access it potentially concurrently, but since we only want to detect a change in the value, that's fine
-            unsafe {&*(&state.receive[token].as_ref().unwrap().ready as *const bool)}
+            (unsafe {&*(&state.receive[token].as_ref().unwrap().ready as *const bool)}, token)
         };
 
         // Clean up the receive table at function end, or in case the async runtime cancels this task
-        _finisher = Finally::new(|| {
+        let _finisher = Finally::new(|| {
             // free the token
-            let mut fstate = self.pdu_state.sync_lock(5);
+            let mut fstate = self.pdu_state.sync_lock();
+            println!("release token {}", token);
             fstate.receive[token] = None;
             fstate.free.push(token).unwrap();
             // BUG: freeing the token on future cancelation does not cancel the packet reception, so the received packet may interfere with any next PDU using this token
         });
-        //drop(state);
 
         let mut notification = self.received.notified();
         self.sendable.notify_one();
+        drop(state);
 
         // waiting for the answer
-        //println!("Pdu - wait answer {}", token);
-        let state = loop {
+        loop {
             notification.await;
-            if *is_ready { break self.pdu_state.lock().await; }
+            if *is_ready { break; }
             notification = self.received.notified();
         };
-
-        return state.receive[token].as_ref().unwrap().answers;
+        let state = self.pdu_state.lock().await;
+        println!("Reception token {} data: {} answer: {}",
+            token,
+            state.receive[token].as_ref().unwrap().data.len(),
+            state.receive[token].as_ref().unwrap().answers);
+        state.receive[token].as_ref().unwrap().answers
     }
 
     /// Extract a received frame of PDUs and buffer each for reception by an eventual `self.pdu()` future waiting for it.
     async fn pdu_receive(&self, frame: &[u8]) -> EthercatResult<()> {
-        let _finisher = Finally::new(|| self.received.notify_waiters());
         let mut state: LockGuard<'_, PduState> = self.pdu_state.lock().await;
         let mut frame: Cursor<&[u8]> = Cursor::new(frame);
+        let _finisher = Finally::new(|| self.received.notify_waiters());
         loop {
             let header = frame.unpack::<PduHeader>()
                 .map_err(|_| EthercatError::Protocol("unable to unpack PDU header, skiping all remaning PDUs in frame"))?;
@@ -405,8 +407,8 @@ impl RawMaster {
 
         Note: this method is helpful to manage the stream and make space in the buffer before sending PDUs, but does not help to make sure a PDU is sent deterministic time. To trigger the sending of a PDU, use argument `flush` of [Self::pdu]
     */
-    pub fn flush(&self) {
-        let mut state = self.pdu_state.sync_lock(5);
+    pub async fn flush(&self) {
+        let mut state = self.pdu_state.lock().await;
         if state.last_end != 0 {
             state.ready = true;
             self.sendable.notify_one();
@@ -490,6 +492,7 @@ impl RawMaster {
             //let send: &mut [u8] = state.send[..end].as_mut();
             let send: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(state.send.as_mut_ptr(), state.last_end)};
             drop(state);
+
             // send
             // we are blocking the async machine until the send ends
             // we assume it is not a long operation to copy those data into the system buffer
@@ -506,18 +509,19 @@ impl RawMaster {
     }
 
     async fn task_timeout(&self) -> EthercatResult {
-        let timeout = Duration::from_millis(100);
+        let timeout = Duration::from_millis(200);
         let mut delay = Interval::new_interval(timeout)?;
         loop {
             //Wait next tick...
             delay.next().await.unwrap().unwrap();
             //...and check timeout status
             let mut state = self.pdu_state.lock().await;
-            let date = Instant::now();
+            let date: Instant = Instant::now();
             for (token, storage) in state.receive.iter_mut().enumerate() {
                 if let Some(storage) = storage {
                     if date.duration_since(storage.sent) > timeout {
                         storage.ready = true;
+                        println!("Timeout {}", token);
                     }
                 }
             }
@@ -534,7 +538,7 @@ impl RawMaster {
     }
 
     pub fn stop(&self) {
-        let task = self.task.sync_lock(5);
+        let task = self.task.sync_lock();
         task.as_ref().map(|handle| handle.abort());
     }
 }

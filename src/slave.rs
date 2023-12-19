@@ -88,17 +88,17 @@ impl<'a> Slave<'a> {
         let fixed = SlaveAddress::Fixed(master.raw.read(address, registers::address::fixed).await.one()?);
         let mut book = master.slaves.lock().await;
 
-        if book.contains(&address)
-        || book.contains(&fixed)
-            {Err(EthercatError::Master("slave already in use by an other instance"))}
+        if book.contains(&address) || book.contains(&fixed) {
+            Err(EthercatError::Master("slave already in use by an other instance"))
+        }
         else {
             book.insert(address);
+            drop(book);
             Ok(Self {
                 master: master.raw.clone(),
                 safemaster: Some(master),
                 address,
                 state: Init,
-
                 mailbox: None,
                 coe: None,
             })
@@ -230,7 +230,7 @@ impl Drop for Slave<'_> {
     fn drop(&mut self) {
         // deregister from the safemaster if any
         if let Some(safe) = self.safemaster {
-            let mut slaves = safe.slaves.sync_lock(5);
+            let mut slaves = safe.slaves.sync_lock();
             slaves.remove(&self.address);
         }
     }

@@ -30,30 +30,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 slave.init_mailbox().await?;
                 println!("Init coe {}", i+1);
                 slave.init_coe().await;
+                println!("Switch to PreOP {}", i+1);
                 slave.switch(CommunicationState::PreOperational).await?;
+                println!("Lock coe {}", i+1);
                 let mut can = slave.coe().await;
                 let priority = u2::new(0);
-
+                println!("Wait physical read {}", i+1);
                 let info = slave.physical_read(registers::dl::information).await?;
                 let mut name = [0; 50];
                 let mut hardware = [0; 50];
                 let mut software = [0; 50];
 
                 println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}",
-                        i,
-                        std::str::from_utf8(
-                            &can.sdo_read_slice(&sdo::device::name, priority, &mut name).await?
-                            ).unwrap().trim_end(),
-                        info.ty(),
-                        info.revision(),
-                        info.build(),
-                        std::str::from_utf8(
-                            &can.sdo_read_slice(&sdo::device::hardware_version, priority, &mut hardware).await?
-                            ).unwrap().trim_end(),
-                        std::str::from_utf8(
-                            &can.sdo_read_slice(&sdo::device::software_version, priority, &mut software).await?
-                            ).unwrap().trim_end(),
-                        );
+                       i,
+                       std::str::from_utf8(
+                           &can.sdo_read_slice(&sdo::device::name, priority, &mut name).await?
+                           ).unwrap().trim_end(),
+                       info.ty(),
+                       info.revision(),
+                       info.build(),
+                       std::str::from_utf8(
+                           &can.sdo_read_slice(&sdo::device::hardware_version, priority, &mut hardware).await?
+                           ).unwrap().trim_end(),
+                       std::str::from_utf8(
+                           &can.sdo_read_slice(&sdo::device::software_version, priority, &mut software).await?
+                           ).unwrap().trim_end(),
+                       );
                 Result::<_, Box<dyn Error>>::Ok(())
             };
             if let Err(err) = task.await

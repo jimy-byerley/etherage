@@ -64,7 +64,7 @@ impl Master {
     pub fn new<S: EthercatSocket + 'static + Send + Sync>(socket: S) -> Self {
         Self {
             raw: RawMaster::new(socket),
-            slaves: HashSet::new().into(),
+            slaves: Mutex::new(HashSet::new()),
             allocator: Allocator::new(),
             clock: None.into(),
         }
@@ -75,7 +75,7 @@ impl Master {
     pub unsafe fn raw(raw: Arc<RawMaster>) -> Self {
         Self {
             raw,
-            slaves: HashSet::new().into(),
+            slaves: Mutex::new(HashSet::new()),
             allocator: Allocator::new(),
             clock: None.into(),
         }
