@@ -44,22 +44,15 @@
 
 use crate::{
     data::PduData,
-    registers::{self, AlState},
-//     sdo::{self, Sdo},
+    registers,
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     error::{EthercatError, EthercatResult}, 
-    can::CanError,
-    Slave,
     };
 use std::{
     collections::HashMap,
     time::{SystemTime, Instant, Duration},
     sync::Arc,
     };
-// use core::sync::atomic::{
-//     AtomicBool, AtomicI64,
-//     Ordering::*,
-//     };
 
 use futures_concurrency::future::Join;
 
@@ -102,8 +95,6 @@ struct ClockSlave {
 	offset: i64,
 	/// transmission delay from clock reference slave to present slave
 	delay: u32,
-// 	/// last measured difference between local estimated system time and received system time
-// 	divergence: AtomicI64,
 }
 
 	
@@ -137,22 +128,17 @@ impl DistributedClock {
             slaves: Vec::new(),
             index: HashMap::new(),
 			};
-		/*
-        // these hardcoded constants are from the ETG.1020 22.2.4
-        clock.master.bwr(registers::dc::param_2, DC_CONTROL_LOOP_2_STARTUP).await;
-        clock.master.bwr(registers::dc::param_0, DC_CONTROL_LOOP_0_RESET).await;*/
+		
+        // according to the absent details from the docs, this is enabling dynamic drift using the reference slave as master clock
+        clock.master.bwr(registers::dc::param_2, dc_control_loop::PARAM_2_REFERENCE_MASTER).await;
+        // according to the absent details from the docs, this is reseting the drift compensation
+        clock.master.bwr(registers::dc::param_0, dc_control_loop::PARAM_0_RESET).await;
 			
 		let infos = clock.init_slaves().await?;
 		clock.init_topology(&infos).await?;
 		clock.init_delays(&infos, delays_samples.unwrap_or(8)).await?;
 		clock.init_offsets(offsets_samples.unwrap_or(15_000)).await?;
-		/*
-        // these hardcoded constants are from the ETG.1020 22.2.4
-        clock.master.bwr(registers::dc::param_2, DC_CONTROL_LOOP_2_ADJUST).await;
-        clock.master.bwr(registers::dc::param_0, DC_CONTROL_LOOP_0_RESET).await;*/
 		
-		dbg!(&infos);
-		dbg!(&clock.slaves);
 		Ok(clock)
 	}
 	
@@ -187,7 +173,6 @@ impl DistributedClock {
 				topology: [None; 4],
 				offset: 0,
 				delay: 0,
-// 				divergence: AtomicI64::new(0),
 			})
 			.collect::<Vec<_>>();
 		
@@ -244,7 +229,7 @@ impl DistributedClock {
 				.collect::<Vec<_>>()
 				.join().await
 			{
-				stamps[i*samples + index] = times.one()?;
+				stamps[i + index*samples] = times.one()?;
 			}
 		}
 		
@@ -271,8 +256,8 @@ impl DistributedClock {
 			let mut ports: u64 = 0;
 			
 			for i in 0 .. samples {
-				let child = &stamps[i*samples + index];
-				let parent = &stamps[i*samples + parent];
+				let child = &stamps[i + index*samples];
+				let parent = &stamps[i + parent*samples];
 				let transition = parent[parent_after].wrapping_sub(parent[parent_before])
 								 - child[child_after].wrapping_sub(child[child_before]);
 				let port = parent[parent_before].wrapping_sub(parent[0]);
@@ -382,13 +367,6 @@ impl DistributedClock {
     pub fn delay(&self, slave: SlaveAddress) -> i128  {
         self.slaves[self.index[&slave]].delay.into()
     }
-//     /**
-//         return the current synchronization error (time gap) between the reference clock and the given slave clock.
-//         If perfectly synchronized, this value should be `0` for all slaves even with a transmission delay between slaves
-//     */
-//     pub fn divergence(&self, slave: SlaveAddress) -> i128  {
-// 		self.slaves[self.index[&slave]].divergence.load(SeqCst).into()
-//     }
     
 
     /**
@@ -430,7 +408,14 @@ impl DistributedClock {
 	}
 }
 
-/// Value required to enable the DC clock - see ETG.1020 - 22.2.4
-const DC_CONTROL_LOOP_0_RESET: u16 = 0x1000;
-const DC_CONTROL_LOOP_2_STARTUP: u16 = u16::from_le_bytes([4, 12]);
-const DC_CONTROL_LOOP_2_ADJUST:  u16 = u16::from_le_bytes([4, 0]);
+#[allow(unused)]
+mod dc_control_loop {
+	/// Value required to enable the DC clock - see ETG.1020.22.2.4
+	pub const PARAM_0_RESET: u16 = 0x1000;
+	/// this value disables the dynamic drift
+	pub const PARAM_2_DISABLED: u16 = u16::from_le_bytes([0, 0]);
+	/// this value enables the dynamic drift using the reference slave clock as master clock
+	pub const PARAM_2_REFERENCE_MASTER: u16 = u16::from_le_bytes([4, 12]);
+	/// this value enables the dynamic drift by adjusting the reference slave clock to a grand master clock
+	pub const PARAM_2_GRAND_MASTER:  u16 = u16::from_le_bytes([4, 0]);
+}

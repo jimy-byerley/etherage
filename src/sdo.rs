@@ -5,7 +5,6 @@
 */
 
 use crate::{
-// 	slave::Slave,
     data::{self, Field, BitField, PduData, Storage},
     registers,
     };
@@ -247,6 +246,67 @@ pub const sync_manager: SyncManager = SyncManager {channels: 0x1c10, syncs: 0x1c
     ETG.6010 table 6
 */
 pub const transmit_pdos_invalid: SdoList<bool> = SdoList::new(0x603e);
+
+/// registers for synchronizing the segment reference clock to a grandmaster clock. See ETG.1020.22
+pub mod external_clock {
+    use super::*;
+    
+    /**
+        status to synchronize an EtherCAT segment with an external network
+        
+        all fields are readonly, but mappable
+        
+        ETG.1020 table 91
+    */
+    pub mod status {
+        use super::*;
+        
+        pub const mode: Sdo<ExternalClockMode> = Sdo::sub(0x10f4, 1, 0);
+        /// toggles every time when the control value was updated
+        pub const timecontrol_toggle: Sdo<bool> = Sdo::sub(0x10f4, 14, 0);
+        /// toggles every time when the time stamps were updated
+        pub const timestamp_toggle: Sdo<bool> = Sdo::sub(0x10f4, 15, 0);
+        /// TRUE: no external synchronization found
+        pub const no_external: Sdo<bool> = Sdo::sub(0x10f4, 16, 0);
+        /// only for SYNC slave. DC time stamp at the same time as the external time stamp
+        pub const timestamp_internal: Sdo<u64> = Sdo::sub(0x10f4, 17, 0);
+        /// only for SYNC slave. external time stamp recalculated in DC units (ns)
+        pub const timestamp_external: Sdo<u64> = Sdo::sub(0x10f4, 18, 0);
+        /**
+            only for SYNC slave.
+            - > 0
+                this value gives the information how often the System Time register of the DC Master Clock has to be written with a higher value than the actual value of the system Time register for the dynamic drift compensation
+            - < 0
+                this value gives the information how often the System Time register of the DC Master Clock has to be written with a lower value than the actual value of the system Time register for the dynamic drift compensation
+        */
+        pub const timecontrol: Sdo<i32> = Sdo::sub(0x10f4, 19, 0);
+    }
+    /**
+        settings to synchronize an EtherCAT segment with an external network.
+        
+        all fields are RW but not mappable
+
+        ETG.1020 table 93
+    */    
+    pub mod control {
+        use super::*;
+        
+        /**
+            - TRUE: device acts as SYNC master,
+            - FALSE: device acts as SYNC slave
+        */
+        pub const master: Sdo<bool> = Sdo::sub(0x10f5, 1, 0);
+        /**
+            - TRUE: only 32 bit time stamps are used
+            - FALSE: 64 bit time stamps are used
+        */
+        pub const range: Sdo<bool> = Sdo::sub(0x10f5, 2, 0);
+        /// only for SYNC slave: this value defines how often the time stamps will be updated in ms
+        pub const period: Sdo<u16> = Sdo::sub(0x10f5, 17, 2);
+        /// only for SYNC slave: additional offset to the System Time (needed if the external synchronization was disconnected and the System Time differs too much because the System Time Offset of the ESC cannot be changed if the slave is not in INIT)
+        pub const segment_offset: Sdo<u64> = Sdo::sub(0x10f5, 18, 4);
+    }
+}
 
 /**
     dictionnary entries defined for devices supporting CIA.402, defined in ETG.6010
@@ -1063,7 +1123,16 @@ pub struct SyncCycleControl {
 }
 data::bilge_pdudata!(SyncCycleControl, u16);
 
-
+/// ETG.1020 table 91
+#[bitsize(2)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ExternalClockMode {
+    #[default]
+    NoSync = 0,
+    SyncMaster = 1,
+    SyncSlave = 2,
+}
+data::bilge_pdudata!(ExternalClockMode, u2);
 
 
 /// ETG.1000.6 table 68, ETG.6010 table 84

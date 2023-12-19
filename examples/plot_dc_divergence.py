@@ -40,7 +40,8 @@ def show():
 	time = np.arange(0, len(record)) * period
 
 	colorcycle = [(100, 255, 100), (100, 100, 255), (100, 200, 200), (200, 200, 200), (200, 100, 255), (200, 255, 100)]
+	reference = record[:,0]
 	for i, slave in enumerate(record.transpose()):
-		fig.plot(time, slave, label=f'slave {i}', **style(colorcycle[i%len(colorcycle)]))
+		fig.plot(reference * 1e-9, slave - reference, label=f'slave {i}', **style(colorcycle[i%len(colorcycle)]))
 
 qtmain()

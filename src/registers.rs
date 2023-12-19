@@ -10,6 +10,8 @@ use core::fmt;
 use bilge::prelude::*;
 use crate::data::{self, Field, BitField, Storage};
 
+
+
 pub mod address {
     use super::*;
 
@@ -638,7 +640,7 @@ pub struct DLControl {
 	*/
 	transmit_buffer_size: u3,
 	/** 
-		This optional parameter indicates that the reduct ion of frame forwarding jitter for EBUS is enabled.
+		This optional parameter indicates that the reduction of frame forwarding jitter for EBUS is enabled.
 		set to true to activate
 	*/
 	low_jitter_ebus: bool,

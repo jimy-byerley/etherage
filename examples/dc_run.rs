@@ -26,12 +26,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ioprio::Target::Process(ioprio::Pid::this()),
         Priority::new(ioprio::Class::Realtime(ioprio::RtPriorityLevel::highest())),
         ).unwrap();
-//     #[cfg(target_os = "linux")]
-//     thread_priority::set_current_thread_priority_and_policy(
-//         std::os::unix::thread::JoinHandleExt::as_pthread_t(&std::thread::current()),
-//         thread_priority::ThreadPriority::Max,
-//         thread_priority::ThreadSchedulePolicy::Realtime(thread_priority::RealtimeThreadSchedulePolicy::Fifo),
-//         ).unwrap();
 
     //Init master
     let master = Arc::new(Master::new(EthernetSocket::new("eno1")?));
@@ -73,12 +67,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		let SlaveAddress::Fixed(i) = slave.address()
 			else { panic!("slave has no fixed address") };
 		let mut slave = mapping.slave(i);
-		offsets.push(slave.register(sdo::SyncDirection::Read, registers::dc::system_difference));
+		offsets.push(slave.register(sdo::SyncDirection::Read, registers::dc::system_time));
 		slave.channel(sdo::sync_manager.logical_read());
 		slave.channel(sdo::sync_manager.logical_write());
 	}
 	let group = master.group(&mapping);
-	dbg!(mapping.config());
 	
     master.switch(CommunicationState::PreOperational).await.unwrap();
 	for slave in &mut slaves {
@@ -114,26 +107,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let clock = master.clock().await;
     let mut interval = tokio_timerfd::Interval::new_interval(Duration::from_millis(2)).unwrap();
 	
-    (
-        // dynamic drift
-//         clock.sync_loop(Duration::from_millis(3)),
-        // survey divergence
-        async { loop {
-            interval.next().await.unwrap().unwrap();
-            clock.sync().await;
-            
-            let mut group = group.data().await;
-            group.read().await;
-            
-//             for slave in &slaves {
-//                 print!("{} ", i32::from(slave.physical_read(registers::dc::system_difference).await.unwrap()));
-// 			}
-			for &divergence in &offsets {
-                print!("{} ", i32::from(group.get(divergence)));
-            }
-            print!("\n");
-        }},
-    ).race().await;
+	// survey divergence
+	loop {
+		interval.next().await.unwrap().unwrap();
+		// dynamic drift
+		clock.sync().await;
+		
+		// survey timestamps
+		let mut group = group.data().await;
+		group.read().await;
+		for &time in &offsets {
+			print!("{} ", group.get(time));
+		}
+		print!("\n");
+	}
 
     Ok(())
 }
