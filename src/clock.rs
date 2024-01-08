@@ -53,6 +53,7 @@ use std::{
     time::{SystemTime, Instant, Duration},
     sync::Arc,
     };
+use core::sync::atomic::{AtomicI64, Ordering::*};
 
 use futures_concurrency::future::Join;
 
@@ -75,6 +76,10 @@ pub struct DistributedClock {
     start: Instant,
     /// system clock when the clock has been initialized, it serves as reference to return an offset between slaves clock and system clock. If the system clock has not been monotonic all the time since the initialization of this instance, any offset from slave to master will not mean anything to the user
     epoch: SystemTime,
+    /// offset from master clock to system clock
+    offset: AtomicI64,
+    /// transmission delay from master to reference slave
+    delay: u32,
     
     /// topological index of clock reference slave
     referent: usize,
@@ -123,6 +128,8 @@ impl DistributedClock {
             
             start: Instant::now(),
             epoch: SystemTime::now(),
+            offset: AtomicI64::new(0),
+            delay: 0,
             
             referent: 0,
             slaves: Vec::new(),
@@ -210,15 +217,20 @@ impl DistributedClock {
 			}
 			stack.push(index);
 		}
+		// TODO: check that topological position of non-dc-enabled slaves do not compromise the clock work
 		Ok(())
 	}
 	/// compute delays
 	async fn init_delays(&mut self, infos: &DLSlave, samples: usize) -> EthercatResult {
 		// get samples
 		let mut stamps = vec![[0; 4]; infos.len()*samples];
+		let mut master = vec![[0; 2]; samples];
 		for i in 0 .. samples {
-			// TODO: sample the master time so its delay to the reference can be computed
+			// sample the master time so its delay to the reference can be computed
+			master[i][0] = self.reduced();
 			self.master.bwr(registers::dc::measure_time, 0).await;
+			master[i][1] = self.reduced();
+			
 			let master = self.master.as_ref();
 			for (index, times) in self.slaves.iter()
 				.enumerate()
@@ -234,7 +246,21 @@ impl DistributedClock {
 		}
 		
 		// mean samples
-		// TODO: compute master delay to reference
+		// compute master delay to reference
+		let mut transitions: u64 = 0;
+		for i in 0 .. samples {
+			let child = &stamps[i + self.referent*samples];
+			let child_before = 0;
+			let child_after = self.slaves[self.referent].topology.iter().enumerate().rev()
+				.find(|(_, &next)|  next.is_some()).unwrap().0;
+			
+			let transition = master[i][1].wrapping_sub(master[i][0]) 
+						- u64::from(child[child_after].wrapping_sub(child[child_before]));
+			transitions += transition;
+		}
+		self.delay = u32::try_from( transitions / (2*(samples as u64)) ).unwrap();
+		
+		// compute slaves delay to master
 		for index in 1 .. self.slaves.len() {
 			// TODO: check whether dc is supported and account for a null delay otherwise
 			
@@ -265,7 +291,7 @@ impl DistributedClock {
 				// TODO: take into account that the slaves clocks might be 32bits using [DLInformaton::dc_range]
 				// summation is exact since we are using integers
 				transitions += u64::from(transition);
-				ports += u64::from(port)
+				ports += u64::from(port);
 			}
 			
 			self.slaves[index].delay = self.slaves[parent].delay + u32::try_from(
@@ -337,13 +363,14 @@ impl DistributedClock {
     pub fn referent(&self) -> SlaveAddress  {
         self.slaves[self.referent].address
     }
-    /// return the current time on the reference clock
+    /// return the (estimated) current time on the reference clock
     pub fn system(&self) -> i128  {
-        self.start.elapsed().as_nanos().try_into().unwrap()
+        i128::try_from(self.start.elapsed().as_nanos()).unwrap()
+			+ i128::from(self.offset.load(SeqCst))
         // TODO: this clock is 64bits on the slaves, so should the master clock be. The epoch shall be changed when the clock overflows
     }
 	
-	/// like [Self::system] but wrapped to 64 bit according to ETG
+	/// like [Self::system] operating system clock wrapped to 64 bit according to ETG
 	fn reduced(&self) -> u64 {
         u64::try_from( self.start.elapsed().as_nanos() % u128::from(u64::MAX) ).unwrap()
 	}
@@ -359,33 +386,55 @@ impl DistributedClock {
 			.try_into().unwrap()
     }
 
-    /// time offset between the given slave clock and the reference clock
+    /// time offset from given slave clock to the reference clock
     pub fn offset(&self, slave: SlaveAddress) -> i128   {
         self.slaves[self.index[&slave]].offset.into()
     }
-    /// return the transmission delay from the master to the given slave
+    /// return the transmission delay from the reference slave to the given slave
     pub fn delay(&self, slave: SlaveAddress) -> i128  {
         self.slaves[self.index[&slave]].delay.into()
     }
+    
+    /// time offset from the reference clock to the master clock
+	pub fn offset_master(&self) -> i128 {
+		self.offset.load(SeqCst).into()
+	}
+	/// return the transmission delay from the master to the reference slave
+	pub fn delay_master(&self) -> i128 {
+		self.delay.into()
+	}
     
 
     /**
         distributed clock synchronisation step. It must be called periodically to save the distributed clock from divergence
     */
     pub async fn sync(&self) {
+		// send RMW to update system time on slaves
 		let referent = self.referent();
 		let command = match referent {
 			SlaveAddress::AutoIncremented(_) => PduCommand::ARMW,
 			SlaveAddress::Fixed(_) => PduCommand::FRMW,
 			_ => unreachable!(),
 		};
-		self.master.pdu(
+		let mut buffer = (0u64).packed().unwrap();
+		let sent = self.reduced();
+		let received = self.master.pdu(
 			command, 
 			referent, 
 			registers::dc::system_time.byte as u32, 
-			&mut (0u64).packed().unwrap(), 
+			&mut buffer, 
 			true,
 			).await; 
+		// update master offset to update system time on master
+		if received != 0 {
+			let div = 512;
+			let offset = (u64::unpack(&buffer).unwrap())
+							.wrapping_sub(sent + u64::from(self.slaves[self.referent].delay));
+			self.offset.store(i64::try_from((
+					(div-1) * i128::from(self.offset.load(Relaxed))
+					+ 1 * i128::from(i64::from_ne_bytes(offset.to_ne_bytes()))
+					)/div ).unwrap(), SeqCst);
+		}
 		// we don't care if packet is lost, so no error checking here, it will not bother slaves
 	}
 	
@@ -414,6 +463,8 @@ mod dc_control_loop {
 	pub const PARAM_0_RESET: u16 = 0x1000;
 	/// this value disables the dynamic drift
 	pub const PARAM_2_DISABLED: u16 = u16::from_le_bytes([0, 0]);
+	/// omron values for enabling dynamic drift
+	pub const PARAM_2_OMRON: u16 = u16::from_le_bytes([0, 12]);
 	/// this value enables the dynamic drift using the reference slave clock as master clock
 	pub const PARAM_2_REFERENCE_MASTER: u16 = u16::from_le_bytes([4, 12]);
 	/// this value enables the dynamic drift by adjusting the reference slave clock to a grand master clock

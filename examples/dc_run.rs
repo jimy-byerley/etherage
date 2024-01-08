@@ -104,6 +104,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 //     master.switch(CommunicationState::SafeOperational).await.unwrap();
 //     println!("safeop");
     
+    println!("all configured");
     let clock = master.clock().await;
     let mut interval = tokio_timerfd::Interval::new_interval(Duration::from_millis(2)).unwrap();
 	
