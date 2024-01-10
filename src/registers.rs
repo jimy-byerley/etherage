@@ -141,13 +141,29 @@ pub mod dc {
     /// full structure gathering all the dc registers
     pub const all: Field<DistributedClock> = Field::simple(0x0900);
     // direct access to DC struct fields
+    /// accedd to the first item of [received_time], a write access to it latches the local time to update the fields of the DC
     pub const measure_time: Field<u32> = Field::simple(0x0900);
+    /**
+        A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
+        This array contains the latched receival time on each port.
+    */
     pub const received_time: Field<[u32; 4]> = Field::simple(0x0900);
+    /// A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
     pub const system_time: Field<u64> = Field::simple(0x0910);
+    /// Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
     pub const local_time: Field<u64> = Field::simple(0x0918);
+    /// Offset between the local time (in ns) and the local system time (in ns)
     pub const system_offset: Field<u64> = Field::simple(0x920);
+    /// Offset between the reference system time (in ns) and the local system time (in ns)
     pub const system_delay: Field<u32> = Field::simple(0x928);
+    /**
+        Bits 30..0: Mean difference between local copy of "system time" and "received system time" values.
+        Bit 31: 
+            - 0 - Local copy of "system time" > "received system time". 
+            - 1 - Othercase
+    */
     pub const system_difference: Field<TimeDifference> = Field::simple(0x092C);
+    /// Implementation specific
     pub const param_0: Field<u16> = Field::simple(0x0930);
     pub const param_2: Field<u16> = Field::simple(0x0934);
 }
@@ -743,7 +759,7 @@ pub struct ExternalEvent {
 	reserved: u1,
 	/// dl status register was changed
 	pub dl: bool,
-	/// R3 or R4 was written, meaning an ALStatus change
+	/// R3 or R4 was written, meaning an [ALStatus] change
 	pub al: bool,
 	/// sync manager channel was accessed by slave
 	pub sync_manager_channel: [bool; 8],

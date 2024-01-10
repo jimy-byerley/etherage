@@ -1057,7 +1057,7 @@ data::packed_pdudata!(SynchronizationFull);
     original definition from ETG.1000.6 table 78 is outdated by ETG.1020 and do not apply here.
 */
 #[bitsize(16)]
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncMode {
     /// Free Run (not synchronized)
     #[default]
@@ -1075,7 +1075,7 @@ pub enum SyncMode {
 data::bilge_pdudata!(SyncMode, u16);
 
 #[bitsize(16)]
-#[derive(Default,Clone, Copy, PartialEq, Eq)]
+#[derive(Default, DebugBits, Clone, Copy, PartialEq, Eq)]
 pub struct SyncModes {
     /// freerun supported
     pub free : bool,

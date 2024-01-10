@@ -26,6 +26,7 @@ use crate::{
     error::{EthercatError, EthercatResult},
     socket::*,
     data::{self, Field, PduData, Storage, Cursor, PackingResult},
+    registers::ExternalEvent,
     };
 
 
@@ -351,7 +352,7 @@ impl RawMaster {
                             u11::new(data.len().try_into().unwrap()),
                             false,
                             false,
-                            u16::new(0),
+                            ExternalEvent::default(),
                             )).unwrap();
                         cursor.write(data).unwrap();
                         cursor.pack(&PduFooter::new(0)).unwrap();
@@ -675,7 +676,7 @@ struct PduHeader {
     circulating: bool,
     /// true if there is an other PDU in the same PDU frame
     next: bool,
-    interrupt: u16,
+    interrupt: ExternalEvent,
 }
 data::bilge_pdudata!(PduHeader, u80);
 
