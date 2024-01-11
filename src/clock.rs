@@ -102,7 +102,7 @@ struct ClockSlave {
 	delay: u32,
 }
 
-	
+
 type DLSlave = Vec<(u16, registers::DLInformation, registers::DLStatus)>;
 
 
@@ -137,7 +137,7 @@ impl DistributedClock {
 			};
 		
         // according to the absent details from the docs, this is enabling dynamic drift using the reference slave as master clock
-        clock.master.bwr(registers::dc::param_2, dc_control_loop::PARAM_2_REFERENCE_MASTER).await;
+        clock.master.bwr(registers::dc::param_2, dc_control_loop::PARAM_2_OMRON).await;
         // according to the absent details from the docs, this is reseting the drift compensation
         clock.master.bwr(registers::dc::param_0, dc_control_loop::PARAM_0_RESET).await;
 			

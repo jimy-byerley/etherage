@@ -450,7 +450,7 @@ pub enum AlError {
     ///  Fatal Sync Error
     FatalSync = 0x002C,
     ///  No Sync Error
-    /// SyncSignal not received: In SAFEOP the slave waits for the first Sync0/Sync1 events before switching to OP, if these events were not received during the SAFEOP to OP-Timeout time the slave refuses the state transition to OP
+    /// SyncSignal not received: In SAFEOP the slave waits for the first Sync0/Sync1 events before switching to OP, if these events were not received during the SAFEOP to OP timeout the slave refuses the state transition to OP
     NoSync = 0x002D,
     ///  Invalid DC SYNC Configuration
     InvalidDcConfig = 0x0030,
