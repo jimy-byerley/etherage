@@ -1,4 +1,4 @@
-<mxfile host="Electron" modified="2024-01-08T14:06:40.096Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/22.1.2 Chrome/114.0.5735.289 Electron/25.9.4 Safari/537.36" version="22.1.2" etag="6ZlylQcb0o9SR5wPU-k9" type="device" pages="9">
+<mxfile host="Electron" modified="2024-01-09T10:01:24.934Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/22.1.2 Chrome/114.0.5735.289 Electron/25.9.4 Safari/537.36" etag="BAnTnSbnM5ZrN9JB1UPb" version="22.1.2" type="device" pages="9">
   <diagram id="_8FAGCXtMd00wYIMLbOl" name="ethercat-protocols">
     <mxGraphModel dx="1211" dy="851" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="413" pageHeight="291" math="0" shadow="0">
       <root>
@@ -1971,6 +1971,17 @@
           <mxGeometry width="50" height="50" relative="1" as="geometry">
             <mxPoint x="260" y="320" as="sourcePoint" />
             <mxPoint x="260" y="450" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="R6J2rxqPp9fEREd-d053-1" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="600" y="450" as="sourcePoint" />
+            <mxPoint x="620" y="450" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="R6J2rxqPp9fEREd-d053-2" value="10-100 ns" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="R6J2rxqPp9fEREd-d053-1">
+          <mxGeometry x="-0.1222" y="1" relative="1" as="geometry">
+            <mxPoint x="2" y="21" as="offset" />
           </mxGeometry>
         </mxCell>
       </root>
