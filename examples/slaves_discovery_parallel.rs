@@ -10,8 +10,10 @@ use futures_concurrency::future::Join;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let master = Master::new(EthernetSocket::new("eno1")?);
 
+    console_subscriber::init();
+
+    let master = Master::new(EthernetSocket::new("eno1")?);
     master.reset_addresses().await;
 
     // concurrent version

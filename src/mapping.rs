@@ -130,9 +130,9 @@ impl Allocator {
         let mut slaves = HashMap::<u16, Arc<ConfigSlave>>::new();
         let config = mapping.config.slaves.lock().unwrap();
         for &k in mapping.slaves.borrow().iter() {
-            slaves.insert(k, 
-                if let Some(value) = internal.slaves.get(&k).map(|v|  v.upgrade()).flatten() 
-                    // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()` 
+            slaves.insert(k,
+                if let Some(value) = internal.slaves.get(&k).map(|v|  v.upgrade()).flatten()
+                    // if config for slave already existing, we can use it, because we already checked it was perfectly the same in `self.compatible()`
                     {value}
                 else {
                     let new = Arc::new(config[&k].try_read().expect("a slave is still in mapping").clone());
@@ -344,7 +344,7 @@ impl<'a> Group<'a> {
                 config
                 }).await.one()?;
         }
-        
+
         Ok(())
     }
     /// obtain exclusive access (mutex) to the data buffers
@@ -358,7 +358,7 @@ impl<'a> Group<'a> {
 }
 impl<'a> GroupData<'a> {
     pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
-    
+
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         // TODO: add a fallback implementation in case the slave does not support *RW commands
@@ -377,10 +377,10 @@ impl<'a> GroupData<'a> {
         self.master.pdu(PduCommand::LWR, SlaveAddress::Logical, self.offset, self.write.as_mut_slice(), false).await;
         self.write.as_mut_slice()
     }
-    
+
     pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.read.as_mut_slice()}
     pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.write.as_mut_slice()}
-    
+
     /// extract a mapped value from the buffer of last received data
     pub fn get<T: PduData>(&self, field: Field<T>) -> T
         {field.get(&self.read)}
@@ -492,8 +492,8 @@ impl<'a> Mapping<'a> {
         // uncontroled reference to self and to configuration
         // this is safe since the slave config will not be removed from the hashmap and cannot be moved since it is heap allocated
         // the returned instance holds an immutable reference to self so it cannot be freed
-        let slave = unsafe {core::mem::transmute::<_, &Box<RwLock<_>>>( 
-                        slaves.get(&address).unwrap() 
+        let slave = unsafe {core::mem::transmute::<_, &Box<RwLock<_>>>(
+                        slaves.get(&address).unwrap()
                         )};
         MappingSlave {
             config: slave.try_write().expect("slave already in mapping"),
