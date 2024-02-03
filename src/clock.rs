@@ -25,14 +25,14 @@
         slaves tasks are triggered by their clock synchronized with other slaves and the master. This mode is implemented in [DistributedClock]
         according to ETG.1020, this mode is required only for the application that require high precision (<ms) in operation.
         
-        Multiple mode of DC synchronous for DC unit in slave are available. The default one used only the sync_0 impulse to trigger based time. (see [this](/etherage/schemes/synchronization-DC-submodes.svg) schematic to get more information)
+        Multiple mode of DC synchronous for DC unit in slave are available. The default one used only the sync_0 impulse to trigger based time. (see [this](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/synchronization-DC-submodes.svg) schematic to get more information)
 
 
     ![synchronization modes](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/synchronization-modes.svg)
 
     Depending on the synchronization mode, you can expect different execution behavior on your slaves, whose importance higher with the number of slaves. The following chronogram shows typical scheduling of task executions.
 
-    ![synchronization of slaves](https://raw.githubusercontent.com/jimy-byerley/etherage/schemes/synchronization-slaves.svg)
+    ![synchronization of slaves](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/synchronization-slaves.svg)
 
     ## roles and responsibilities in the ethercat network
 
@@ -66,7 +66,7 @@ use futures_concurrency::future::Join;
 
     The time offsets and delays measured by this clock synchronization mode are shows in the following chronogram for one packet sending.
 
-    ![clock offsets references](https://raw.githubusercontent.com/jimy-byerley/etherage/schemes/clock-references.svg)
+    ![clock offsets references](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/clock-references.svg)
 */
 pub struct DistributedClock {
     // Raw master reference
