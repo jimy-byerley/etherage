@@ -7,7 +7,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "readme.md"
 description = "An EtherCAT master in pure-Rust very close to the ethercat nature"
-keywords = ["ethercat", "ethernet", "realtime", "robotics", "servodrive", "motion-control", "fieldbus", "industrial-automation"]
+keywords = ["ethercat", "ethernet", "realtime", "motion-control", "fieldbus"]
 repository = "https://github.com/jimy-byerley/etherage"
 resolver = "2"
 
