@@ -2,7 +2,7 @@
 name = "etherage"
 categories = ["science::robotics", "network-programming"]
 authors = ["Jimy Byerley <jimy.byerley@gmail.com>", "CendreQuasar540"]
-version = "0.2.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "readme.md"
