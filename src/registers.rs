@@ -1,8 +1,8 @@
 /*!
     structs and consts for every registers in a standard slave's RAM. This should be used instead of any hardcoded register value.
-    
+
     The goal of this file is to gather all physical memory registers at one place, so what you see here is exactly what you can expect in a slave, no more, no less.
-    
+
     Some registers are partially redundant, this is because we can use some field pointing to a big struct and other fields pointing to only parts of the same struct.
 */
 
@@ -10,9 +10,11 @@ use core::fmt;
 use bilge::prelude::*;
 use crate::data::{self, Field, BitField, Storage};
 
+
+
 pub mod address {
     use super::*;
-    
+
     /// register of the station address, aka the fixed slave address
     /// ETG.1000.4 table 32
     pub const fixed: Field<u16> = Field::simple(0x0010);
@@ -27,10 +29,11 @@ pub mod dl {
 	pub const control: Field<DLControl> = Field::simple(0x0100);
 	pub const status: Field<DLStatus> = Field::simple(0x0110);
 }
-	
+
 pub mod dls_user {
     use super::*;
-    
+
+    /// ETG.1000.4 table 35
     pub const r1: Field<u8> = Field::simple(0x0120);
     pub const r2: Field<u8> = Field::simple(0x0121);
     pub const r3: Field<u8> = Field::simple(0x0130);
@@ -42,21 +45,41 @@ pub mod dls_user {
     pub const r9: BitField<u8> = BitField::new(0x0141*8+1, 7);
     pub const r8: Field<u8> = Field::simple(0x0150);
     
+    /// ETG.1000.4 table 61
+    pub const p1: Field<u8> = Field::simple(0x0981);
+    pub const p2: Field<u16> = Field::simple(0x0982);
+    pub const p13: Field<u8> = Field::simple(0x0982);
+    pub const p14: Field<u8> = Field::simple(0x0984);
+    pub const p3: Field<u16> = Field::simple(0x098e);
+    pub const p4: Field<u32> = Field::simple(0x0990);
+    pub const p5: Field<u32> = Field::simple(0x09a0);
+    pub const p6: Field<u32> = Field::simple(0x09a4);
+    pub const p7: Field<u16> = Field::simple(0x09a8);
+    pub const p8: Field<u16> = Field::simple(0x09ae);
+    pub const p9: Field<u32> = Field::simple(0x09b0);
+    pub const p10: Field<u32> = Field::simple(0x09b8);
+    pub const p11: Field<u32> = Field::simple(0x09c0);
+    pub const p12: Field<u32> = Field::simple(0x09c8);
+
+    /// ETG.1000.4 table 36
     pub const event: Field<DLSUserEvents> = Field::simple(0x0220);
+    /// ETG.1000.4 table 37
+    /// 0 to disable the matching event in [event], 1 to enable
     pub const event_mask: Field<DLSUserEvents> = Field::simple(0x0202);
     pub const watchdog: Field<u16> = Field::simple(0x0410);
 }
-	
+
 pub const external_event: Field<ExternalEvent> = Field::simple(0x0210);
 pub const external_event_mask: Field<ExternalEvent> = Field::simple(0x0200);
-	
+
 pub const ports_errors: Field<PortsErrorCount> = Field::simple(0x0300);
 pub const lost_link_count: Field<LostLinkCount> = Field::simple(0x0310);
 pub const frame_error_count: Field<FrameErrorCount> = Field::simple(0x0308);
 pub const watchdog_divider: Field<u16> = Field::simple(0x0400);
 pub const watchdog_counter: Field<WatchdogCounter> = Field::simple(0x0442);
 
-/** 
+
+/**
     SM (Sync Managers) are used for configuring and controling two distinct things:
     - mailbox exchanges (CoE, FoE, ...)
     - pdo exchanges (copying PDO data to slave's physical memory)
@@ -81,7 +104,7 @@ pub const mailbox_buffers: [Field<[u8; 0x100]>; 3] = [
 /// SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
 pub mod sii {
     use super::*;
-    
+
 	pub const access: Field<SiiAccess> = Field::simple(0x0500);
 	pub const control: Field<SiiControl> = Field::simple(0x0502);
 	/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
@@ -89,18 +112,16 @@ pub mod sii {
 	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
 	pub const data: Field<[u8;4]> = Field::simple(0x0508);
 }
-	
+
 // TODO: MII (Media Independent Interface)
 
 /// FMMU (Fieldbus Memory Management Unit) is controling the mapping (copy) for a slave's physical memory from/to logical memory
 pub const fmmu: FMMU = FMMU {address: 0x0600, num: 16};
-pub const clock: Field<DistributedClock> = Field::simple(0x0900);
-pub const clock_latch: Field<u32> = Field::simple(0x0900);
 
 /// AL (Application Layer) registers are controling the communication state of a slave
 pub mod al {
     use super::*;
-    
+
     pub const control: Field<AlControlRequest> = Field::simple(dls_user::r1.byte);
     pub const response: Field<AlControlResponse> = Field::simple(dls_user::r3.byte);
     pub const error: Field<AlError> = Field::simple(dls_user::r6.byte);
@@ -108,6 +129,102 @@ pub mod al {
     pub const pdi: Field<AlPdiControlType> = Field::simple(dls_user::r7.byte);
     pub const sync_config: Field<AlSyncConfig> = Field::simple(dls_user::r8.byte);
 }
+
+/**
+	registers controlling the distributed clock. See [DistributedClock]
+	
+	ETG.1000.4.6.8
+*/
+pub mod dc {
+    use super::*;
+
+    /// full structure gathering all the dc registers
+    pub const all: Field<DistributedClock> = Field::simple(0x0900);
+    // direct access to DC struct fields
+    /// accedd to the first item of [received_time], a write access to it latches the local time to update the fields of the DC
+    pub const measure_time: Field<u32> = Field::simple(0x0900);
+    /**
+        A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
+        This array contains the latched receival time on each port.
+    */
+    pub const received_time: Field<[u32; 4]> = Field::simple(0x0900);
+    /// A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
+    pub const system_time: Field<u64> = Field::simple(0x0910);
+    /// Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
+    pub const local_time: Field<u64> = Field::simple(0x0918);
+    /// Offset between the local time (in ns) and the local system time (in ns)
+    pub const system_offset: Field<u64> = Field::simple(0x920);
+    /// Offset between the reference system time (in ns) and the local system time (in ns)
+    pub const system_delay: Field<u32> = Field::simple(0x928);
+    /**
+        Bits 30..0: Mean difference between local copy of "system time" and "received system time" values.
+        Bit 31: 
+            - 0 - Local copy of "system time" > "received system time". 
+            - 1 - Othercase
+    */
+    pub const system_difference: Field<TimeDifference> = Field::simple(0x092C);
+    /// Implementation specific
+    pub const param_0: Field<u16> = Field::simple(0x0930);
+    pub const param_2: Field<u16> = Field::simple(0x0934);
+}
+
+/**
+    registers allowing to trigger slave cyclic task using to the distributed clock ticks or ethercat frames. See [Isochronous]
+    
+    ETG.1000.5.6.1.3.2.2
+*/
+pub mod isochronous {
+    use super::*;
+    
+    /// full structure gathering all the isochronous registers, without the mess of ETG unordered registers
+    pub const all: Field<Isochronous> = Field::simple(0x0980);
+    
+    /// ETG.1000.6 table 27
+    pub mod sync {
+        use super::*;
+        
+        /// boolean flags enabling sync operations (RW)
+        pub const enable: Field<IsochronousEnables> = Field::simple(dls_user::p1.byte);
+        /// This optional attribute specifies the duration for the Sync Impulse in multiples of 10 ns. (R)
+        pub const pulse: Field<u16> = Field::simple(dls_user::p2.byte);
+        /// These optional booleans attribute indicates an active Sync interrupts. (R)
+        pub const interrupt0: Field<IsochronousInterrupt> = Field::simple(dls_user::p3.byte);
+        pub const interrupt1: Field<IsochronousInterrupt> = Field::simple(dls_user::p3.byte+1);
+        /**
+            This optional attribute sets a start time related to system time for cyclic operation. (RW)
+            
+            The interrupt generation will start when the lower 32 bits of the system time will reach this value (in ns)
+        */
+        pub const start_time: Field<u32> = dls_user::p4;
+        /// set the cycle time of Sync0 in multiples of 1ns for Sync0 (RW)
+        pub const sync0_cycle_time: Field<u32> = Field::simple(dls_user::p5.byte);
+        /// set the cycle time of Sync0 in multiples of 1ns for Sync1 (RW)
+        pub const sync1_cycle_time: Field<u32> = Field::simple(dls_user::p6.byte);
+    }
+    /// ETG.1000.6 table 28
+    pub mod latch {
+        use super::*;
+        
+        /// enables Latch operation for a single event (true) or continuous latching. (RW)
+        pub const edge0: Field<IsochronousLatch> = Field::simple(dls_user::p7.byte);
+        pub const edge1: Field<IsochronousLatch> = Field::simple(dls_user::p7.byte+1);
+        /// indicates Latch edge events. (R)
+        pub const event0: Field<IsochronousLatch> = Field::simple(dls_user::p8.byte);
+        pub const event1: Field<IsochronousLatch> = Field::simple(dls_user::p8.byte+1);
+        /// stores the system time value in case of a Latch edge events. (R)
+        pub mod times {
+            use super::*;
+        
+            pub const latch0_positive: Field<u32> = Field::simple(dls_user::p9.byte);
+            pub const latch0_negative: Field<u32> = Field::simple(dls_user::p10.byte);
+            pub const latch1_positive: Field<u32> = Field::simple(dls_user::p11.byte);
+            pub const latch1_negative: Field<u32> = Field::simple(dls_user::p12.byte);
+        }
+    }
+}
+
+
+
 
 
 
@@ -156,9 +273,9 @@ data::bilge_pdudata!(AlStatus, u8);
 
 /**
     the current operation state on one device.
-    
+
     This is the enum version, useful when communicating with one slave only
-    
+
     Except [Self::Bootstrap], changing to any mode can be requested from any upper mode or from the preceding one.
 
     ETG.1000.6 table 9
@@ -168,35 +285,35 @@ data::bilge_pdudata!(AlStatus, u8);
 pub enum AlState {
     /**
         Transitional state meaning the slave is booting up and ready for nothing yet. The slave should normally reach the [Self::Init] state within seconds.
-        
+
         It cannot be requested, nor changed while it is active.
     */
     Bootstrap = 3,
     /**
         The init mode allows to set many communication registers, like the salve address, the mailbox setup, etc.
-        
+
         This mode should be used at the beginning of a communication. Only registers can be used.
     */
     Init = 1,
     /**
         the pre operational mode allows mailbox communication, which is mendatory to configure some slaves before realtime operations. Most functions are enabled but not realtime.
-        
+
         Communication setup via registers is no more allowed in this mode.
     */
     PreOperational = 2,
     /**
         Mode allowing realtime operations, except that commands sent to the slaves via its mapping will not be executed.
-        
+
         This is a kind of read-only temporary mode before [Self::Operational], that can be useful for initializing control loops on the master side while their outputs are ignored.
-        
+
         Mapping is no more allowed in this state, nor communication setup via registers.
     */
     SafeOperational = 4,
     /**
         Realtime operations running
-        
+
         The master has full access to the slave's effector functions. slaves might expect the master to regularly refresh its commands.
-        
+
         Mapping is no more allowed in this state, nor communication setup via registers.
     */
     Operational = 8,
@@ -205,9 +322,9 @@ pub enum AlState {
 /**
 	gather the current operation states on several devices
 	this struct does not provide any way to know which slave is in which state
-	
+
 	This is the bitfield version, useful when communicating with multiple slaves (broadcast PDUs)
-	
+
     ETG.1000.6 table 9
 */
 #[bitsize(4)]
@@ -260,36 +377,36 @@ impl From<AlState> for AlMixedState {
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AlError {
    ///  No error Any Current state
-    NoError = 0x0000, 
+    NoError = 0x0000,
     ///  Unspecified error
-    Unspecified = 0x0001, 
+    Unspecified = 0x0001,
     ///  No Memory
-    NoMemory = 0x0002, 
+    NoMemory = 0x0002,
     ///  Invalid Device Setup
-    InvalidDeviceSetup = 0x0003, 
-//     0x0005 Reserved due to compatibility reasons 
-    ///  Invalid requested state change 
-    InvalidStateRequest = 0x0011, 
+    InvalidDeviceSetup = 0x0003,
+//     0x0005 Reserved due to compatibility reasons
+    ///  Invalid requested state change
+    InvalidStateRequest = 0x0011,
     ///  Unknown requested state
-    UnknownStateRequest = 0x0012, 
-    ///  Bootstrap not supported 
-    BootstrapNotSupported = 0x0013, 
-    ///  No valid firmware 
-    NoValidFirmware = 0x0014, 
+    UnknownStateRequest = 0x0012,
+    ///  Bootstrap not supported
+    BootstrapNotSupported = 0x0013,
+    ///  No valid firmware
+    NoValidFirmware = 0x0014,
     ///  Invalid mailbox configuration for switching to [AlState::Init]
-    InvalidMailboxConfigBoot = 0x0015, 
-    ///  Invalid mailbox configuration for switching to [AlState::PreOperational]
-    InvalidMailboxConfigPreop = 0x0016, 
+    InvalidMailboxConfigBoot = 0x0015,
+    ///  Invalid mailbox configuration for switching to [AlState::PreoOperational]
+    InvalidMailboxConfigPreop = 0x0016,
     ///  Invalid sync manager configuration
-    InvalidSyncConfig = 0x0017, 
+    InvalidSyncConfig = 0x0017,
     ///  No valid inputs available
-    NoInputsAvailable = 0x0018, 
+    NoInputsAvailable = 0x0018,
     ///  No valid outputs
-    NoValidInputs = 0x0019, 
+    NoValidInputs = 0x0019,
     ///  Synchronization error
-    Synchronization = 0x001A, 
+    Synchronization = 0x001A,
     ///  Sync manager watchdog
-    SyncWatchdog = 0x001B, 
+    SyncWatchdog = 0x001B,
     ///  Invalid Sync Manager Types
     InvalidSyncTypes = 0x001C, 
     /**  
@@ -305,72 +422,73 @@ pub enum AlError {
     */
     InvalidInputConfig = 0x001E, 
     ///  Invalid Watchdog Configuration
-    InvalidWatchdogConfig = 0x001F, 
+    InvalidWatchdogConfig = 0x001F,
     ///  Slave needs cold start
-    NeedColdStart = 0x0020, 
+    NeedColdStart = 0x0020,
     ///  Slave needs INIT
-    NeedInit = 0x0021, 
+    NeedInit = 0x0021,
     ///  Slave needs PREOP
-    NeedPreop = 0x0022, 
+    NeedPreop = 0x0022,
     ///  Slave needs SAFEOP
-    NeedSafeOp = 0x0023, 
+    NeedSafeOp = 0x0023,
     ///  Invalid Input Mapping
-    InvalidInputMapping = 0x0024, 
+    InvalidInputMapping = 0x0024,
     ///  Invalid Output Mapping
-    InvalidOutputMapping = 0x0025, 
+    InvalidOutputMapping = 0x0025,
     ///  Inconsistent Settings
-    InconsistentSettings = 0x0026, 
+    InconsistentSettings = 0x0026,
     ///  FreeRun not supported
-    FreeRunNotSupported = 0x0027, 
+    FreeRunNotSupported = 0x0027,
     ///  SyncMode not supported
-    SyncModeNotSupported = 0x0028, 
+    SyncModeNotSupported = 0x0028,
     ///  FreeRun needs 3Buffer Mode
-    FreeRunNeedsBuffer = 0x0029, 
+    FreeRunNeedsBuffer = 0x0029,
     ///  Background Watchdog
-    BackgroundWatchdog = 0x002A, 
+    BackgroundWatchdog = 0x002A,
     ///  No Valid Inputs and Outputs
-    NoValidIO = 0x002B, 
+    NoValidIO = 0x002B,
     ///  Fatal Sync Error
-    FatalSync = 0x002C, 
-    ///  No Sync Error 
-    NoSync = 0x002D, 
+    FatalSync = 0x002C,
+    ///  No Sync Error
+    /// SyncSignal not received: In SAFEOP the slave waits for the first Sync0/Sync1 events before switching to OP, if these events were not received during the SAFEOP to OP timeout the slave refuses the state transition to OP
+    NoSync = 0x002D,
     ///  Invalid DC SYNC Configuration
-    InvalidDcConfig = 0x0030, 
+    InvalidDcConfig = 0x0030,
     ///  Invalid DC Latch Configuration
-    InvalidLatchConfig = 0x0031, 
+    InvalidLatchConfig = 0x0031,
     ///  Phase Link Lock Error
-    PLL = 0x0032, 
+    PLL = 0x0032,
     ///  Distributed Clock Sync IO Error
-    DCSyncIO = 0x0033, 
+    DCSyncIO = 0x0033,
     ///  Distributed Clock Sync Timeout Error
-    DCSyncTimeout = 0x0034, 
+    DCSyncTimeout = 0x0034,
     ///  Distributed Clock Invalid Sync Cycle Time
-    DCInvalidPeriod = 0x0035, 
+    DCInvalidPeriod = 0x0035,
 // 0x0036 Distributed Clock Sync0 Cycle Time
 // 0x0037 Distributed Clock Sync1 Cycle Time
     ///  MBX_AOE
-    MailboxAOE = 0x0041, 
+    MailboxAOE = 0x0041,
     ///  MBX_EOE
-    MailboxEOE = 0x0042, 
+    MailboxEOE = 0x0042,
     ///  MBX_COE
-    MailboxCOE = 0x0043, 
+    MailboxCOE = 0x0043,
     ///  MBX_FOE
-    MailboxFOE = 0x0044, 
+    MailboxFOE = 0x0044,
     ///  MBX_SOE
-    MailboxSOE = 0x0045, 
+    MailboxSOE = 0x0045,
     ///  MBX_VOE
-    MailboxVOE = 0x004F, 
+    MailboxVOE = 0x004F,
     ///  raised when switching to PreOperational but SII access owner has not been switched to PDI
-    EepromNoAccess = 0x0050, 
+    EepromNoAccess = 0x0050,
     ///  EEPROM Error
-    Eeeprom = 0x0051, 
+    Eeeprom = 0x0051,
     ///  Slave restarted locally
-    SlaveRestarted = 0x0060, 
+    SlaveRestarted = 0x0060,
     ///  Device Identification value updated
-    DeviceIdentificationUpdated = 0x0061, 
+    DeviceIdentificationUpdated = 0x0061,
     // 0x0062 …0  reserved
     ///  Application controller available
-    ApplicationAvailable = 0x00F0, 
+    ApplicationAvailable = 0x00F0,
     // 0x00F0 - 0xFFFF:  reserved
     // 0x8000 - 0xFFFF:  vendor specific
     Specific = 0xffff,
@@ -399,7 +517,7 @@ pub struct AlSyncConfig {
     pub signal_conditioning_sync0: u2,
     pub enable_signal_sync0: bool,
     pub enable_interrupt_sync0: bool,
-    
+
     /// controller specific
     pub signal_conditioning_sync1: u2,
     pub enable_signal_sync1: bool,
@@ -410,6 +528,7 @@ data::bilge_pdudata!(AlSyncConfig, u8);
 
 /// ETG.1000.4 table 31
 #[bitsize(80)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct DLInformation {
     /// type of the slave controller
     pub ty: u8,
@@ -417,24 +536,24 @@ pub struct DLInformation {
     pub revision: u8,
     /// (minor revision) build number of the slave controller
     pub build: u16,
-    
+
     /// Number of supported FMMU entities  (1 to 10)
     pub fmmus: u8,
     /// Number of supported Sync Manager channels (1 to 10)
     pub sync_managers: u8,
-    
+
     /// RAM size in koctet, means 1024 octets (1-60)
     pub ram_size: u8,
     /// tells which port are present on a slave
     pub ports: [PortDescriptor; 4],
-    
+
     /**
         - `false`: bit operation supported
         - `true`: bit operation not supported This feature bit does not affect mappability of SM.WriteEvent flag (MailboxIn)
     */
     pub fmmu_bit_operation_not_supported: bool,
     /**
-        - `true`: shall only be used for legacy reasons. Reserved registers may not be written, reserved registers may not be read when out of register area (refer to documentation of specific slave controller (ESC) 
+        - `true`: shall only be used for legacy reasons. Reserved registers may not be written, reserved registers may not be read when out of register area (refer to documentation of specific slave controller (ESC)
         - `false`: no restriction in register access
     */
     pub reserved_registers_not_supported: bool,
@@ -448,12 +567,12 @@ pub struct DLInformation {
     pub separate_fcs_errors: bool,
     /// true if available. This feature refers to registers 0x981\[7:3\], 0x0984
     pub dc_sync_activation_enhanced: bool,
-    
+
     /// if true, `LRW` is not supported
     pub logical_exchange_not_supported: bool,
     /// if true, `BRW`, `APRẀ`, `FPRW` is not supported
     pub physicial_exchange_not_supported: bool,
-    
+
     /**
         - 0: not active
         - 1: active, FMMU 0 is used for RxPDO (no bit mapping) FMMU 1 is used for TxPDO (no bit mapping) FMMU 2 is used for Mailbox write event bit of Sync manager 1 Sync manager 0 is used for write mailbox Sync manager 1 is used for read mailbox Sync manager 2 is used as Buffer for incoming data Sync manager 3 is used as Buffer for outgoing data
@@ -507,22 +626,42 @@ data::bilge_pdudata!(MailboxSupport, u16);
 
 
 
-/// ETG.1000.4 table 33
+/**
+	control the operation of the DL ports of the slave controller by the master.
+
+	ETG.1000.4 table 33
+*/
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct DLControl {
-	/// enables forwarding non-ethercat frames
+	/**
+		enables forwarding non-ethercat frames.
+		Restricted forwarding will destroy non EtherCAT frames
+	*/
 	forwarding: Forwarding,
-	/// 0:permanent setting
-	/// 1: temporary use of Loop Control Settings for ~1 second
+	/**
+		This optional parameter enables temporary use of the loop control parameters written in the same frame for about one second. After this timeout, the original Loop control settings are restored automatically
+		
+		- false: permanent setting
+		- true: temporary use of Loop Control Settings for ~1 second
+	*/
 	temporary: bool,
 	reserved: u6,
+	/// if there is an automatic activation of the port in case of a physical link or if the port is opened and or closed by commands of the master
 	ports: [LoopControl; 4],
-	/// Buffer between preparation and send. Send will be if buffer is half full (7).
+	/**
+		Buffer between preparation and send. Send will be if buffer is half full (7).
+		
+		This optional parameter should be used to optimize the delay within a station. If this station and its neighbours have a stable rate of transmitting, this parameter may be reduced. The default settings are determined by the required clock accuracy of ISO/IEC 8802-3.
+	*/
 	transmit_buffer_size: u3,
-	/// set to true to activate
+	/** 
+		This optional parameter indicates that the reduction of frame forwarding jitter for EBUS is enabled.
+		set to true to activate
+	*/
 	low_jitter_ebus: bool,
 	reserved: u4,
+	/// should be used to enable the alias name
 	alias_enable: bool,
 	reserved: u7,
 }
@@ -532,7 +671,7 @@ data::bilge_pdudata!(DLControl, u32);
 #[derive(TryFromBits, Debug, Copy, Clone)]
 pub enum Forwarding {
 	/// EtherCAT frames are processed, non-EtherCAT frames are forwarded without modification, The source MAC address is not changed for any frame
-	Transmit = 0, 
+	Transmit = 0,
 	/// EtherCAT frames are processed, non-EtherCAT frames are destroyed, The source MAC address is changed by the Processing Unit for every frame (SOURCE_MAC\[1\] is set to 1 – locally administered address).
 	Filter = 1,
 }
@@ -542,23 +681,33 @@ data::bilge_pdudata!(Forwarding, u1);
 #[derive(TryFromBits, Debug, Copy, Clone)]
 pub enum LoopControl {
 	/// closed at “link down”, open with “link up”
-	Auto = 0, 
+	Auto = 0,
 	/// loop closed at “link down”, opened with writing 01 after “link up” (or receiving a valid Ethernet frame at the closed port)
-	AutoClose = 1, 
+	AutoClose = 1,
 	AlwaysOpen = 2,
 	AlwaysClosed = 3,
 }
 data::bilge_pdudata!(LoopControl, u2);
 
-/// ETG.1000.4 table 34
+/**
+	indicate the state of the DL ports and the state of the interface between DL-user and DL.
+	
+	ETG.1000.4 table 34
+*/
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
 pub struct DLStatus {
-	/// trie if operational
+	/** 
+		if a DL-user is connected to the process data interface of the slave controller.
+		true if operational
+	*/
 	pub dls_user_operational: bool,
 	/// true if watchdog not expired
 	pub dls_user_watchdog: bool,
-	/// true if activated for at least one port
+	/**
+		status of the activation of the extended link detection.
+		true if activated for at least one port
+	*/
 	pub extended_link_detection: bool,
 	reserved: u1,
 	/// indicates physical link on each port
@@ -568,18 +717,20 @@ pub struct DLStatus {
 }
 data::bilge_pdudata!(DLStatus, u16);
 
+/// ETG.1000.4 table 34
 #[bitsize(2)]
 #[derive(FromBits, DebugBits, Copy, Clone)]
 pub struct LoopStatus {
 	/// indicates forwarding on the same port i.e. loop back.
 	pub loop_back: bool,
+	///  signal detected on the port's RX
 	pub signal_detection: bool,
 }
 data::bilge_pdudata!(LoopStatus, u2);
 
 /// The event registers are used to indicate an event to the DL -user. The event shall be acknowledged if the corresponding event source is read. The events can be masked.
 #[bitsize(32)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct DLSUserEvents {
 	/// R1 was written
 	pub r1_change: bool,
@@ -597,19 +748,19 @@ data::bilge_pdudata!(DLSUserEvents, u32);
 
 /**
 	The external event is mapped to IRQ parameter of all EtherCAT PDUs accessing this slave. If an event is set, and the associated mask is set the corresponding bit in the IRQ parameter of a PDU is set.
-	
+
 	ETG.1000.4 table 38
 */
 #[bitsize(16)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct ExternalEvent {
 	/// dc event 0
 	pub dc0: bool,
 	reserved: u1,
 	/// dl status register was changed
-	pub dl_status_change: bool,
-	/// R3 or R4 was written
-	pub r3_r4_change: bool,
+	pub dl: bool,
+	/// R3 or R4 was written, meaning an [ALStatus] change
+	pub al: bool,
 	/// sync manager channel was accessed by slave
 	pub sync_manager_channel: [bool; 8],
 	reserved: u4,
@@ -662,7 +813,7 @@ data::bilge_pdudata!(FrameErrorCount, u48);
 
 /**
 	A write will reset the watchdog counters
-	
+
 	ETG.1000.4 table 47
 */
 #[bitsize(16)]
@@ -699,7 +850,7 @@ pub enum SiiOwner {
 }
 data::bilge_pdudata!(SiiOwner, u1);
 
-/** 
+/**
     register controling the read/write operations to Slave Information Interface (SII)
 
 	ETG.1000.4 table 49
@@ -719,7 +870,7 @@ pub struct SiiControl {
 	pub read_size: SiiTransaction,
 	/// unit of SII addresses
 	pub address_unit: SiiUnit,
-	
+
 	/**
 		read operation requested (parameter write) or read operation busy (parameter read)
 		To start a new read operation there must be a positive edge on this parameter
@@ -735,7 +886,7 @@ pub struct SiiControl {
 		To start a new reload operation there must be a positive edge on this parameter
 	*/
 	pub reload_operation: bool,
-	
+
 	/// checksum error while reading at startup
 	pub checksum_error: bool,
 	/// error on reading Device Information
@@ -744,7 +895,7 @@ pub struct SiiControl {
 	pub command_error: bool,
 	/// error on last write operation
 	pub write_error: bool,
-	
+
 	/// operation is ongoing
 	pub busy: bool,
 }
@@ -762,6 +913,10 @@ pub enum SiiUnit {
 	Byte = 0,
 	Word = 1,
 }
+
+
+
+
 
 /// this is not a PduData but a struct transporting the address and number of FMMU registers
 /// ETG.1000.4 table 57
@@ -782,9 +937,9 @@ impl FMMU {
 
 /**
 	The fieldbus memory management unit (FMMU) converts logical addresses into physical addresses by the means of internal address. Thus, FMMUs allow one to use logical addressing for data segments that span several slave devices: one DLPDU addresses data within several arbitrarily distributed devices. The FMMUs optionally support bit wise mapping. A DLE may contain several FMMU entities. Each FMMU entity maps one cohesive logical address space to one cohesive physical address space.
-	
+
 	The FMMU consists of up to 16 entities. Each entity describes one memory translation between the logical memory of the EtherCAT communication network and the physical memory of the slave.
-	
+
 	ETG.1000.4 table 56
 */
 #[bitsize(128)]
@@ -800,19 +955,19 @@ pub struct FmmuEntry {
 	/// offset of the end bit in the logical start byte
 	pub logical_end_bit: u3,
 	reserved: u5,
-	
+
 	/// start byte in the physical memory (set by the sync manager)
 	pub physical_start_byte: u16,
 	/// start bit in the physical start byte
 	pub physical_start_bit: u3,
 	reserved: u5,
-	
+
 	/// entity will be used for read service
 	pub read: bool,
 	/// entity will be used for write service
 	pub write: bool,
 	reserved: u6,
-	
+
 	/// enable this FMMU entry, so physical memory will be copied from/to logical memory on read/write
 	pub enable: bool,
 	reserved: u7,
@@ -830,19 +985,26 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
+    /// return one sync manager channel register
     pub fn channel(&self, index: u8) -> Field<SyncManagerChannel> {
         assert!(index < self.num, "index out of range");
         Field::simple(usize::from(self.address + u16::from(index) * (core::mem::size_of::<SyncManagerChannel>() as u16) ))
     }
-    // return the sync manager channel reserved for mailbox in
+    /// return the sync manager channel reserved for mailbox in
     pub fn mailbox_write(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
-    // return the sync manager channel reserved for mailbox out
+    /// return the sync manager channel reserved for mailbox out
     pub fn mailbox_read(&self) -> Field<SyncManagerChannel>   {self.channel(1)}
+    
+    /// return the sync manager channel reserved for mapping to logical in
+    pub fn logical_write(&self) -> Field<SyncManagerChannel>  {self.channel(2)}
+    /// return the sync manager channel reserved for mapping to logical out
+    pub fn logical_read(&self) -> Field<SyncManagerChannel>  {self.channel(3)}
+    
     // return one of the sync manager channels reserved for mapping
     pub fn mappable(&self, index: u8) -> Field<SyncManagerChannel>   {self.channel(2+index)}
 }
 
-/** 
+/**
     The Sync manager controls the access to the DL-user memory. Each channel defines a consistent area of the DL-user memory.
 
     There is two ways of data exchange between master and PDI:
@@ -863,7 +1025,7 @@ pub struct SyncManagerChannel {
     pub mode: SyncMode,
     /// whether the consistent DL -user memory area is read or written by the master.
     pub direction: SyncDirection,
-    
+
     /// an event is generated if there is new data available in the consistent DL-user memory area which was written by the master (direction write) or if the new data from the DL-user was read by the master (direction read).
     pub ec_event: bool,
     /// an event is generated if there is new data available in the consistent DL-user memory area which was written by DLS-user or if the new data from the Master was read by the DLS-user.
@@ -876,20 +1038,20 @@ pub struct SyncManagerChannel {
     /// if the consistent DL -user memory (direction read) has been read by the master and the event enable parameter is set.
     pub read_event: bool,
     reserved: u1,
-    
+
     /// true if there is data waiting to be read (by master or slave) in the buffer
     pub mailbox_full: bool,
     /// state (buffer number, locked) of the consistent DL-user memory if it is of buffered access type.
     pub buffer_state: u2,
     pub read_buffer_open: bool,
     pub write_buffer_open: bool,
-    
+
     /// activate this channel
     pub enable: bool,
     /// A change in this parameter indicates a repeat request. This is primarily used to repeat the last mailbox interactions.
     pub repeat: bool,
     reserved: u4,
-    
+
     /// if the DC 0 Event shall be invoked in case of a EtherCAT write
     pub dc_event_bus: bool,
     /// if the DC 0 Event shall be invoked in case of a local write
@@ -921,42 +1083,171 @@ pub enum SyncDirection {
     Write = 1,
 }
 
-/// ETG.1000.4 table 60
+
+
+
+/**
+	DC allows for very precise timing requirements and for using timing signals that can be generated independent of the communication cycle. Systems with not so high requirements on synchronization may be synchronized by sharing a service (preferable LRW or LRD or LWR) or using the same Ethernet frame for access to buffers.
+	
+	### delay measurement
+	
+	Delay measurement needs time stamping information which is related to a single frame. The slave just provides means for time stamping, the calculation of the delay is the task of the master.
+	
+	### local time values
+	
+	The local time parameters contains the local system time and parameter for the control loop which are dedicate to implement a control loop for coordinating the local system time with a global time.
+
+	ETG.1000.4 table 60
+*/
 #[repr(packed)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub struct DistributedClock {
     /**
-        A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly). 
+        A write access to port 0 latches the local time (in ns) at receive begin (start first element of preamble) on each port of this PDU in this parameter (if the PDU was received correctly).
         This array contains the latched receival time on each port.
     */
-    pub received_time: [u32; 4],
-    /**
-        A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
-    */
+    pub received_time: [u32;4],
+    /// A write access compares the latched local system time (in ns) at receive begin at the processing unit of this PDU with the written value (lower 32 bit; if the PDU was received correctly), the result will be the input of DC PLL
     pub system_time: u64,
-    /**
-        Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
-    */
-    pub receive_time_unit: u64,
+    /// Local time (in ns) at receive begin at the processing unit of a PDU containing a write access to Receive time port 0 (if the PDU was received correctly)
+    pub local_time: u64,
     /// Offset between the local time (in ns) and the local system time (in ns)
     pub system_offset: u64,
     /// Offset between the reference system time (in ns) and the local system time (in ns)
     pub system_delay: u32,
+    /**
+        Bits 30..0: Mean difference between local copy of "system time" and "received system time" values.
+        Bit 31: 
+            - 0 - Local copy of "system time" > "received system time". 
+            - 1 - Othercase
+    */
     pub system_difference: TimeDifference,
-    reserved: [u32; 3],
+    /// Implementation specific
+    pub control_loop_params: [u16; 3],
 }
 data::packed_pdudata!(DistributedClock);
 
+/// ETG.1000.4 table 60
 #[bitsize(32)]
-#[derive(TryFromBits, DebugBits, Copy, Clone)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Default, PartialEq)]
 pub struct TimeDifference {
     /// Mean difference between local copy of System Time and received System Time values
     pub mean: u31,
-    /// true if local copy of system time smaller than received system time
+    /// true if local copy of system time smaller than received system time (offset is negative)
     pub sign: bool,
 }
 data::bilge_pdudata!(TimeDifference, u32);
 
+impl From<TimeDifference> for i32 {
+    fn from(value: TimeDifference) -> i32  {
+        u32::from(value.mean().value()) as i32 
+            * if value.sign() {-1} else {1}
+    }
+}
+impl From<i32> for TimeDifference {
+    fn from(value: i32) -> TimeDifference {
+        TimeDifference::new(u31::new(value.abs() as u32), value < 0)
+    }
+}
 
 
+
+/**
+    registers allowing to trigger slave cyclic task using to the distributed clock ticks or ethercat frames
+	
+	ETG.1000.6 table 27, ETG.1000.4 table 61
+*/
+#[repr(packed)]
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Isochronous {
+	// DC Cyclic unit control
+    reserved1: IsochronousAccess,
+	
+	/// boolean flags enabling sync operations (RW)
+    pub enable: IsochronousEnables,
+    /// This optional attribute specifies the duration for the Sync Impulse in multiples of 10 ns. (R)
+    pub pulse: u16,
+    reserved2: [u8; 10],
+    /// These optional booleans attribute indicates an active Sync interrupts. (R)
+    pub interrupt0: IsochronousInterrupt,
+    pub interrupt1: IsochronousInterrupt,
+	/**
+		This optional attribute sets a start time related to system time for cyclic operation. (RW)
+		
+		The interrupt generation will start when the lower 32 bits of the system time will reach this value (in ns)
+	*/
+    pub start_time: u32,
+    reserved3: [u8; 12],
+	/// set the cycle time of Sync0 in multiples of 1ns for Sync0 (RW)
+    pub sync0_cycle_time: u32,
+	/// set the cycle time of Sync0 in multiples of 1ns for Sync1 (RW)
+    pub sync1_cycle_time: u32,
+	
+	/// enables Latch operation for a single event (true) or continuous latching. (RW)
+    pub latch0_edge: IsochronousLatch,
+    pub latch1_edge: IsochronousLatch,
+    pub reserved4: [u8; 4],
+	/// indicates Latch edge events. (R)
+    pub latch0_event: IsochronousLatch,
+    pub latch1_event: IsochronousLatch,
+	/// stores the system time value in case of a Latch edge events. (R)
+    pub latch0_time_positive: u32,
+    reserved5: u32,
+    pub latch0_time_negative: u32,
+    reserved6: u32,
+    pub latch1_time_positive: u32,
+    reserved7: u32,
+    pub latch1_time_negative: u32,
+    reserved8: u32,
+}
+data::packed_pdudata!(Isochronous);
+
+#[bitsize(8)]
+#[derive(Copy, Clone, Default, DebugBits, PartialEq)]
+pub struct IsochronousAccess{
+    pub write_access_cyclic : bool,
+    reserved : u3,
+    pub write_access_latch0 : bool,
+    pub write_access_latch1 : bool,
+    reserved : u2,
+}
+data::bilge_pdudata!(IsochronousAccess, u8);
+
+/// ETG.1000.6 table 27
+#[bitsize(8)]
+#[derive(Copy, Clone, Default, DebugBits, PartialEq)]
+pub struct IsochronousEnables {
+    /// This Boolean attribute enables cyclic Sync 0 or 1 operation.
+    pub operation: bool,
+    /// This Boolean attribute enables the Sync 0 operation
+    pub sync0: bool,
+    /// This Boolean attribute enables the Sync 1 operation
+    pub sync1: bool,
+    
+    pub auto_activation : bool,
+    pub start_time_ext : bool,
+    pub start_time_check : bool,
+    pub half_range : bool,
+    pub debug_pulse : bool,
+}
+data::bilge_pdudata!(IsochronousEnables, u8);
+
+/// ETG.1000.6 table 27
+#[bitsize(8)]
+#[derive(Copy, Clone, Default, DebugBits, PartialEq)]
+pub struct IsochronousInterrupt {
+    pub enable : bool,
+    reserved : u7
+}
+data::bilge_pdudata!(IsochronousInterrupt, u8);
+
+/// ETG.1000.6 table 28
+#[bitsize(8)]
+#[derive(Copy, Clone, Default, DebugBits, PartialEq)]
+pub struct IsochronousLatch {
+    pub positive: bool,
+    pub negative: bool,
+    reserved: u6
+}
+data::bilge_pdudata!(IsochronousLatch, u16);
 

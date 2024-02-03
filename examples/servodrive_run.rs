@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::error::Error;
 use core::time::Duration;
 use futures_concurrency::future::Join;
 use etherage::{
-    EthernetSocket, RawMaster, 
+    EthernetSocket, RawMaster,
     Slave, SlaveAddress, CommunicationState,
     data::Field,
     sdo::{self, SyncDirection, OperationMode},
@@ -11,32 +11,22 @@ use etherage::{
     };
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let master = Arc::new(RawMaster::new(EthernetSocket::new("eno1")?));
-    {
-        let master = master.clone();
-        std::thread::spawn(move || loop {
-            master.receive();
-    })};
-    {
-        let master = master.clone();
-        std::thread::spawn(move || loop {
-            master.send();
-    })};
+async fn main() -> Result<(), Box<dyn Error>> {
+    let master = RawMaster::new(EthernetSocket::new("eno1")?);
     
     println!("create mapping");
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
         let _statuscom = slave.register(SyncDirection::Read, registers::al::status);
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, capacity: 10 });
+        let mut channel = slave.channel(sdo::sync_manager.logical_write());
             let mut pdo              = channel.push(sdo::Pdo::with_capacity(0x1600, false, 10));
                 let controlword      = pdo.push(sdo::cia402::controlword);
                 let target_mode      = pdo.push(sdo::cia402::target::mode);
                 let target_position  = pdo.push(sdo::cia402::target::position);
                 let _target_velocity = pdo.push(sdo::cia402::target::velocity);
                 let _target_torque = pdo.push(sdo::cia402::target::torque);
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, capacity: 10 });
+        let mut channel = slave.channel(sdo::sync_manager.logical_read());
             let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1a00, false, 10));
                 let statusword       = pdo.push(sdo::cia402::statusword);
                 let error            = pdo.push(sdo::cia402::error);
@@ -52,22 +42,23 @@ async fn main() -> std::io::Result<()> {
     
     println!("group {:#?}", group);
     println!("fields {:#?}", (statusword, controlword));
-    
-    let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
-    slave.switch(CommunicationState::Init).await;
-    slave.set_address(1).await;
-    slave.init_mailbox().await;
+
+    let mut slave = Slave::raw(master.clone(), SlaveAddress::AutoIncremented(0));
+    slave.switch(CommunicationState::Init).await?;
+    slave.set_address(1).await?;
+    slave.init_mailbox().await?;
     slave.init_coe().await;
-    slave.switch(CommunicationState::PreOperational).await;
-    group.configure(&slave).await;
-    slave.switch(CommunicationState::SafeOperational).await;
-    slave.switch(CommunicationState::Operational).await;
+    slave.switch(CommunicationState::PreOperational).await?;
     
+    group.configure(&slave).await?;
     
+    slave.switch(CommunicationState::SafeOperational).await?;
+    slave.switch(CommunicationState::Operational).await?;
+
     let cycle = tokio::sync::Notify::new();
-    
+
     (
-        async { 
+        async {
             let mut period = tokio::time::interval(Duration::from_millis(1));
             loop {
                 group.data().await.exchange().await;
@@ -78,69 +69,69 @@ async fn main() -> std::io::Result<()> {
         async {
             let initial = {
                 let mut group = group.data().await;
-                
+
                 let initial = group.get(current_position);
                 group.set(target_mode, OperationMode::SynchronousPosition);
                 group.set(target_position, initial);
-                
+
                 println!("error {:x}", group.get(error));
                 println!("position  {}", initial);
                 initial
             };
-            
+
             use bilge::prelude::u2;
             println!("power: {:?}", slave.coe().await.sdo_read(&sdo::error, u2::new(0)).await);
-        
+
             println!("switch on");
             switch_on(statusword, controlword, error, &group, &cycle).await;
-            
+
 			let velocity = 3_000_000;
 			let increment = 100_000_000;
-			
+
 			println!("move forward");
 			loop {
                 cycle.notified().await;
                 let mut group = group.data().await;
-                
+
                 let position = group.get(current_position);
                 if position >= initial + increment {break}
                 group.set(target_position, position + velocity);
                 println!("    {}", position);
             }
-            
+
 			println!("move backward");
             loop {
                 cycle.notified().await;
                 let mut group = group.data().await;
-                
+
                 let position = group.get(current_position);
                 if position <= initial {break}
                 group.set(target_position, position - velocity);
                 println!("    {}", position);
             }
-            
+
             println!("done");
         },
     ).join().await;
-    
+
     Ok(())
 }
 
 
 
 pub async fn switch_on(
-		statusword: Field<sdo::StatusWord>, 
-		controlword: Field<sdo::ControlWord>, 
+		statusword: Field<sdo::StatusWord>,
+		controlword: Field<sdo::ControlWord>,
 		error: Field<u16>,
 		group: &Group<'_>,
 		cycle: &tokio::sync::Notify,
 		) {
-	loop {		
+	loop {
         {
             let mut group = group.data().await;
             let status = group.get(statusword);
             let mut control = sdo::ControlWord::default();
-            
+
             // state "not ready to switch on"
             // we are in the state we wanted !
             if status.operation_enabled() {
@@ -181,7 +172,7 @@ pub async fn switch_on(
             group.set(controlword, control);
             println!("switch on {} {}  {:#x}", status, control, group.get(error));
         }
-		
+
 		cycle.notified().await;
 	}
 }

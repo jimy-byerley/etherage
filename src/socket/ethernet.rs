@@ -1,7 +1,13 @@
-use std::io::{self, Cursor, Write};
-use std::os::unix::io::{AsRawFd, RawFd};
-use packed_struct::prelude::*;
-use packed_struct::types::bits::ByteArray;
+use std::{
+    io::{self, Cursor, Write, Result, Error},
+    os::fd::{AsRawFd, RawFd},
+    };
+use core::task::{Poll, Context};
+use packed_struct::{
+    prelude::*,
+    types::bits::ByteArray,
+    };
+use tokio::io::unix::AsyncFd;
 use super::EthercatSocket;
 
 
@@ -14,10 +20,11 @@ use super::EthercatSocket;
 #[derive(Debug)]
 pub struct EthernetSocket {
     protocol: libc::c_ushort,
-    lower: libc::c_int,
+    fd: RawFd,
     ifreq: ifreq,
     header: EthernetHeader,
     filter_address: bool,
+    asyncfd: AsyncFd<RawFd>,
 }
 
 /// biggest possible ethercat frame allowed by the protocol
@@ -28,26 +35,26 @@ pub struct EthernetSocket {
 const MAX_ETHERNET_FRAME: usize = 1514;
 
 impl EthernetSocket {
-    pub fn new(interface: &str) -> io::Result<Self> {
+    pub fn new(interface: &str) -> Result<Self> {
         let protocol: u16 = 0x88a4;  // ethernet type: ethercat
 
         // create
-        let lower = unsafe {
-            let lower = libc::socket(
+        let fd = unsafe {
+            let fd = libc::socket(
                 // Ethernet II frames
                 libc::AF_PACKET,
-                libc::SOCK_RAW, // | libc::SOCK_NONBLOCK,
+                libc::SOCK_RAW | libc::SOCK_NONBLOCK,
                 protocol.to_be() as i32,
             );
-            if lower == -1 {
+            if fd == -1 {
                 return Err(io::Error::last_os_error());
             }
-            lower
+            fd
         };
 
         let mut new = EthernetSocket {
             protocol,
-            lower,
+            fd,
             ifreq: ifreq_for(interface),
             header: EthernetHeader {
                 // broadcast addresses
@@ -58,13 +65,14 @@ impl EthernetSocket {
                 protocol,
                 },
             filter_address: true,
+            asyncfd: AsyncFd::new(fd)?,
         };
 
         // bind
         let sockaddr = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
             sll_protocol: new.protocol.to_be() as u16,
-            sll_ifindex: ifreq_ioctl(new.lower, &mut new.ifreq, libc::SIOCGIFINDEX)?,
+            sll_ifindex: ifreq_ioctl(new.fd, &mut new.ifreq, libc::SIOCGIFINDEX)?,
             sll_hatype: 1,
             sll_pkttype: 0,
             sll_halen: 6,
@@ -74,13 +82,12 @@ impl EthernetSocket {
         unsafe {
             #[allow(trivial_casts)]
             let res = libc::bind(
-                new.lower,
+                new.fd,
                 &sockaddr as *const libc::sockaddr_ll as *const libc::sockaddr,
                 std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
             );
-            if res == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            if res == -1 
+                {return Err(Error::last_os_error());}
         }
 
         Ok(new)
@@ -94,22 +101,23 @@ impl EthernetSocket {
 impl Drop for EthernetSocket {
     fn drop(&mut self) {
         unsafe {
-            libc::close(self.lower);
+            libc::close(self.fd);
         }
     }
 }
 
 impl AsRawFd for EthernetSocket {
     fn as_raw_fd(&self) -> RawFd {
-        self.lower
+        self.fd
     }
 }
 
 impl EthercatSocket for EthernetSocket {
-    fn receive(&self, data: &mut [u8]) -> io::Result<usize> {
-        // the maximum ethernet frame used in ethercat is reasonably small so we can allocate the maximum on the stack
-        let mut packed = [0u8; MAX_ETHERNET_FRAME];
-        loop {
+    fn poll_receive(&self, cx: &mut Context<'_>, data: &mut [u8]) -> Poll<Result<usize>> {
+        if let Poll::Ready(guard) = self.asyncfd.poll_read_ready(cx) {
+            let mut guard = guard?;
+            let mut packed = [0u8; MAX_ETHERNET_FRAME];
+            
             let len = unsafe {
                 libc::read(
                     self.as_raw_fd(),
@@ -117,38 +125,47 @@ impl EthercatSocket for EthernetSocket {
                     packed.len(),
                 )
             };
-            if len < 0
-                 {break Err(io::Error::last_os_error())}
-            if len == 0
-                {continue}
-                 
+//             if len < 0
+//                 {return Poll::Ready(Err(io::Error::last_os_error()))}
+//             if len == 0
+            if len <= 0
+                {return Poll::Pending}
+            
+            guard.clear_ready();
+                
             let frame = EthernetFrame::unpack(&packed[.. (len as usize)]);
             if frame.header != self.header
-                {continue}
+                {return Poll::Pending}
             data[.. frame.data.len()].copy_from_slice(frame.data);
-            
-            // extract content
-            break {Ok(frame.data.len() as usize)}
-        }
-    }
-    fn send(&self, data: &[u8]) -> io::Result<()> {
-        // the maximum ethernet frame used in ethercat is reasonably small so we can allocate the maximum on the stack
-        let mut packed = [0u8; MAX_ETHERNET_FRAME];
-        let packet = EthernetFrame {header: self.header.clone(), data};
-        packet.pack(&mut packed);
-        let data = &packed[.. packet.size()];
         
-        let len = unsafe {
-            libc::write(
-                self.as_raw_fd(),
-                data.as_ptr() as *mut libc::c_void,
-                data.len(),
-            )
-        };
-        if len < 0 
-            {Err(io::Error::last_os_error())} 
-        else 
-            {Ok(())}
+            // extract content
+            Poll::Ready(Ok(frame.data.len() as usize))
+        }
+        else {Poll::Pending}
+    }
+    fn poll_send(&self, cx: &mut Context<'_>, data: &[u8]) -> Poll<Result<()>> {
+        if let Poll::Ready(guard) = self.asyncfd.poll_write_ready(cx) {
+            guard?.clear_ready();
+            
+            // the maximum ethernet frame used in ethercat is reasonably small so we can allocate the maximum on the stack
+            let mut packed = [0u8; MAX_ETHERNET_FRAME];
+            let packet = EthernetFrame {header: self.header.clone(), data};
+            packet.pack(&mut packed);
+            let data = &packed[.. packet.size()];
+            
+            let len = unsafe {
+                libc::write(
+                    self.as_raw_fd(),
+                    data.as_ptr() as *mut libc::c_void,
+                    data.len(),
+                )
+            };
+            if len < 0 
+                {Poll::Ready(Err(Error::last_os_error()))}
+            else 
+                {Poll::Ready(Ok(()))}
+        }
+        else {Poll::Pending}
     }
     fn max_frame(&self) -> usize  {
         MAX_ETHERNET_FRAME 
@@ -167,17 +184,16 @@ struct ifreq {
 }
 
 fn ifreq_ioctl(
-    lower: libc::c_int,
+    fd: libc::c_int,
     ifreq: &mut ifreq,
     cmd: libc::c_ulong,
-) -> io::Result<libc::c_int> {
+) -> Result<libc::c_int> {
     unsafe {
         #[allow(trivial_casts)]
-        let res = libc::ioctl(lower, cmd, ifreq as *mut ifreq);
+        let res = libc::ioctl(fd, cmd, ifreq as *mut ifreq);
 
-        if res == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        if res == -1 
+            {return Err(io::Error::last_os_error());}
     }
 
     Ok(ifreq.ifr_data)
@@ -227,7 +243,7 @@ impl<'a> EthernetFrame<'a> {
         let data = &src[<EthernetHeader as PackedStruct>::ByteArray::len() ..];
         let data = &data[.. data.len().min(data.len())];
     
-        Self{header, data}
+        Self {header, data}
     }
 }
 

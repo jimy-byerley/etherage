@@ -1,0 +1,7 @@
+#Ignore temp and IDE directory
+
+.vs/*
+.vscode/*
+.devcontainer/*
+target/*
+Cargo.lock
