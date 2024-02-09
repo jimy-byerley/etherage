@@ -48,7 +48,7 @@ pub mod mailbox {
         use super::*;
         pub mod receive {
             use super::*;
-    
+
             /// Send Mailbox Offset for Bootstrap state (slave to master)
             pub const offset: Field<u16> = Field::simple(WORD*0x0014);
             /// Send Mailbox Size for Bootstrap state (slave to master)
@@ -57,7 +57,7 @@ pub mod mailbox {
         }
        pub  mod send {
             use super::*;
-    
+
             /// Receive Mailbox Offset for Standard state (master to slave)
             pub const offset: Field<u16> = Field::simple(WORD*0x0016);
             /// Receive Mailbox Size for Standard state (master to slave)
@@ -69,7 +69,7 @@ pub mod mailbox {
         use super::*;
         pub mod receive {
             use super::*;
-    
+
             /// Receive Mailbox Offset for Standard state (master to slave)
             pub const offset: Field<u16> = Field::simple(WORD*0x0018);
             /// Receive Mailbox Size for Standard state (master to slave)
@@ -77,7 +77,7 @@ pub mod mailbox {
         }
         pub mod send {
             use super::*;
-    
+
             /// Send Mailbox Offset for Standard state (slave to master)
             pub const offset: Field<u16> = Field::simple(WORD*0x001a);
             /// Send Mailbox Size for Standard state (slave to master)
@@ -126,7 +126,7 @@ impl<'a> Sii<'a> {
     /// read data from the slave's EEPROM using the SII
     pub async fn read<T: PduData>(&mut self, field: Field<T>) -> T {
         let mut buffer = T::Packed::uninit();
-        
+
         let mut cursor = Cursor::new(buffer.as_mut());
         while cursor.remain().len() != 0 {
             // send request
@@ -138,7 +138,7 @@ impl<'a> Sii<'a> {
                 },
                 address: ((field.byte + cursor.position()) as u16) / self.unit,
             }).await.one();
-            
+
             // wait for interface to become available
             let status = loop {
                 let answer = self.master.read(self.slave, registers::sii::control).await;
@@ -158,12 +158,12 @@ impl<'a> Sii<'a> {
         T::unpack(buffer.as_ref()).unwrap()
         // TODO: error propagation
     }
-    
+
     /// write data to the slave's EEPROM using the SII
     pub async fn write<T: PduData>(&mut self, field: Field<T>, value: &T) {
         let mut buffer = T::Packed::uninit();
         value.pack(buffer.as_mut()).unwrap();
-        
+
         let mut cursor = Cursor::new(buffer.as_mut());
         while cursor.remain().len() != 0 {
             // write operation is forced to be 2 bytes (ETG.1000.4 6.4.5)
@@ -178,7 +178,7 @@ impl<'a> Sii<'a> {
                 reserved: 0,
                 data: cursor.unpack().unwrap(),
             }).await.one();
-            
+
             // wait for interface to become available
             let status = loop {
                 let answer = self.master.read(self.slave, registers::sii::control).await;
@@ -190,7 +190,7 @@ impl<'a> Sii<'a> {
         }
         // TODO: error propagation
     }
-    
+
     /// reload first 128 bits of data from the EEPROM
     pub async fn reload(&mut self) {
         self.master.write(self.slave, registers::sii::control, {
@@ -198,11 +198,11 @@ impl<'a> Sii<'a> {
             control.set_reload_operation(true);
             control
         }).await.one();
-        
+
         // wait for interface to become available
         let status = loop {
             let answer = self.master.read(self.slave, registers::sii::control).await;
-            if answer.answers == 1 && ! answer.value.busy() && ! answer.value.reload_operation()  
+            if answer.answers == 1 && ! answer.value.busy() && ! answer.value.reload_operation()
                 {break answer.value}
         };
         // check for errors

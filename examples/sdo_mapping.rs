@@ -1,7 +1,6 @@
-use std::sync::Arc;
-use core::time::Duration;
+use std::error::Error;
 use etherage::{
-    EthernetSocket, RawMaster, 
+    EthernetSocket, RawMaster,
     Slave, SlaveAddress, CommunicationState,
     sdo::{self, Sdo, SyncDirection},
     mapping::{self, Mapping},
@@ -9,20 +8,9 @@ use etherage::{
     };
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let master = Arc::new(RawMaster::new(EthernetSocket::new("eno1")?));
-    {
-        let master = master.clone();
-        std::thread::spawn(move || loop {
-            master.receive();
-    })};
-    {
-        let master = master.clone();
-        std::thread::spawn(move || loop {
-            master.send();
-    })};
-    std::thread::sleep(Duration::from_millis(500));
-    
+async fn main() -> Result<(), Box<dyn Error>> {
+    let master = RawMaster::new(EthernetSocket::new("eno1")?);
+
     println!("create mapping");
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
@@ -37,36 +25,36 @@ async fn main() -> std::io::Result<()> {
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
                 let position = pdo.push(Sdo::<i32>::complete(0x6064));
                 let torque = pdo.push(Sdo::<i16>::complete(0x6077));
+    drop(slave);
     println!("done {:#?}", config);
-    
+
     let allocator = mapping::Allocator::new();
     let group = allocator.group(&master, &mapping);
-    
+
     println!("group {:#?}", group);
     println!("fields  {:#?}", (control, status, error, position));
-    
-    let mut slave = Slave::raw(&master, SlaveAddress::AutoIncremented(0));
-    slave.switch(CommunicationState::Init).await;
-    slave.set_address(1).await;
-    slave.init_mailbox().await;
+
+    let mut slave = Slave::raw(master.clone(), SlaveAddress::AutoIncremented(0));
+    slave.switch(CommunicationState::Init).await?;
+    slave.set_address(1).await?;
+    slave.init_mailbox().await?;
     slave.init_coe().await;
-    slave.switch(CommunicationState::PreOperational).await;
-    group.configure(&slave).await;
-    slave.switch(CommunicationState::SafeOperational).await;
-    slave.switch(CommunicationState::Operational).await;
+    slave.switch(CommunicationState::PreOperational).await?;
+    group.configure(&slave).await?;
+    slave.switch(CommunicationState::SafeOperational).await?;
+    slave.switch(CommunicationState::Operational).await?;
     
     for _ in 0 .. 20 {
         let mut group = group.data().await;
         group.exchange().await;
-        println!("received {:?}  {}  {}  {}  {}", 
+        println!("received {:?}  {}  {}  {}  {}",
             group.get(restatus),
-            group.get(status), 
-            group.get(error), 
+            group.get(status),
+            group.get(error),
             group.get(position),
             group.get(torque),
             );
     }
-    
+
     Ok(())
 }
-
