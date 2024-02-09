@@ -983,14 +983,14 @@ impl SyncManager {
         assert!(index < self.num, "index out of range");
         Field::simple(usize::from(self.address + u16::from(index) * (core::mem::size_of::<SyncManagerChannel>() as u16) ))
     }
-    /// return the sync manager channel reserved for mailbox in
+    /// return the sync manager channel recommended for mailbox in
     pub fn mailbox_write(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
-    /// return the sync manager channel reserved for mailbox out
+    /// return the sync manager channel recommended for mailbox out
     pub fn mailbox_read(&self) -> Field<SyncManagerChannel>   {self.channel(1)}
     
-    /// return the sync manager channel reserved for mapping to logical in
+    /// return the sync manager channel recommended for mapping to logical in
     pub fn logical_write(&self) -> Field<SyncManagerChannel>  {self.channel(2)}
-    /// return the sync manager channel reserved for mapping to logical out
+    /// return the sync manager channel recommended for mapping to logical out
     pub fn logical_read(&self) -> Field<SyncManagerChannel>  {self.channel(3)}
     
     // return one of the sync manager channels reserved for mapping

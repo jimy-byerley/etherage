@@ -196,8 +196,8 @@ impl<'a> Slave<'a> {
         let mailbox = Mailbox::new(
             self.master.clone(),
             address,
-            MAILBOX_BUFFER_WRITE,
-            MAILBOX_BUFFER_READ,
+            (registers::sync_manager::interface.mailbox_write(), MAILBOX_BUFFER_WRITE),
+            (registers::sync_manager::interface.mailbox_read(), MAILBOX_BUFFER_READ),
             ).await?;
         // switch SII owner to PDI, so mailbox can init
         self.master.write(self.address, registers::sii::access, {

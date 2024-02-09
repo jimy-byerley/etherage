@@ -37,6 +37,7 @@ pub struct Direction {
     count: u8,
     address: u16,
     max: usize,
+    channel: Field<registers::SyncManagerChannel>,
 }
 
 impl Mailbox {
@@ -48,7 +49,23 @@ impl Mailbox {
         
         `slave` is the slave's fixed address, no implementation is made for mailbox with topological addresses
     */
-    pub async fn new(master: Arc<RawMaster>, slave: u16, write: Range<u16>, read: Range<u16>) -> EthercatResult<Mailbox> {
+    pub async fn new(master: Arc<RawMaster>, slave: u16,
+            write: (Field<registers::SyncManagerChannel>, Range<u16>),
+            read: (Field<registers::SyncManagerChannel>, Range<u16>),
+            )-> EthercatResult<Mailbox>
+    {
+        let read = Direction{
+                count: 0,
+                address: read.1.start,
+                max: usize::from(read.1.end - read.1.start),
+                channel: read.0,
+                };
+        let write = Direction{
+                count: 0,
+                address: write.1.start,
+                max: usize::from(write.1.end - write.1.start),
+                channel: write.0,
+                };
         // check that there is not previous error
         if master.fprd(slave, registers::al::response).await.one()?.error() {
             panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
@@ -56,10 +73,10 @@ impl Mailbox {
 
         // configure sync manager
         let configured = (
-            master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
+            master.fpwr(slave, write.channel, {
                 let mut config = registers::SyncManagerChannel::default();
-                config.set_address(write.start);
-                config.set_length(write.end - write.start);
+                config.set_address(write.address);
+                config.set_length(write.max as _);
                 config.set_mode(registers::SyncMode::Mailbox);
                 config.set_direction(registers::SyncDirection::Write);
                 config.set_dls_user_event(true);
@@ -68,10 +85,10 @@ impl Mailbox {
                 config
             }),
 
-            master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
+            master.fpwr(slave, read.channel, {
                 let mut config = registers::SyncManagerChannel::default();
-                config.set_address(read.start);
-                config.set_length(read.end - read.start);
+                config.set_address(read.address);
+                config.set_length(read.max as _);
                 config.set_mode(registers::SyncMode::Mailbox);
                 config.set_direction(registers::SyncDirection::Read);
                 config.set_dls_user_event(true);
@@ -83,22 +100,14 @@ impl Mailbox {
         if configured.0.one().is_err() || configured.1.one().is_err()
             {return Err(EthercatError::Master("failed to configure mailbox sync managers"))}
         
-        assert!(usize::from(read.end - read.start) <= MAILBOX_MAX_SIZE);
-        assert!(usize::from(write.end - write.start) <= MAILBOX_MAX_SIZE);
+        assert!(read.max <= MAILBOX_MAX_SIZE);
+        assert!(write.max <= MAILBOX_MAX_SIZE);
         
         Ok(Self {
             master,
             slave,
-            read: Direction{
-                count: 0,
-                address: read.start,
-                max: usize::from(read.end - read.start),
-                },
-            write: Direction{
-                count: 0,
-                address: write.start,
-                max: usize::from(write.end - write.start),
-                },
+            read,
+            write,
         })
     }
     pub async fn poll(&self) -> bool {todo!()}
@@ -219,7 +228,7 @@ impl Mailbox {
     }
 
     async fn read_attempt<'a>(&mut self, ty: MailboxType, data: &'a mut [u8]) -> EthercatResult<Option<&'a [u8]>, MailboxError> {
-        let small = 16;
+        let small = 26; // this is the amount of byte we will transmit anyway because of ethercat frame padding
         let mut buffer = [0; MAILBOX_MAX_SIZE];
 
         // receive header and some more bytes for getting small messages in one shot
@@ -369,6 +378,7 @@ pub enum MailboxType {
     Servo = 0x5,
     Specific = 0xf,
 }
+data::bilge_pdudata!(MailboxType, u4);
 
 /// ETG 1000.4 table 30
 #[bitsize(32)]
