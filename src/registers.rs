@@ -912,14 +912,16 @@ pub struct SiiControl {
 data::bilge_pdudata!(SiiControl, u16);
 
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SiiTransaction {
+    #[default]
 	Bytes4 = 0,
 	Bytes8 = 1,
 }
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SiiUnit {
+    #[default]
 	Byte = 0,
 	Word = 1,
 }

@@ -7,10 +7,12 @@
 */
 
 use crate::{
-    rawmaster::{RawMaster, SlaveAddress},
+    error::{EthercatError, EthercatResult},
     data::{self, PduData, Storage, Field, Cursor},
+    rawmaster::{RawMaster, SlaveAddress},
     registers,
     };
+use std::sync::Arc;
 use bilge::prelude::*;
 
 const WORD: usize = core::mem::size_of::<u16>();
@@ -101,30 +103,30 @@ pub const version: Field<u16> = Field::simple(WORD*0x003f);
 
 
 /// implementation of the Slave Information Interface (SII) to communicate with a slave's EEPROM memory
-pub struct Sii<'a> {
-    master: &'a RawMaster,
+pub struct Sii {
+    master: Arc<RawMaster>,
     slave: SlaveAddress,
     /// address unit (number of bytes) to use for communication
     unit: u16,
     /// whether the EEPROM is writable through the SII
     writable: bool,
 }
-impl<'a> Sii<'a> {
-    pub async fn new(master: &'a RawMaster, slave: SlaveAddress) -> Sii<'a> {
-        let status = master.read(slave, registers::sii::control).await.one();
+impl Sii {
+    pub async fn new(master: Arc<RawMaster>, slave: SlaveAddress) -> EthercatResult<Sii, &'static str> {
+        let status = master.read(slave, registers::sii::control).await.one()?;
         let unit = match status.address_unit() {
             registers::SiiUnit::Byte => 1,
             registers::SiiUnit::Word => 2,
         };
-        assert!(!status.checksum_error(), "corrupted slave information EEPROM");
-        Self {master, slave, unit, writable: status.write_access()}
-        // TODO: error propagation
+        if status.checksum_error()
+            {return Err(EthercatError::Slave(slave, "corrupted slave information EEPROM"))};
+        Ok(Self {master, slave, unit, writable: status.write_access()})
     }
     /// tells if the EEPROM is writable through the SII
     pub fn writable(&self) -> bool {self.writable}
     
     /// read data from the slave's EEPROM using the SII
-    pub async fn read<T: PduData>(&mut self, field: Field<T>) -> T {
+    pub async fn read<T: PduData>(&mut self, field: Field<T>) -> EthercatResult<T, &'static str> {
         let mut buffer = T::Packed::uninit();
 
         let mut cursor = Cursor::new(buffer.as_mut());
@@ -137,30 +139,32 @@ impl<'a> Sii<'a> {
                     control
                 },
                 address: ((field.byte + cursor.position()) as u16) / self.unit,
-            }).await.one();
+            }).await.one()?;
 
             // wait for interface to become available
             let status = loop {
-                let answer = self.master.read(self.slave, registers::sii::control).await;
-                if answer.answers == 1 && ! answer.value.busy()  && ! answer.value.read_operation()
-                    {break answer.value}
+                if let Ok(answer) = self.master.read(self.slave, registers::sii::control).await.one() {
+                    if ! answer.busy()  && ! answer.read_operation()
+                        {break answer}
+                }
             };
             // check for errors
-            assert!(!status.command_error() && !status.device_info_error());
+            if status.command_error()
+                {return Err(EthercatError::Slave(self.slave, "sii command error"))}
+            if status.device_info_error()
+                {return Err(EthercatError::Slave(self.slave, "sii device info error"))}
             // buffer the result
             let size = match status.read_size() {
                 registers::SiiTransaction::Bytes4 => 4,
                 registers::SiiTransaction::Bytes8 => 8,
                 };
-            cursor.write(&self.master.read(self.slave, registers::sii::data).await
-                            .value[.. size]).unwrap();
+            cursor.write(&self.master.read(self.slave, registers::sii::data).await.one()?[.. size]).unwrap();
         }
-        T::unpack(buffer.as_ref()).unwrap()
-        // TODO: error propagation
+        Ok(T::unpack(buffer.as_ref())?)
     }
 
     /// write data to the slave's EEPROM using the SII
-    pub async fn write<T: PduData>(&mut self, field: Field<T>, value: &T) {
+    pub async fn write<T: PduData>(&mut self, field: Field<T>, value: &T) -> EthercatResult<(), &'static str> {
         let mut buffer = T::Packed::uninit();
         value.pack(buffer.as_mut()).unwrap();
 
@@ -177,49 +181,59 @@ impl<'a> Sii<'a> {
                 address: ((field.byte + cursor.position()) as u16) / self.unit,
                 reserved: 0,
                 data: cursor.unpack().unwrap(),
-            }).await.one();
+            }).await.one()?;
 
             // wait for interface to become available
             let status = loop {
-                let answer = self.master.read(self.slave, registers::sii::control).await;
-                if answer.answers == 1 && ! answer.value.busy()  && ! answer.value.write_operation()
-                    {break answer.value}
+                if let Ok(answer) = self.master.read(self.slave, registers::sii::control).await.one() {
+                    if ! answer.busy()  && ! answer.write_operation()
+                        {break answer}
+                }
             };
             // check for errors
-            assert!(!status.command_error() && !status.write_error());
+            if status.command_error()
+                {return Err(EthercatError::Slave(self.slave, "sii command error"))}
+            if status.write_error()
+                {return Err(EthercatError::Slave(self.slave, "sii write error"))}
         }
-        // TODO: error propagation
+        Ok(())
     }
 
     /// reload first 128 bits of data from the EEPROM
-    pub async fn reload(&mut self) {
+    pub async fn reload(&mut self) -> EthercatResult<(), &'static str> {
         self.master.write(self.slave, registers::sii::control, {
             let mut control = registers::SiiControl::default();
             control.set_reload_operation(true);
             control
-        }).await.one();
+        }).await.one()?;
 
         // wait for interface to become available
         let status = loop {
-            let answer = self.master.read(self.slave, registers::sii::control).await;
-            if answer.answers == 1 && ! answer.value.busy() && ! answer.value.reload_operation()
-                {break answer.value}
+            if let Ok(answer) = self.master.read(self.slave, registers::sii::control).await.one() {
+                if ! answer.busy() && ! answer.reload_operation()
+                    {break answer}
+            }
         };
         // check for errors
-        assert!(!status.command_error() && !status.checksum_error() && !status.device_info_error());
-        // TODO: error propagation
+        if status.command_error()
+                {return Err(EthercatError::Slave(self.slave, "sii command error"))}
+        if status.checksum_error()
+                {return Err(EthercatError::Slave(self.slave, "sii checksum error"))}
+        if status.device_info_error()
+                {return Err(EthercatError::Slave(self.slave, "sii device info error"))}
+        Ok(())
     }
 }
 
 pub struct SiiIterator<'a> {
-    sii: &'a mut Sii<'a>,
+    sii: &'a mut Sii,
     position: usize,
 }
 impl SiiIterator<'_> {
-    pub async fn next(&mut self) -> Option<CategoryHeader> {
-        let header = self.sii.read(Field::<CategoryHeader>::simple(self.position)).await;
+    pub async fn next(&mut self) -> EthercatResult<Option<CategoryHeader>, &'static str> {
+        let header = self.sii.read(Field::<CategoryHeader>::simple(self.position)).await?;
         self.position += usize::from(header.size());
-        Some(header)
+        Ok(Some(header))
     }
 }
 

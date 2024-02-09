@@ -2,9 +2,9 @@
 
 use crate::{
     error::{EthercatError, EthercatResult},
+    data::{self, PduData, Cursor},
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
     registers,
-    data::{self, PduData, Cursor},
     };
 use core::ops::Range;
 use std::sync::Arc;
