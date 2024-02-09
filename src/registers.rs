@@ -95,14 +95,19 @@ pub mod sync_manager {
 }
 
 /// SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
+/// ETG.1000.4.6.6.4
 pub mod sii {
     use super::*;
 
+    /// ETG.1000.4 table 48
 	pub const access: Field<SiiAccess> = Field::simple(0x0500);
+    /// ETG.1000.4 table 49
 	pub const control: Field<SiiControl> = Field::simple(0x0502);
 	/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
+    /// ETG.1000.4 table 50
 	pub const address: Field<u16> = Field::simple(0x0504);
 	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
+    /// ETG.1000.4 table 51
 	pub const data: Field<[u8; 8]> = Field::simple(0x0508);
 	
 	/// agregates [const@control] and [const@address] for optimized bandwith
