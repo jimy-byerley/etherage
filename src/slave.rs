@@ -19,9 +19,11 @@ use registers::AlState::*;
 
 
 /// slave physical memory range used for mailbox, to be written by the master
-const MAILBOX_BUFFER_WRITE: Range<u16> = Range {start: 0x1800, end: 0x1800+0x100};
+// const MAILBOX_BUFFER_WRITE: Range<u16> = Range {start: 0x1800, end: 0x1800+0x100};
+const MAILBOX_BUFFER_WRITE: Range<u16> = Range {start: 0x1000, end: 0x1000+0x400};
 /// slave physical memory range used for mailbox, to be read by the master
-const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100};
+// const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100};
+const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1400, end: 0x1400+0x400};
 
 
 
@@ -203,6 +205,8 @@ impl<'a> Slave<'a> {
             config.set_owner(registers::SiiOwner::Pdi);
             config
             }).await.one()?;
+
+//         self.master.write(self.address, Field::simple(registers::sii::access.byte), registers::SiiOwner::Pdi).await.one()?;
 
         self.coe = None;
         self.mailbox = Some(Arc::new(Mutex::new(mailbox)));

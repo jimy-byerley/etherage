@@ -10,7 +10,7 @@ use bilge::prelude::u2;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let master = Master::new(EthernetSocket::new("eno1")?);
-    
+
     master.reset_addresses().await;
 
     // sequencial version
@@ -34,20 +34,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let mut hardware = [0; 50];
             let mut software = [0; 50];
             
-            println!("  slave {}: {:?} - ecat type {:?} rev {:?} build {:?} - hardware {:?} software {:?}", 
+            println!("  slave {}: {} - ecat type {:?} rev {:?} build {:?} - hardware {} software {}",
                     i,
-                    std::str::from_utf8(
-                        &can.sdo_read_slice(&sdo::device::name, priority, &mut name).await?
-                        ).unwrap().trim_end(),
+                    can.sdo_read_slice(&sdo::device::name, priority, &mut name).await
+                        .map(|s|  std::str::from_utf8(s).unwrap().trim_end())
+                        .unwrap_or("unidentified"),
                     info.ty(),
                     info.revision(),
                     info.build(),
-                    std::str::from_utf8(
-                        &can.sdo_read_slice(&sdo::device::hardware_version, priority, &mut hardware).await?
-                        ).unwrap().trim_end(),
-                    std::str::from_utf8(
-                        &can.sdo_read_slice(&sdo::device::software_version, priority, &mut software).await?
-                        ).unwrap().trim_end(),
+                    can.sdo_read_slice(&sdo::device::hardware_version, priority, &mut hardware).await
+                        .map(|s| std::str::from_utf8(s).unwrap().trim_end())
+                        .unwrap_or("NA"),
+                    can.sdo_read_slice(&sdo::device::software_version, priority, &mut software).await
+                        .map(|s| std::str::from_utf8(s).unwrap().trim_end())
+                        .unwrap_or("NA"),
                     );
             Result::<_, Box<dyn Error>>::Ok(())
         };

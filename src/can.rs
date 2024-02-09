@@ -1,7 +1,7 @@
 //! implementation of CoE (Canopen Over Ethercat)
 
 use crate::{
-    mailbox::{Mailbox, MailboxType, MailboxError},
+    mailbox::{Mailbox, MailboxType, MailboxError, MailboxHeader},
     registers,
     sdo::Sdo,
     data::{self, PduData, Storage, Cursor},
@@ -13,12 +13,13 @@ use std::sync::Arc;
 
 
 
-const MAILBOX_MAX_SIZE: usize = registers::mailbox_buffers[0].len;
+const MAILBOX_MAX_SIZE: usize = 1024;
 /// maximum byte size of sdo data that can be expedited
 const EXPEDITED_MAX_SIZE: usize = 4;
 /// maximum byte size of an sdo data that can be put in a sdo segment
 /// it is constrained by the mailbox buffer size on the slave
-const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
+const SDO_SEGMENT_MAX_SIZE: usize = MAILBOX_MAX_SIZE
+                                        - <MailboxHeader as PduData>::Packed::LEN
                                         - <CoeHeader as PduData>::Packed::LEN
                                         - <SdoSegmentHeader as PduData>::Packed::LEN;
 
