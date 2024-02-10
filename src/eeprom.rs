@@ -5,6 +5,7 @@
 */
 
 use crate::data::{self, PduData, Field};
+use crate::registers::MailboxSupport;
 use bilge::prelude::*;
 
 
@@ -80,7 +81,7 @@ pub mod mailbox {
         }
     }
     /// Mailbox Protocols Supported as defined in ETG.1000.6 Table 18
-    pub const protocols: Field<MailboxTypes> = Field::simple(WORD*0x001c);
+    pub const protocols: Field<MailboxSupport> = Field::simple(WORD*0x001c);
 }
 
 /**
@@ -91,26 +92,5 @@ pub mod mailbox {
 pub const eeprom_size: Field<u16> = Field::simple(WORD*0x003e);
 /// This Version is 1
 pub const version: Field<u16> = Field::simple(WORD*0x003f);
-
-
-
-
-/// ETG.1000.6 table 18
-#[bitsize(8)]
-#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
-pub struct MailboxTypes {
-    /// ADS over EtherCAT (routing and parallel services)
-    pub ads: bool,
-    /// Ethernet over EtherCAT (tunnelling of Data Link services)
-    pub ethernet: bool,
-    /// CAN application protocol over EtherCAT (access to SDO)
-    pub can: bool,
-    /// File Access over EtherCAT
-    pub file: bool,
-    /// Servo Drive Profile over EtherCAT
-    pub servo: bool,
-    /// Vendor specific protocol over EtherCAT
-    pub specific: bool,
-    reserved: u2,
-}
-data::bilge_pdudata!(MailboxTypes, u8);
+/// start addresse for categories
+pub const categories: u16 = 0x0040;

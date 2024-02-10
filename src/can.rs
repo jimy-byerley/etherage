@@ -2,7 +2,6 @@
 
 use crate::{
     mailbox::{Mailbox, MailboxType, MailboxError},
-    registers,
     sdo::Sdo,
     data::{self, PduData, Storage, Cursor},
     error::{EthercatError, EthercatResult},
