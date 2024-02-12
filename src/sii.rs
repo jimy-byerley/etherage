@@ -10,7 +10,7 @@
     The EEPROM has 2 regions of data:
 
     - EEPROM registers: fixed addresses, described in [eeprom] and accessed by [Sii]
-    - EEPROM categories: contiguous data blocks, described by the `*Category` structs here and accessed by [SiiCursor]
+    - EEPROM categories: contiguous data blocks, described by the `Category*` structs here and accessed by [SiiCursor]
 
     Here is how to use registers:
     ```ignore
@@ -50,7 +50,7 @@ use std::sync::Arc;
 use bilge::prelude::*;
 
 
-const WORD: u16 = eeprom::WORD as _;
+pub const WORD: u16 = eeprom::WORD as _;
 
 
 /**
@@ -387,9 +387,9 @@ pub enum CategoryType {
     /// Sync Manager Configuration structure of this category data see ETG.1000.6 Table 24
     SyncManager = 41,
     /// TxPDO description structure of this category data see ETG.1000.6 Table 25
-    TxPdo = 50,
+    PdoWrite = 50,
     /// RxPDO description structure of this category data see ETG.1000.6 Table 25
-    RxPdo = 51,
+    PdoRead = 51,
     /// Distributed Clock for future use
     Dc = 60,
     #[fallback]
@@ -513,6 +513,7 @@ pub struct CategorySyncManager {
     pub enable: SyncManagerEnable,
     pub usage: SyncManagerUsage,
 }
+data::bilge_pdudata!(CategorySyncManager, u64);
 
 #[bitsize(8)]
 #[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
@@ -537,12 +538,46 @@ pub enum SyncManagerUsage {
     ProcessIn = 0x4,
 }
 
-/// ETG.1000.6 table 25
-pub struct CategoryPdo {
-    // TODO
-}
+/**
+    header for category describing a reading or writing PDO
 
-/// ETG.1000.6 table 26
-pub struct CategoryPdoentry {
-    // TODO
+    ETG.1000.6 table 25
+*/
+#[repr(packed)]
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CategoryPdo {
+    /// index of SDO configuring the PDO
+    index: u16,
+    /// number of entries in the PDO
+    entries: u8,
+    /// reference to DC-sync
+    synchronization: u8,
+    /// name of the PDO object (reference to category strings)
+    name: u8,
+    /// for future use
+    flags: u16,
 }
+data::packed_pdudata!(CategoryPdo);
+
+/**
+    structure describing an entry in a PDO
+
+    ETG.1000.6 table 26
+*/
+#[repr(packed)]
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CategoryPdoentry {
+    /// index of the SDO
+    index: u16,
+    /// index of field in the SDO (or 0 if complete SDO)
+    sub: u8,
+    /// name of this SDO
+    name: u8,
+    /// data type of the entry
+    dtype: u8,
+    /// data length of the entry
+    bitlen: u8,
+    /// for future use
+    flags: u16,
+}
+data::packed_pdudata!(CategoryPdoentry);
