@@ -15,27 +15,28 @@ use std::sync::Arc;
 use bilge::prelude::*;
 
 
+const WORD: u16 = eeprom::WORD as _;
 
 
 /// implementation of the Slave Information Interface (SII) to communicate with a slave's EEPROM memory
 pub struct Sii {
     master: Arc<RawMaster>,
     slave: SlaveAddress,
-    /// address unit (number of bytes) to use for communication
-    unit: u16,
+    /// address mask (part of the address actually used by the slave)
+    mask: u16,
     /// whether the EEPROM is writable through the SII
     writable: bool,
 }
 impl Sii {
     pub async fn new(master: Arc<RawMaster>, slave: SlaveAddress) -> EthercatResult<Sii, SiiError> {
         let status = master.read(slave, registers::sii::control).await.one()?;
-        let unit = match status.address_unit() {
-            registers::SiiUnit::Byte => 1,
-            registers::SiiUnit::Word => 2,
+        let mask = match status.address_unit() {
+            registers::SiiUnit::Byte => 0xff,
+            registers::SiiUnit::Word => 0xffff,
         };
         if status.checksum_error()
             {return Err(EthercatError::Slave(slave, SiiError::Checksum))};
-        Ok(Self {master, slave, unit, writable: status.write_access()})
+        Ok(Self {master, slave, mask, writable: status.write_access()})
     }
     /// tells if the EEPROM is writable through the SII
     pub fn writable(&self) -> bool {self.writable}
@@ -46,10 +47,13 @@ impl Sii {
         self.read_slice(field.byte as _, buffer.as_mut()).await?;
         Ok(T::unpack(buffer.as_ref())?)
     }
-    pub async fn read_slice(&mut self, address: u16, value: &mut [u8]) -> EthercatResult<(), SiiError> {
-        assert!(address % self.unit == 0, "address must be aligned (to 2 or 4 bytes depending on slave)");
-        
-        let mut cursor = Cursor::new(value);
+    pub async fn read_slice<'b>(&mut self, address: u16, value: &'b mut [u8]) -> EthercatResult<&'b [u8], SiiError> {
+        // some slaves use 2 byte addresses but declare they are using 1 only, so disable this check for now
+//         if address & !self.mask != 0
+//             {return Err(EthercatError::Master("wrong EEPROM address: address range is 1 byte only"))}
+
+        let mut start = (address % WORD) as usize;
+        let mut cursor = Cursor::new(value.as_mut());
         while cursor.remain().len() != 0 {
             // send request
             self.master.write(self.slave, registers::sii::control_address, registers::SiiControlAddress {
@@ -58,7 +62,7 @@ impl Sii {
                     control.set_read_operation(true);
                     control
                 },
-                address: (address + cursor.position() as u16) / self.unit,
+                address: (address + cursor.position() as u16) / WORD,
             }).await.one()?;
 
             // wait for interface to become available
@@ -77,10 +81,12 @@ impl Sii {
             let size = match status.read_size() {
                 registers::SiiTransaction::Bytes4 => 4,
                 registers::SiiTransaction::Bytes8 => 8,
-                };
-            cursor.write(&self.master.read(self.slave, registers::sii::data).await.one()?[.. size]).unwrap();
+                }.min(start + cursor.remain().len());
+            let data = self.master.read(self.slave, registers::sii::data).await.one()?;
+            cursor.write(&data[start .. size]).unwrap();
+            start = 0;
         }
-        Ok(())
+        Ok(value)
     }
 
     /// write data to the slave's EEPROM using the SII
@@ -90,8 +96,12 @@ impl Sii {
         self.write_slice(field.byte as _, buffer.as_ref()).await
     }
     pub async fn write_slice(&mut self, address: u16, value: &[u8]) -> EthercatResult<(), SiiError> {
-        assert!(address % self.unit == 0, "address must be aligned (to 2 or 4 bytes depending on slave)");
-        
+        if address % WORD != 0
+            {return Err(EthercatError::Master("address must be word-aligned"))}
+        // some slaves use 2 byte addresses but declare they are using 1 only, so disable this check for now
+//         if address & !self.mask != 0
+//             {return Err(EthercatError::Master("wrong EEPROM address: address range is 1 byte only"))}
+
         let mut cursor = Cursor::new(value.as_ref());
         while cursor.remain().len() != 0 {
             // write operation is forced to be 2 bytes (ETG.1000.4 6.4.5)
@@ -102,7 +112,7 @@ impl Sii {
                     control.set_write_operation(true);
                     control
                 },
-                address: (address + cursor.position() as u16) / self.unit,
+                address: (address + cursor.position() as u16) / WORD,
                 reserved: 0,
                 data: cursor.unpack().unwrap(),
             }).await.one()?;
@@ -155,6 +165,52 @@ impl Sii {
             position: eeprom::categories,
             }
     }
+
+    pub async fn strings(&mut self) -> EthercatResult<Vec<String>, SiiError> {
+        let mut categories = self.categories();
+        loop {
+            let category = categories.unpack::<CategoryHeader>().await?;
+            if category.ty() == CategoryType::Strings {
+                let num = categories.unpack::<u8>().await?;
+                let mut strings = Vec::with_capacity(num as _);
+
+                for _ in 0 .. num {
+                    // string length in byte
+                    let len = categories.unpack::<u8>().await?;
+                    // read string
+                    let mut buffer = vec![0; len as _];
+                    categories.read(&mut buffer).await?;
+                    strings.push(String::from_utf8(buffer)
+                        .map_err(|_|  EthercatError::<SiiError>::Master("strings in EEPROM are not UTF8"))?
+                        );
+                }
+
+                return Ok(strings)
+            }
+            else if category.ty() == CategoryType::End {
+                return Err(EthercatError::Master("no strings category in EEPROM"))
+            }
+            else {
+                categories.advance(WORD*category.size());
+            }
+        }
+    }
+
+    pub async fn generals(&mut self) -> EthercatResult<CategoryGeneral, SiiError> {
+        let mut categories = self.categories();
+        loop {
+            let category = categories.unpack::<CategoryHeader>().await?;
+            if category.ty() == CategoryType::General {
+                return categories.unpack::<CategoryGeneral>().await
+            }
+            else if category.ty() == CategoryType::End {
+                return Err(EthercatError::Master("no general category in EEPROM"))
+            }
+            else {
+                categories.advance(WORD*category.size());
+            }
+        }
+    }
 }
 
 /**
@@ -168,6 +224,10 @@ impl<'a> SiiCursor<'a> {
     /// initialize at the given byte position in the EEPROM
     pub fn new(sii: &'a mut Sii, position: u16) -> Self 
         {Self {sii, position}}
+    // byte position in the EEPROM
+    pub fn position(&self) -> u16
+        {self.position}
+
     /// create a new instance of cursor at the same location, it is only meant to ease practice of parsing multiple time the same region
     pub fn shadow(&mut self) -> SiiCursor<'_> {
         SiiCursor {
@@ -206,6 +266,7 @@ impl<'a> SiiCursor<'a> {
 }
 
 /// error raised by the SII of a slave
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SiiError {
     /// bad SII command
     Command,
@@ -231,7 +292,7 @@ impl From<EthercatError<()>> for EthercatError<SiiError> {
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
 pub struct CategoryHeader {
     /// category type as defined in ETG.1000.6 Table 19
-    pub category: CategoryType,
+    pub ty: CategoryType,
     /// size in word of the category
     pub size: u16,
 }
@@ -263,18 +324,19 @@ pub enum CategoryType {
     /// Distributed Clock for future use
     Dc = 60,
     #[fallback]
-    Specific = 0x0800,
+    Unsupported = 0x0800,
     /// mark the end of SII categories
     End = 0xffff,
 }
 
 /// ETG.1000.6 table 21
 #[repr(packed)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct CategoryGeneral {
     /// Group Information (Vendor specific) - Index to STRINGS
     pub group: u8,
     /// Image Name (Vendor specific) - Index to STRINGS
-    pub img: u8,
+    pub image: u8,
     /// Device Order Number (Vendor specific) - Index to STRINGS
     pub order: u8,
     /// Device Name Information (Vendor specific) - Index to STRINGS
@@ -298,6 +360,7 @@ pub struct CategoryGeneral {
     /// Element defines the ESC memory address where the Identification ID is saved if Identification Method = IdentPhyM
     pub identification_address: u16,
 }
+data::packed_pdudata!(CategoryGeneral);
 
 /// supported CoE features
 #[bitsize(8)]
@@ -406,11 +469,11 @@ pub enum SyncManagerUsage {
 }
 
 /// ETG.1000.6 table 25
-struct CategoryPdo {
+pub struct CategoryPdo {
     // TODO
 }
 
 /// ETG.1000.6 table 26
-struct CategoryPdoentry {
+pub struct CategoryPdoentry {
     // TODO
 }

@@ -9,7 +9,7 @@ use crate::registers::MailboxSupport;
 use bilge::prelude::*;
 
 
-const WORD: usize = core::mem::size_of::<u16>();
+pub const WORD: usize = core::mem::size_of::<u16>();
 
 
 //  ETG.1000.6 5.4 table 16
@@ -30,9 +30,13 @@ pub const checksum: Field<u16> = Field::simple(WORD*0x0007);
 pub mod device {
     use super::*;
 
+    /// unique id of the vendor (normalized by ETG)
     pub const vendor: Field<u32> = Field::simple(WORD*0x0008);
+    /// unique id of the product (normalized by the vendor)
     pub const product: Field<u32> = Field::simple(WORD*0x000a);
+    /// unique id of the product revision (normalized by the vendor)
     pub const revision: Field<u32> = Field::simple(WORD*0x000c);
+    /// unique serial number of the product (normalized by the vendor)
     pub const serial_number: Field<u32> = Field::simple(WORD*0x000e);
 }
 
@@ -40,7 +44,7 @@ pub mod mailbox {
     use super::*;
 
     /// mailbox recommended parameters during [crate::SlaveState::Boostrap] state
-    pub mod boostrap {
+    pub mod bootstrap {
         use super::*;
         pub mod receive {
             use super::*;
@@ -93,4 +97,4 @@ pub const eeprom_size: Field<u16> = Field::simple(WORD*0x003e);
 /// This Version is 1
 pub const version: Field<u16> = Field::simple(WORD*0x003f);
 /// start addresse for categories
-pub const categories: u16 = 0x0040;
+pub const categories: u16 = (WORD*0x0040) as u16;
