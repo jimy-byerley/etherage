@@ -2,6 +2,12 @@
     Convenient structures to address the slave's dictionnary objects (SDO).
 
     This module also provides structs and consts for every standard items in the canopen objects dictionnary. The goal is to gather all standard SDOs definitions in one place.
+    
+    SDOs are described by instances of helper structs allowing to access their content with the help of [crate::can].
+    
+    - [Sdo]  describe a Sdo (a complete SDO or a SDO subitem) with fixed-length data.
+    - [SdoList]  describe a Sdo with an arbitrary number of subitems
+    - [SdoSerie] describe a multitude of similar consecutive SDOs
 */
 
 use crate::{
@@ -120,7 +126,11 @@ impl<T: PduData> Copy for Sdo<T> {}
 
 
 
-/// SDO behaving like a list
+/** 
+    SDO behaving like a list
+
+    subitem 0 is its length, other subitems are list elements and have the same type.
+*/
 #[derive(Eq, PartialEq)]
 pub struct SdoList<T> {
     /// index of the SDO to be considered as a list
@@ -175,9 +185,15 @@ impl<T> Clone for SdoList<T> {
 }
 impl<T> Copy for SdoList<T> {}
 
+
+/**
+    serie of similar consecutive SDOs
+*/
 #[derive(Debug, Eq, PartialEq)]
 pub struct SdoSerie<T> {
+    /// index of first SDO of the serie
     pub index: u16,
+    /// number of similar SDOs in the serie
     pub len: u16,
     data: PhantomData<T>,
 }
@@ -187,6 +203,7 @@ impl<T: From<u16>> SdoSerie<T> {
         len,
         data: PhantomData,
     }}
+    /// get the nth SDO
     pub fn slot(&self, i: u16) -> T  {
         assert!(i < self.len);
         T::from(self.index + i)
@@ -777,7 +794,7 @@ impl Synchronization {
     /**
         Minimum cycle time supported by the slave (maximum duration time of the local cycle) in ns 
         
-        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleTimeDsc::measure_local_time] to get a valid value used in Synchronous or DC Mode
+        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleControl::measure_local_time] to get a valid value used in Synchronous or DC Mode
     */
     pub fn min_cycle_time(&self) -> Sdo<u32>  {Sdo::sub(self.index, 5, 13*8)}
     /** 
@@ -871,7 +888,7 @@ impl Synchronization {
     pub fn max_sm_sync_distance(&self) -> Sdo<u32>  {Sdo::sub(self.index, 18, 55*8)}
         
     /**
-        Shall be supported if [Self::sm_mter_sm_missed] or [self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
+        Shall be supported if [Self::counter_sm_missed] or [Self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
 
         Mappable in TxPDO
     
@@ -941,7 +958,7 @@ pub struct SynchronizationFull {
     /**
         Minimum cycle time supported by the slave (maximum duration time of the local cycle) in ns 
         
-        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleTimeDsc::measure_local_time] to get a valid value used in Synchronous or DC Mode
+        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleControl::measure_local_time] to get a valid value used in Synchronous or DC Mode
     */
     pub min_cycle_time: u32,
     /** 
@@ -1038,7 +1055,7 @@ pub struct SynchronizationFull {
     reserved_2 : u64,               //Reserved 8 bytes
     
     /**
-        Shall be supported if [Self::sm_mter_sm_missed] or [self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
+        Shall be supported if [Self::counter_sm_missed] or [Self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
 
         Mappable in TxPDO
     

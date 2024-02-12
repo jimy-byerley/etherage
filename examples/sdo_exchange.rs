@@ -13,8 +13,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut slave = Slave::raw(master.clone(), SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await.unwrap();
     slave.set_address(1).await.unwrap();
-    slave.init_mailbox().await.unwrap();
-    slave.init_coe().await;
+    slave.init_coe().await.unwrap();
 
     slave.switch(CommunicationState::PreOperational).await.unwrap();
 

@@ -55,6 +55,10 @@ impl<T: fmt::Debug> fmt::Display for EthercatError<T> {
 impl<T: fmt::Debug> std::error::Error for EthercatError<T> {}
 
 
+impl From<EthercatError<()>> for EthercatError<&str> {
+    fn from(src: EthercatError<()>) -> Self {src.upgrade()}
+}
+
 impl<T> From<std::io::Error> for EthercatError<T> {
     fn from(src: std::io::Error) -> Self {
         EthercatError::Io(Arc::new(src))

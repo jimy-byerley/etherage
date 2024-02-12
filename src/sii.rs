@@ -1,164 +1,380 @@
 /*!
-    SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
+    SII (Slave Information Interface) allows to retreive from EEPROM declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs.
 
-    This module expose the standard SII registers.
+    The EEPROM can also store configurations variables for the specific slaves purpose (like control loop coefficients, safety settings, etc) but these values are vendor-specific and often now meant for user inspection through the SII. They are still accessible using the tools provided here, but not structure is provided to interpret them.
 
-    ETG.1000.6 5.4
+    ETG.1000.4.6.6.4
+
+    This module features [Sii] and [SiiCursor] in order to read/write and parse the eeprom data
+
+    The EEPROM has 2 regions of data:
+
+    - EEPROM registers: fixed addresses, described in [eeprom] and accessed by [Sii]
+    - EEPROM categories: contiguous data blocks, described by the `Category*` structs here and accessed by [SiiCursor]
+
+    Here is how to use registers:
+    ```ignore
+    let vendor = sii.read(eeprom::device::vendor).await?;
+    ```
+
+    Here is how to parse the categories:
+    ```ignore
+    let mut categories = sii.categories();
+    let general = loop {
+        let category = categories.unpack::<CategoryHeader>().await?;
+        // we got our desired category, do something with it
+        if category.ty() == CategoryType::General {
+            // we can then read the category (or at least its header) as a register
+            break Ok(categories.unpack::<CategoryGeneral>().await?)
+        }
+        // end of eeprom reached
+        else if category.ty() == CategoryType::End {
+            break Err(EthercatError::Master("no general category in EEPROM"))
+        }
+        // or squeeze the current category
+        else {
+            categories.advance(WORD*category.size());
+        }
+    };
+    ```
 */
 
-use crate::data::Field;
+use crate::{
+    error::{EthercatError, EthercatResult},
+    data::{self, PduData, Storage, Field, Cursor},
+    rawmaster::{RawMaster, SlaveAddress},
+    registers,
+    eeprom,
+    };
+use std::sync::Arc;
+use bilge::prelude::*;
 
-const WORD: usize = core::mem::size_of<T>(u16);
+
+pub const WORD: u16 = eeprom::WORD as _;
 
 
-//  ETG.1000.6 5.4 table 16
+/**
+    implementation of the Slave Information Interface (SII) to communicate with a slave's EEPROM memory
 
-/// Initialization value for PDI Control register (0x140 - 0x141)
-const pdi_control: Field<u16> = Field::simple(WORD*0x0000);
-/// Initialization value for PDI Configuration register (0x150-0x151)
-const pdi_config: Field<u16> = Field::simple(WORD*0x0001);
-/// Sync Impulse in multiples of 10 ns
-const sync_impulse: Field<u16> = Field::simple(WORD*0x0002);
-/// intialization value for PDI Configuration register R8 most significant word (0x152-0x153
-const pdi_config2: Field<u16> = Field::simple(WORD*0x0003);
-/// Alias Address
-const address_alias: Field<u16> = Field::simple(WORD*0x0004);
-/// low byte contains remainder of division of word 0 to word 6 as unsigned number divided by the polynomial x^8+x^2+x+1(initial value 0xFF)
-const checksum: Field<u16> = Field::simple(WORD*0x0007);
+    The EEPROM has 2 regions of data:
 
-mod device {
-    use super::*;
+    - EEPROM registers: at fixed addresses, described in [eeprom]
+    - EEPROM categories: as contiguous data blocks, starting from fixed address [eeprom::categories]
 
-    const vendor: Field<u32> = Field::simple(WORD*0x0008);
-    const product: Field<u32> = Field::simple(WORD*0x000a);
-    const revision: Field<u32> = Field::simple(WORD*0x000c);
-    const serial_number: Field<u32> = Field::simple(WORD*0x000e);
+    This struct is providing access to both, but only works with fixed addresses. To parse the categories, use a cursor returned by [Self::categories] then parse the structures iteratively.
+*/
+pub struct Sii {
+    master: Arc<RawMaster>,
+    slave: SlaveAddress,
+    /// address mask (part of the address actually used by the slave)
+    mask: u16,
+    /// whether the EEPROM is writable through the SII
+    writable: bool,
 }
+impl Sii {
+    /**
+        create an instance of this struct to use the SII of the given slave
 
-mod mailbox {
-    use super::*;
+        to stay protocol-safe, one instance of this struct only should exist per slave.
 
-    mod boostrap {
-        mod receive {
-            use super::*;
+        At contrary to the EEPROM addresses used at the ethercat communication level, this struct and its methods only use byte addresses, write requests should be word-aligned.
+    */
+    pub async fn new(master: Arc<RawMaster>, slave: SlaveAddress) -> EthercatResult<Sii, SiiError> {
+        let status = master.read(slave, registers::sii::control).await.one()?;
+        let mask = match status.address_unit() {
+            registers::SiiUnit::Byte => 0xff,
+            registers::SiiUnit::Word => 0xffff,
+        };
+        if status.checksum_error()
+            {return Err(EthercatError::Slave(slave, SiiError::Checksum))};
+        Ok(Self {master, slave, mask, writable: status.write_access()})
+    }
+    /// tells if the EEPROM is writable through the SII
+    pub fn writable(&self) -> bool {self.writable}
+    
+    /// read data from the slave's EEPROM using the SII
+    pub async fn read<T: PduData>(&mut self, field: Field<T>) -> EthercatResult<T, SiiError> {
+        let mut buffer = T::Packed::uninit();
+        self.read_slice(field.byte as _, buffer.as_mut()).await?;
+        Ok(T::unpack(buffer.as_ref())?)
+    }
+    /// read a slice of the slave's EEPROM memory
+    pub async fn read_slice<'b>(&mut self, address: u16, value: &'b mut [u8]) -> EthercatResult<&'b [u8], SiiError> {
+        // some slaves use 2 byte addresses but declare they are using 1 only, so disable this check for now
+//         if address & !self.mask != 0
+//             {return Err(EthercatError::Master("wrong EEPROM address: address range is 1 byte only"))}
 
-            /// Send Mailbox Offset for Bootstrap state (slave to master)
-            const offset: Field<u16> = Field::simple(WORD*0x0014);
-            /// Send Mailbox Size for Bootstrap state (slave to master)
-            /// Standard Mailbox size and Bootstrap Mailbox can differ. A bigger Mailbox size in Bootstrap mode can be used for optimiziation
-            const size: Field<u16> = Field::simple(WORD*0x0015);
+        let mut start = (address % WORD) as usize;
+        let mut cursor = Cursor::new(value.as_mut());
+        while cursor.remain().len() != 0 {
+            // send request
+            self.master.write(self.slave, registers::sii::control_address, registers::SiiControlAddress {
+                control: {
+                    let mut control = registers::SiiControl::default();
+                    control.set_read_operation(true);
+                    control
+                },
+                address: (address + cursor.position() as u16) / WORD,
+            }).await.one()?;
+
+            // wait for interface to become available
+            let status = loop {
+                if let Ok(answer) = self.master.read(self.slave, registers::sii::control).await.one() {
+                    if ! answer.busy()  && ! answer.read_operation()
+                        {break answer}
+                }
+            };
+            // check for errors
+            if status.command_error()
+                {return Err(EthercatError::Slave(self.slave, SiiError::Command))}
+            if status.device_info_error()
+                {return Err(EthercatError::Slave(self.slave, SiiError::DeviceInfo))}
+            // buffer the result
+            let size = match status.read_size() {
+                registers::SiiTransaction::Bytes4 => 4,
+                registers::SiiTransaction::Bytes8 => 8,
+                }.min(start + cursor.remain().len());
+            let data = self.master.read(self.slave, registers::sii::data).await.one()?;
+            cursor.write(&data[start .. size]).unwrap();
+            start = 0;
         }
-        mod send {
-            use super::*;
+        Ok(value)
+    }
 
-            /// Receive Mailbox Offset for Standard state (master to slave)
-            const offset: Field<u16> = Field::simple(WORD*0x0016);
-            /// Receive Mailbox Size for Standard state (master to slave)
-            const size: Field<u16> = Field::simple(WORD*0x0017);
+    /**
+        write data to the slave's EEPROM using the SII
+
+        this will only work if [Self::writable], else will raise an error
+    */
+    pub async fn write<T: PduData>(&mut self, field: Field<T>, value: &T) -> EthercatResult<(), SiiError> {
+        let mut buffer = T::Packed::uninit();
+        value.pack(buffer.as_mut()).unwrap();
+        self.write_slice(field.byte as _, buffer.as_ref()).await
+    }
+    /**
+        write the given slice of data in the slave's EEPROM
+
+        this will only work if [Self::writable], else will raise an error
+    */
+    pub async fn write_slice(&mut self, address: u16, value: &[u8]) -> EthercatResult<(), SiiError> {
+        if address % WORD != 0
+            {return Err(EthercatError::Master("address must be word-aligned"))}
+        // some slaves use 2 byte addresses but declare they are using 1 only, so disable this check for now
+//         if address & !self.mask != 0
+//             {return Err(EthercatError::Master("wrong EEPROM address: address range is 1 byte only"))}
+
+        let mut cursor = Cursor::new(value.as_ref());
+        while cursor.remain().len() != 0 {
+            // write operation is forced to be 2 bytes (ETG.1000.4 6.4.5)
+            // send request
+            self.master.write(self.slave, registers::sii::control_address_data, registers::SiiControlAddressData {
+                control: {
+                    let mut control = registers::SiiControl::default();
+                    control.set_write_operation(true);
+                    control
+                },
+                address: (address + cursor.position() as u16) / WORD,
+                reserved: 0,
+                data: cursor.unpack().unwrap(),
+            }).await.one()?;
+
+            // wait for interface to become available
+            let status = loop {
+                if let Ok(answer) = self.master.read(self.slave, registers::sii::control).await.one() {
+                    if ! answer.busy()  && ! answer.write_operation()
+                        {break answer}
+                }
+            };
+            // check for errors
+            if status.command_error()
+                {return Err(EthercatError::Slave(self.slave, SiiError::Command))}
+            if status.write_error()
+                {return Err(EthercatError::Slave(self.slave, SiiError::Write))}
+        }
+        Ok(())
+    }
+
+    /// reload first 128 bits of data from the EEPROM
+    pub async fn reload(&mut self) -> EthercatResult<(), SiiError> {
+        self.master.write(self.slave, registers::sii::control, {
+            let mut control = registers::SiiControl::default();
+            control.set_reload_operation(true);
+            control
+        }).await.one()?;
+
+        // wait for interface to become available
+        let status = loop {
+            if let Ok(answer) = self.master.read(self.slave, registers::sii::control).await.one() {
+                if ! answer.busy() && ! answer.reload_operation()
+                    {break answer}
+            }
+        };
+        // check for errors
+        if status.command_error()
+                {return Err(EthercatError::Slave(self.slave, SiiError::Command))}
+        if status.checksum_error()
+                {return Err(EthercatError::Slave(self.slave, SiiError::Checksum))}
+        if status.device_info_error()
+                {return Err(EthercatError::Slave(self.slave, SiiError::DeviceInfo))}
+        Ok(())
+    }
+    
+    /// cursor pointing at the start of categories. See [CategoryHeader]
+    pub fn categories(&mut self) -> SiiCursor<'_> {
+        SiiCursor {
+            sii: self,
+            position: eeprom::categories,
+            }
+    }
+
+    /**
+        read the strings category of the EEPROM, and return its content as rust datatype
+
+        these strings are usually pointed to by sdo values or other fields in the EEPROM's categories
+    */
+    pub async fn strings(&mut self) -> EthercatResult<Vec<String>, SiiError> {
+        let mut categories = self.categories();
+        loop {
+            let category = categories.unpack::<CategoryHeader>().await?;
+            if category.ty() == CategoryType::Strings {
+                let num = categories.unpack::<u8>().await?;
+                let mut strings = Vec::with_capacity(num as _);
+
+                for _ in 0 .. num {
+                    // string length in byte
+                    let len = categories.unpack::<u8>().await?;
+                    // read string
+                    let mut buffer = vec![0; len as _];
+                    categories.read(&mut buffer).await?;
+                    strings.push(String::from_utf8(buffer)
+                        .map_err(|_|  EthercatError::<SiiError>::Master("strings in EEPROM are not UTF8"))?
+                        );
+                }
+
+                return Ok(strings)
+            }
+            else if category.ty() == CategoryType::End {
+                return Err(EthercatError::Master("no strings category in EEPROM"))
+            }
+            else {
+                categories.advance(WORD*category.size());
+            }
         }
     }
-    mod standard {
-        mod receive {
-            use super::*;
 
-            /// Receive Mailbox Offset for Standard state (master to slave)
-            const offset: Field<u16> = Field::simple(WORD*0x0018);
-            /// Receive Mailbox Size for Standard state (master to slave)
-            const size: Field<u16> = Field::simple(WORD*0x0019);
-        }
-        mod send {
-            use super::*;
-
-            /// Send Mailbox Offset for Standard state (slave to master)
-            const offset: Field<u16> = Field::simple(WORD*0x001a);
-            /// Send Mailbox Size for Standard state (slave to master)
-            const size: Field<u16> = Field::simple(WORD*0x001b);
+    /// readthe general informations category of the EEPROM and return its content
+    pub async fn generals(&mut self) -> EthercatResult<CategoryGeneral, SiiError> {
+        let mut categories = self.categories();
+        loop {
+            let category = categories.unpack::<CategoryHeader>().await?;
+            if category.ty() == CategoryType::General {
+                return categories.unpack::<CategoryGeneral>().await
+            }
+            else if category.ty() == CategoryType::End {
+                return Err(EthercatError::Master("no general category in EEPROM"))
+            }
+            else {
+                categories.advance(WORD*category.size());
+            }
         }
     }
-    /// Mailbox Protocols Supported as defined in ETG.1000.6 Table 18
-    const protocols: Field<MailboxType> = Field::simple(WORD*0x001c);
 }
 
 /**
-    size of EEPROM in [KiBit] + 1
-    NOTE: KiBit means 1024 Bit.
-    NOTE: size = 0 means a EEPROM size of 1 KiBit
+    Helper for parsing the category of the eeprom through the SII
+
+    It is inspired from [data::Cursor] but this one directly reads into the EEPROM rather than in a local buffer
 */
-const size: Field<u16> = Field::simple(WORD*0x003e);
-/// This Version is 1
-const version: Field<u16> = Field::simple(WORD*0x003f);
-
-
-
-
-/// implementation of the Slave Information Interface (SII) to communicate with a slave's EEPROM memory
-struct Sii<'a> {
-    master: &'a RawMaster,
-    slave: u16,
-    /// address unit (number of bytes) to use for communication
-    unit: u16,
+pub struct SiiCursor<'a> {
+    sii: &'a mut Sii,
+    position: u16,
 }
-impl Sii<'_> {
-    pub async fn new(master: &'a RawMaster, slave: u16) -> Self {
-        let control = master.fprd(slave, registers::sii::control).await;
-        let unit = match control.address_unit {
-            Byte => 1,
-            Word => 2,
-        };
-        Self {master, slave, unit}
-    }
-    /// read data from the slave's EEPROM using the SII
-    pub async fn read<T>(&mut self, field: Field<T>) -> T {
-        let buffer = T::Packed::uninit();
-        let mut cursor = Cursor::new(buffer.as_mut());
-        while cursor.remain().len() {
-            // TODO: wait for interface to become available
-            self.master.fpwr(self.slave, registers::sii::address, ((field.byte + cursor.position()) as u16)/unit).await;
-            cursor.pack(&self.master.fprd(self.slave, registers::sii::data).await).unwrap();
-        }
-        T::unpack(buffer.as_ref())
+impl<'a> SiiCursor<'a> {
+    /// initialize at the given byte position in the EEPROM
+    pub fn new(sii: &'a mut Sii, position: u16) -> Self 
+        {Self {sii, position}}
+    /// byte position in the EEPROM
+    pub fn position(&self) -> u16
+        {self.position}
 
-        // TODO:  change the segment size using read_size
+    /// create a new instance of cursor at the same location, it is only meant to ease practice of parsing multiple time the same region
+    pub fn shadow(&mut self) -> SiiCursor<'_> {
+        SiiCursor {
+            sii: self.sii,
+            position: self.position,
+            }
     }
-    /// write data to the slave's EEPROM using the SII
-    pub async fn write<T>(&mut self, field: Field<T>, value: &T) {
-        let buffer = T::Packed::uninit();
-        value.pack(buffer.as_mut());
-        let mut cursor = Cursor::new(buffer.as_mut());
-        while cursor.remain().len() {
-            // TODO: wait for interface to become available
-            self.master.fpwr(self.slave, registers::sii::address, ((field.byte + cursor.position()) as u16)/unit).await;
-            self.master.fpwr(self.slave, registers::sii::data, cursor.unpack().unwrap()).await;
-        }
-
-        // TODO:  check possible write errors
+    /// advance byte position of the given increment
+    pub fn advance(&mut self, increment: u16) {
+        self.position += increment;
+    }
+    /// read bytes filling the given slice and advance the position
+    pub async fn read(&mut self, dst: &mut [u8]) -> EthercatResult<(), SiiError> {
+        self.sii.read_slice(self.position, dst).await?;
+        self.position += dst.len() as u16;
+        Ok(())
+    }
+    /// read the given data and advance the position
+    pub async fn unpack<T: PduData>(&mut self) -> EthercatResult<T, SiiError> {
+        let mut buffer = T::Packed::uninit();
+        self.read(buffer.as_mut()).await?;
+        Ok(T::unpack(buffer.as_ref())?)
+    }
+    /// write the given bytes and advance the position
+    pub async fn write(&mut self, dst: &[u8]) -> EthercatResult<(), SiiError> {
+        self.sii.write_slice(self.position, dst).await?;
+        self.position += dst.len() as u16;
+        Ok(())
+    }
+    /// write the given data and advance the position
+    pub async fn pack<T: PduData>(&mut self, value: T) -> EthercatResult<(), SiiError> {
+        let mut buffer = T::Packed::uninit();
+        value.pack(buffer.as_mut()).unwrap();
+        self.write(buffer.as_ref()).await
     }
 }
 
-struct SiiIterator {}
-impl Iterator for SiiIterator {
-    fn next(&mut self) -> Option<CategoryItem> {todo!}
+/// error raised by the SII of a slave
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum SiiError {
+    /// bad SII command
+    Command,
+    /// EEPROM data has been corrupted
+    Checksum,
+    /// bad data in device info section
+    DeviceInfo,
+    /// cannot write the requested location in EEPROM
+    Write,
+}
+
+impl From<EthercatError<()>> for EthercatError<SiiError> {
+    fn from(src: EthercatError<()>) -> Self {src.upgrade()}
 }
 
 
-
-/// header for a SII category
+/**
+    header for a SII category
+    
+    ETG.1000.6 table 17
+*/
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-struct CategoryHeader {
-    /// Category Type as defined in ETG.1000.6 Table 19
-    category: CategoryType,
-    /// Vendor Specific
-    specific: u1,
-    /// Following Category Word Size x
-    size: u16,
+pub struct CategoryHeader {
+    /// category type as defined in ETG.1000.6 Table 19
+    pub ty: CategoryType,
+    /// size in word of the category
+    pub size: u16,
 }
 data::bilge_pdudata!(CategoryHeader, u32);
 
-/// type of category in the SII
-#[bitsize(u15)]
-#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
-enum CategoryType {
+/**
+    type of category in the SII
+
+    ETG.1000.6 table 19
+*/
+#[bitsize(16)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum CategoryType {
     Nop = 0,
     /// String repository for other Categories structure of this category data see ETG.1000.6 Table 20
     Strings = 10,
@@ -171,81 +387,100 @@ enum CategoryType {
     /// Sync Manager Configuration structure of this category data see ETG.1000.6 Table 24
     SyncManager = 41,
     /// TxPDO description structure of this category data see ETG.1000.6 Table 25
-    TxPdo = 50,
+    PdoWrite = 50,
     /// RxPDO description structure of this category data see ETG.1000.6 Table 25
-    RxPdo = 51,
+    PdoRead = 51,
     /// Distributed Clock for future use
     Dc = 60,
+    #[fallback]
+    Unsupported = 0x0800,
     /// mark the end of SII categories
     End = 0xffff,
 }
 
+/// ETG.1000.6 table 21
 #[repr(packed)]
-struct CategoryGeneral {
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct CategoryGeneral {
     /// Group Information (Vendor specific) - Index to STRINGS
-    group: u8,
+    pub group: u8,
     /// Image Name (Vendor specific) - Index to STRINGS
-    img: u8,
+    pub image: u8,
     /// Device Order Number (Vendor specific) - Index to STRINGS
-    order: u8,
+    pub order: u8,
     /// Device Name Information (Vendor specific) - Index to STRINGS
-    name: u8,
-    _reserved: u8,
-    coe: CoeDetails,
-    foe: FoeDetails,
-    eoe: EoeDetails,
-    _reserved: [u8;3],
-    flags: GeneralFlags,
+    pub name: u8,
+    _reserved0: u8,
+    /// supported CoE features
+    pub coe: CoeDetails,
+    /// supported FoE features
+    pub foe: FoeDetails,
+    /// supported EoE features
+    pub eoe: EoeDetails,
+    _reserved1: [u8;3],
+    pub flags: GeneralFlags,
     /// EBus Current Consumption in mA, negative Values means feeding in current feed in sets the available current value to the given value
-    ebus_current: i16,
+    pub ebus_current: i16,
     /// Index to Strings – duplicate for compatibility reasons
-    group2: u8,
-    _reserved: u8,
+    pub group2: u8,
+    _reserved2: u8,
     /// Description of Physical Ports
-    ports: PhysicialPorts,
+    pub ports: PhysicialPorts,
     /// Element defines the ESC memory address where the Identification ID is saved if Identification Method = IdentPhyM
-    identification_address: u16,
+    pub identification_address: u16,
 }
+data::packed_pdudata!(CategoryGeneral);
 
+/// supported CoE features
 #[bitsize(8)]
-struct CoeDetails {
-    enable_sdo: bool,
-    enable_sdo_info: bool,
-    enable_pdo_assign: bool,
-    enable_pdo_config: bool,
-    enable_startup_upload: bool,
-    enable_sdo_complete: bool,
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct CoeDetails {
+    pub sdo: bool,
+    pub sdo_info: bool,
+    pub pdo_assign: bool,
+    pub pdo_config: bool,
+    pub startup_upload: bool,
+    pub sdo_complete: bool,
     _reserved: u2,
 }
 #[bitsize(8)]
-struct FoeDetails {
-    enable: bool,
-    _reserved: u7,
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct FoeDetails {
+    // protocol supported
+    pub enable: bool,
+    reserved: u7,
 }
 #[bitsize(8)]
-struct EoeDetails {
-    enable: bool,
-    _reserved: u7,
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct EoeDetails {
+    // protocol supported
+    pub enable: bool,
+    reserved: u7,
 }
 #[bitsize(8)]
-struct GeneralFlags {
-    enable_safeop: bool,
-    enable_notlrw: bool,
-    mbox_dll: bool,
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct GeneralFlags {
+    pub enable_safeop: bool,
+    pub enable_notlrw: bool,
+    pub mbox_dll: bool,
     /// ID selector mirrored in AL Statud Code
-    ident_alsts: bool,
+    pub ident_alsts: bool,
     /// ID selector value mirrored in specific physical memory as deonted by the parameter “Physical Memory Address”
-    ident_phym: bool,
-    _reserved: u3,
+    pub ident_phym: bool,
+    reserved: u3,
 }
 
 #[bitsize(16)]
-struct PhysicialPorts {
-    ports: [PhysicalPort; 4];
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct PhysicialPorts {
+    pub ports: [PhysicalPort; 4],
 }
-#[bitisze(4)]
-enum PhysicalPort {
+#[bitsize(4)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum PhysicalPort {
+    #[fallback]
     Disabled = 0x0,
+    /// media independent interface
     Mii = 0x1,
     Reserved = 0x2,
     Ebus = 0x3,
@@ -255,7 +490,8 @@ enum PhysicalPort {
 
 /// ETG.1000.6 table 23
 #[bitsize(8)]
-enum FmmuUsage {
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum FmmuUsage {
     #[fallback]
     Disabled = 0,
     Outputs = 1,
@@ -265,32 +501,36 @@ enum FmmuUsage {
 
 /// ETG.1000.6 table 24
 #[bitsize(64)]
-struct CategorySyncManager {
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct CategorySyncManager {
     /// Origin of Data (see Physical Start Address of SyncM)
-    address: u16,
-    length: u16,
+    pub address: u16,
+    pub length: u16,
     /// Defines Mode of Operation (see Control Register of SyncM)
-    control: u8,
+    pub control: u8,
     /// don't care
-    status: u8,
-    enable: SyncManagerEnable,
-    usage: SyncManagerUsage,
+    pub status: u8,
+    pub enable: SyncManagerEnable,
+    pub usage: SyncManagerUsage,
 }
+data::bilge_pdudata!(CategorySyncManager, u64);
 
 #[bitsize(8)]
-struct SyncManagerEnable {
-    enable: bool,
+#[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct SyncManagerEnable {
+    pub enable: bool,
     /// fixed content (info for config tool –SyncMan has fixed content)
-    fixed_content: bool,
+    pub fixed_content: bool,
     /// virtual SyncManager (virtual SyncMan – no hardware resource used)
-    virtual_sync_manager: bool,
+    pub virtual_sync_manager: bool,
     /// opOnly (SyncMan should be enabled only in OP state)
-    oponly: bool,
+    pub oponly: bool,
     _reserved: u4,
 }
 
 #[bitsize(8)]
-enum SyncManagerUsage {
+#[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum SyncManagerUsage {
     Disabled = 0x0,
     MailboxOut = 0x1,
     MailboxIn = 0x2,
@@ -298,12 +538,46 @@ enum SyncManagerUsage {
     ProcessIn = 0x4,
 }
 
-/// ETG.1000.6 table 25
-struct CategoryPdo {
-    // TODO
-}
+/**
+    header for category describing a reading or writing PDO
 
-/// ETG.1000.6 table 26
-struct CategoryPdoentry {
-    // TODO
+    ETG.1000.6 table 25
+*/
+#[repr(packed)]
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CategoryPdo {
+    /// index of SDO configuring the PDO
+    index: u16,
+    /// number of entries in the PDO
+    entries: u8,
+    /// reference to DC-sync
+    synchronization: u8,
+    /// name of the PDO object (reference to category strings)
+    name: u8,
+    /// for future use
+    flags: u16,
 }
+data::packed_pdudata!(CategoryPdo);
+
+/**
+    structure describing an entry in a PDO
+
+    ETG.1000.6 table 26
+*/
+#[repr(packed)]
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CategoryPdoentry {
+    /// index of the SDO
+    index: u16,
+    /// index of field in the SDO (or 0 if complete SDO)
+    sub: u8,
+    /// name of this SDO
+    name: u8,
+    /// data type of the entry
+    dtype: u8,
+    /// data length of the entry
+    bitlen: u8,
+    /// for future use
+    flags: u16,
+}
+data::packed_pdudata!(CategoryPdoentry);

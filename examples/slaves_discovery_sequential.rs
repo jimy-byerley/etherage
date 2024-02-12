@@ -22,8 +22,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let task = async {
             slave.switch(CommunicationState::Init).await?;
             slave.set_address(i+1).await?;
-            slave.init_mailbox().await?;
-            slave.init_coe().await;
+            slave.init_coe().await?;
             slave.switch(CommunicationState::PreOperational).await?;
             
             let mut can = slave.coe().await;
