@@ -50,7 +50,7 @@ pub mod mailbox {
     /// mailbox recommended parameters during [Bootstrap](crate::CommunicationState::Bootstrap) state
     pub mod bootstrap {
         use super::*;
-        pub mod receive {
+        pub mod write {
             use super::*;
 
             /// Send Mailbox Offset for Bootstrap state (slave to master)
@@ -59,7 +59,7 @@ pub mod mailbox {
             /// Standard Mailbox size and Bootstrap Mailbox can differ. A bigger Mailbox size in Bootstrap mode can be used for optimiziation
             pub const size: Field<u16> = Field::simple(WORD*0x0015);
         }
-       pub  mod send {
+       pub  mod read {
             use super::*;
 
             /// Receive Mailbox Offset for Standard state (master to slave)
@@ -71,7 +71,7 @@ pub mod mailbox {
     /// mailbox recommended parameters during other slave states
     pub mod standard {
         use super::*;
-        pub mod receive {
+        pub mod write {
             use super::*;
 
             /// Receive Mailbox Offset for Standard state (master to slave)
@@ -79,7 +79,7 @@ pub mod mailbox {
             /// Receive Mailbox Size for Standard state (master to slave)
             pub const size: Field<u16> = Field::simple(WORD*0x0019);
         }
-        pub mod send {
+        pub mod read {
             use super::*;
 
             /// Send Mailbox Offset for Standard state (slave to master)

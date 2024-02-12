@@ -22,12 +22,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("  serial number: {}", sii.read(eeprom::device::serial_number).await.unwrap());
     println!("mailbox:");
     println!("  receive: \t{:#x} {:#x}",
-        sii.read(eeprom::mailbox::standard::receive::offset).await?,
-        sii.read(eeprom::mailbox::standard::receive::size).await?,
+        sii.read(eeprom::mailbox::standard::write::offset).await?,
+        sii.read(eeprom::mailbox::standard::write::size).await?,
         );
     println!("  send: \t{:#x} {:#x}",
-        sii.read(eeprom::mailbox::standard::send::offset).await?,
-        sii.read(eeprom::mailbox::standard::send::size).await?,
+        sii.read(eeprom::mailbox::standard::read::offset).await?,
+        sii.read(eeprom::mailbox::standard::read::size).await?,
         );
 
     println!("strings:");

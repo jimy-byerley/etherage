@@ -81,8 +81,8 @@ impl Mailbox {
         if configured.0.one().is_err() || configured.1.one().is_err()
             {return Err(EthercatError::Master("failed to configure mailbox sync managers"))}
         
-        assert!(usize::from(read.end - read.start) < MAILBOX_MAX_SIZE);
-        assert!(usize::from(write.end - write.start) < MAILBOX_MAX_SIZE);
+        assert!(usize::from(read.end - read.start) <= MAILBOX_MAX_SIZE);
+        assert!(usize::from(write.end - write.start) <= MAILBOX_MAX_SIZE);
         
         Ok(Self {
             master,

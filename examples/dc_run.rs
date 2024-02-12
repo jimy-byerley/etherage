@@ -14,7 +14,7 @@ use etherage::{
     };
 use ioprio::*;
 use futures::stream::StreamExt;
-use futures_concurrency::future::{Join, Race};
+use futures_concurrency::future::Join;
 
 
 #[tokio::main]
@@ -48,8 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 else { panic!("slave already has a fixed address") };
 			slave.expect(etherage::CommunicationState::Init);
             slave.set_address(i+1).await.unwrap();
-            slave.init_mailbox().await.unwrap();
-            slave.init_coe().await;
+            slave.init_coe().await.unwrap();
             
             slave
         });
@@ -101,7 +100,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		}
 		print!("\n");
 	}
-
-    Ok(())
 }
 
