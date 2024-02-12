@@ -18,10 +18,10 @@
     - [x] master over different sockets
         + [x] raw ethernet
         + [x] UDP
-    - [ ] minimalistic features
+    - [x] minimalistic features
         - [x] PDU commands
         - [x] access to logical & physical memories
-        - [ ] slave information access
+        - [x] slave information access
     - [x] mailbox
         + generic messaging
         + [x] COE
