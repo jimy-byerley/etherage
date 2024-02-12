@@ -1,5 +1,7 @@
 /*!
-    This module expose the standard EEPROM registers. registers are defined as [Field]s in the EEPROM, which content can be accessed using the instance of [Sii] (Slave Information Interface) proper to each slave.
+    This module expose the standard slaves EEPROM registers.
+
+    registers are defined as [Field]s in the EEPROM, which content can be accessed using the instance of [Sii][crate::sii::Sii] (Slave Information Interface) proper to each slave.
 
     ETG.1000.6 5.4
 */
@@ -27,6 +29,7 @@ pub const address_alias: Field<u16> = Field::simple(WORD*0x0004);
 /// low byte contains remainder of division of word 0 to word 6 as unsigned number divided by the polynomial x^8+x^2+x+1(initial value 0xFF)
 pub const checksum: Field<u16> = Field::simple(WORD*0x0007);
 
+/// standard informations about the product the slave is
 pub mod device {
     use super::*;
 
@@ -40,10 +43,11 @@ pub mod device {
     pub const serial_number: Field<u32> = Field::simple(WORD*0x000e);
 }
 
+/// recommended configuration for the mailbox
 pub mod mailbox {
     use super::*;
 
-    /// mailbox recommended parameters during [crate::SlaveState::Boostrap] state
+    /// mailbox recommended parameters during [Bootstrap](crate::CommunicationState::Bootstrap) state
     pub mod bootstrap {
         use super::*;
         pub mod receive {
@@ -89,8 +93,10 @@ pub mod mailbox {
 }
 
 /**
-    size of EEPROM in [KiBit] + 1
+    size of EEPROM in KiBit + 1
+
     NOTE: KiBit means 1024 Bit.
+
     NOTE: size = 0 means a EEPROM size of 1 KiBit
 */
 pub const eeprom_size: Field<u16> = Field::simple(WORD*0x003e);

@@ -398,7 +398,7 @@ pub enum AlError {
     NoValidFirmware = 0x0014,
     ///  Invalid mailbox configuration for switching to [AlState::Init]
     InvalidMailboxConfigBoot = 0x0015,
-    ///  Invalid mailbox configuration for switching to [AlState::PreoOperational]
+    ///  Invalid mailbox configuration for switching to [AlState::PreOperational]
     InvalidMailboxConfigPreop = 0x0016,
     ///  Invalid sync manager configuration
     InvalidSyncConfig = 0x0017,
@@ -762,7 +762,7 @@ pub struct ExternalEvent {
 	reserved: u1,
 	/// dl status register was changed
 	pub dl: bool,
-	/// R3 or R4 was written, meaning an [ALStatus] change
+	/// R3 or R4 was written, meaning an [AlStatus] change
 	pub al: bool,
 	/// sync manager channel was accessed by slave
 	pub sync_manager_channel: [bool; 8],

@@ -794,7 +794,7 @@ impl Synchronization {
     /**
         Minimum cycle time supported by the slave (maximum duration time of the local cycle) in ns 
         
-        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleTimeDsc::measure_local_time] to get a valid value used in Synchronous or DC Mode
+        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleControl::measure_local_time] to get a valid value used in Synchronous or DC Mode
     */
     pub fn min_cycle_time(&self) -> Sdo<u32>  {Sdo::sub(self.index, 5, 13*8)}
     /** 
@@ -888,7 +888,7 @@ impl Synchronization {
     pub fn max_sm_sync_distance(&self) -> Sdo<u32>  {Sdo::sub(self.index, 18, 55*8)}
         
     /**
-        Shall be supported if [Self::sm_mter_sm_missed] or [self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
+        Shall be supported if [Self::counter_sm_missed] or [Self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
 
         Mappable in TxPDO
     
@@ -958,7 +958,7 @@ pub struct SynchronizationFull {
     /**
         Minimum cycle time supported by the slave (maximum duration time of the local cycle) in ns 
         
-        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleTimeDsc::measure_local_time] to get a valid value used in Synchronous or DC Mode
+        It might be necessary to start the Dynamic Cycle Time measurement [SyncModes::dynamic_cycle_time] and [SyncCycleControl::measure_local_time] to get a valid value used in Synchronous or DC Mode
     */
     pub min_cycle_time: u32,
     /** 
@@ -1055,7 +1055,7 @@ pub struct SynchronizationFull {
     reserved_2 : u64,               //Reserved 8 bytes
     
     /**
-        Shall be supported if [Self::sm_mter_sm_missed] or [self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
+        Shall be supported if [Self::counter_sm_missed] or [Self::counter_cycle_missed] or [Self::counter_shift_missed] is supported
 
         Mappable in TxPDO
     

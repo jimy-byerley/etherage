@@ -1,7 +1,42 @@
 /*!
-    SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
+    SII (Slave Information Interface) allows to retreive from EEPROM declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs.
+
+    The EEPROM can also store configurations variables for the specific slaves purpose (like control loop coefficients, safety settings, etc) but these values are vendor-specific and often now meant for user inspection through the SII. They are still accessible using the tools provided here, but not structure is provided to interpret them.
 
     ETG.1000.4.6.6.4
+
+    This module features [Sii] and [SiiCursor] in order to read/write and parse the eeprom data
+
+    The EEPROM has 2 regions of data:
+
+    - EEPROM registers: fixed addresses, described in [eeprom] and accessed by [Sii]
+    - EEPROM categories: contiguous data blocks, described by the `*Category` structs here and accessed by [SiiCursor]
+
+    Here is how to use registers:
+    ```ignore
+    let vendor = sii.read(eeprom::device::vendor).await?;
+    ```
+
+    Here is how to parse the categories:
+    ```ignore
+    let mut categories = sii.categories();
+    let general = loop {
+        let category = categories.unpack::<CategoryHeader>().await?;
+        // we got our desired category, do something with it
+        if category.ty() == CategoryType::General {
+            // we can then read the category (or at least its header) as a register
+            break Ok(categories.unpack::<CategoryGeneral>().await?)
+        }
+        // end of eeprom reached
+        else if category.ty() == CategoryType::End {
+            break Err(EthercatError::Master("no general category in EEPROM"))
+        }
+        // or squeeze the current category
+        else {
+            categories.advance(WORD*category.size());
+        }
+    };
+    ```
 */
 
 use crate::{
@@ -18,7 +53,16 @@ use bilge::prelude::*;
 const WORD: u16 = eeprom::WORD as _;
 
 
-/// implementation of the Slave Information Interface (SII) to communicate with a slave's EEPROM memory
+/**
+    implementation of the Slave Information Interface (SII) to communicate with a slave's EEPROM memory
+
+    The EEPROM has 2 regions of data:
+
+    - EEPROM registers: at fixed addresses, described in [eeprom]
+    - EEPROM categories: as contiguous data blocks, starting from fixed address [eeprom::categories]
+
+    This struct is providing access to both, but only works with fixed addresses. To parse the categories, use a cursor returned by [Self::categories] then parse the structures iteratively.
+*/
 pub struct Sii {
     master: Arc<RawMaster>,
     slave: SlaveAddress,
@@ -28,6 +72,13 @@ pub struct Sii {
     writable: bool,
 }
 impl Sii {
+    /**
+        create an instance of this struct to use the SII of the given slave
+
+        to stay protocol-safe, one instance of this struct only should exist per slave.
+
+        At contrary to the EEPROM addresses used at the ethercat communication level, this struct and its methods only use byte addresses, write requests should be word-aligned.
+    */
     pub async fn new(master: Arc<RawMaster>, slave: SlaveAddress) -> EthercatResult<Sii, SiiError> {
         let status = master.read(slave, registers::sii::control).await.one()?;
         let mask = match status.address_unit() {
@@ -47,6 +98,7 @@ impl Sii {
         self.read_slice(field.byte as _, buffer.as_mut()).await?;
         Ok(T::unpack(buffer.as_ref())?)
     }
+    /// read a slice of the slave's EEPROM memory
     pub async fn read_slice<'b>(&mut self, address: u16, value: &'b mut [u8]) -> EthercatResult<&'b [u8], SiiError> {
         // some slaves use 2 byte addresses but declare they are using 1 only, so disable this check for now
 //         if address & !self.mask != 0
@@ -89,12 +141,21 @@ impl Sii {
         Ok(value)
     }
 
-    /// write data to the slave's EEPROM using the SII
+    /**
+        write data to the slave's EEPROM using the SII
+
+        this will only work if [Self::writable], else will raise an error
+    */
     pub async fn write<T: PduData>(&mut self, field: Field<T>, value: &T) -> EthercatResult<(), SiiError> {
         let mut buffer = T::Packed::uninit();
         value.pack(buffer.as_mut()).unwrap();
         self.write_slice(field.byte as _, buffer.as_ref()).await
     }
+    /**
+        write the given slice of data in the slave's EEPROM
+
+        this will only work if [Self::writable], else will raise an error
+    */
     pub async fn write_slice(&mut self, address: u16, value: &[u8]) -> EthercatResult<(), SiiError> {
         if address % WORD != 0
             {return Err(EthercatError::Master("address must be word-aligned"))}
@@ -166,6 +227,11 @@ impl Sii {
             }
     }
 
+    /**
+        read the strings category of the EEPROM, and return its content as rust datatype
+
+        these strings are usually pointed to by sdo values or other fields in the EEPROM's categories
+    */
     pub async fn strings(&mut self) -> EthercatResult<Vec<String>, SiiError> {
         let mut categories = self.categories();
         loop {
@@ -196,6 +262,7 @@ impl Sii {
         }
     }
 
+    /// readthe general informations category of the EEPROM and return its content
     pub async fn generals(&mut self) -> EthercatResult<CategoryGeneral, SiiError> {
         let mut categories = self.categories();
         loop {
@@ -214,7 +281,9 @@ impl Sii {
 }
 
 /**
-    helper for parsing the category of the eeprom through the SII
+    Helper for parsing the category of the eeprom through the SII
+
+    It is inspired from [data::Cursor] but this one directly reads into the EEPROM rather than in a local buffer
 */
 pub struct SiiCursor<'a> {
     sii: &'a mut Sii,
@@ -224,7 +293,7 @@ impl<'a> SiiCursor<'a> {
     /// initialize at the given byte position in the EEPROM
     pub fn new(sii: &'a mut Sii, position: u16) -> Self 
         {Self {sii, position}}
-    // byte position in the EEPROM
+    /// byte position in the EEPROM
     pub fn position(&self) -> u16
         {self.position}
 
