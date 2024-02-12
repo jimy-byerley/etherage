@@ -14,6 +14,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     slave.set_address(1).await.unwrap();
 
     let mut sii = Sii::new(master.clone(), slave.address()).await.unwrap();
+    sii.acquire().await?;
 
     let mut categories = sii.categories();
     loop {

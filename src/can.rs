@@ -2,7 +2,6 @@
 
 use crate::{
     mailbox::{Mailbox, MailboxType, MailboxError, MailboxHeader},
-    registers,
     sdo::Sdo,
     data::{self, PduData, Storage, Cursor},
     error::{EthercatError, EthercatResult},
@@ -45,6 +44,8 @@ const SDO_SEGMENT_MAX_SIZE: usize = MAILBOX_MAX_SIZE
     ![CoE mapping](/etherage/schemes/coe-mapping.svg)
 
     This scheme comes in addition to the slave memory areas described in [crate::rawmaster::RawMaster], for slaves supporting CoE.
+
+    A `Can` instance is generally obtained from [Slave::coe](crate::Slave::coe)
 */
 pub struct Can {
     mailbox: Arc<Mutex<Mailbox>>,

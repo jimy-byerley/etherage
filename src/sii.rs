@@ -14,11 +14,15 @@
 
     Here is how to use registers:
     ```ignore
+    sii.acquire().await?;
     let vendor = sii.read(eeprom::device::vendor).await?;
+    let alias = sii.read(eeprom::address_alias).await?;
+    sii.release().await?;
     ```
 
     Here is how to parse the categories:
     ```ignore
+    sii.acquire().await?;
     let mut categories = sii.categories();
     let general = loop {
         let category = categories.unpack::<CategoryHeader>().await?;
@@ -36,6 +40,7 @@
             categories.advance(WORD*category.size());
         }
     };
+    sii.release().await?;
     ```
 */
 
@@ -62,6 +67,8 @@ pub const WORD: u16 = eeprom::WORD as _;
     - EEPROM categories: as contiguous data blocks, starting from fixed address [eeprom::categories]
 
     This struct is providing access to both, but only works with fixed addresses. To parse the categories, use a cursor returned by [Self::categories] then parse the structures iteratively.
+
+    A `Sii` instance is generally obtained from [Slave::sii](crate::Slave::sii)
 */
 pub struct Sii {
     master: Arc<RawMaster>,
@@ -70,6 +77,8 @@ pub struct Sii {
     mask: u16,
     /// whether the EEPROM is writable through the SII
     writable: bool,
+    /// whether the master owns access to the SII (and EEPROM)
+    locked: bool,
 }
 impl Sii {
     /**
@@ -87,10 +96,51 @@ impl Sii {
         };
         if status.checksum_error()
             {return Err(EthercatError::Slave(slave, SiiError::Checksum))};
-        Ok(Self {master, slave, mask, writable: status.write_access()})
+        Ok(Self {
+            master,
+            slave,
+            mask,
+            writable: status.write_access(),
+            locked: false,
+            })
     }
     /// tells if the EEPROM is writable through the SII
     pub fn writable(&self) -> bool {self.writable}
+
+    /**
+        acquire the SII so we can use it through the registers
+
+        The access to the EEPROM is always made through the SII, even internally for the slave, which mean for the slave to access its EEPROM, the master should not have it.
+
+        the access need to be acquired by the master before it to read or write to the EEPROM. Any attempt without acquiring it will fail
+    */
+    pub async fn acquire(&mut self) -> EthercatResult {
+        if ! self.locked {
+            self.locked = true;
+            self.master.write(self.slave, registers::sii::access, {
+                let mut config = registers::SiiAccess::default();
+                config.set_owner(registers::SiiOwner::EthercatDL);
+                config
+                }).await.one()?;
+        }
+        Ok(())
+    }
+    /**
+        release the SII to the device internal control
+
+        The access to the EEPROM usually needs to be released during slave initialization steps (meaning for state transitions). Most attempt to initialize without releasing will certainly fail.
+    */
+    pub async fn release(&mut self) -> EthercatResult {
+        if self.locked {
+            self.locked = false;
+            self.master.write(self.slave, registers::sii::access, {
+                let mut config = registers::SiiAccess::default();
+                config.set_owner(registers::SiiOwner::Pdi);
+                config
+                }).await.one()?;
+        }
+        Ok(())
+    }
     
     /// read data from the slave's EEPROM using the SII
     pub async fn read<T: PduData>(&mut self, field: Field<T>) -> EthercatResult<T, SiiError> {
@@ -116,7 +166,6 @@ impl Sii {
                 },
                 address: (address + cursor.position() as u16) / WORD,
             }).await.one()?;
-
             // wait for interface to become available
             let status = loop {
                 if let Ok(answer) = self.master.read(self.slave, registers::sii::control).await.one() {
@@ -129,6 +178,7 @@ impl Sii {
                 {return Err(EthercatError::Slave(self.slave, SiiError::Command))}
             if status.device_info_error()
                 {return Err(EthercatError::Slave(self.slave, SiiError::DeviceInfo))}
+
             // buffer the result
             let size = match status.read_size() {
                 registers::SiiTransaction::Bytes4 => 4,

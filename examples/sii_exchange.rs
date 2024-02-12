@@ -14,6 +14,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     slave.set_address(1).await.unwrap();
 
     let mut sii = Sii::new(master.clone(), slave.address()).await.unwrap();
+    sii.acquire().await?;
 
     println!("device:");
     println!("  vendor {}", sii.read(eeprom::device::vendor).await.unwrap());

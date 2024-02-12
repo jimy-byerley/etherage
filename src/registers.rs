@@ -844,11 +844,14 @@ pub struct SiiAccess {
 }
 data::bilge_pdudata!(SiiAccess, u16);
 
+/// the EEPROM can be accessed only through the SII, and this enum is used to share it between the master (through ethercat communication) and the slave itself
 #[bitsize(1)]
 #[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SiiOwner {
+    /// the ethercat communication can controle the SII (and access the EEPROM)
     #[default]
 	EthercatDL = 0,
+	/// the slave can control the SII (and access the EEPROM)
 	Pdi = 1,
 }
 data::bilge_pdudata!(SiiOwner, u1);
@@ -1047,7 +1050,7 @@ impl SyncManager {
 #[bitsize(64)]
 #[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
 pub struct SyncManagerChannel {
-    /// start address in octets in the physical memory of the consistent DL-user memory area.
+    /// start address in octets in the pShysical memory of the consistent DL-user memory area.
     /// multiple sync manager channels with overlapping memory ranges are not supported.
     pub address: u16,
     /// size in octets of the consistent DL -user memory area.

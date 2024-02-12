@@ -11,7 +11,6 @@ use crate::{
     error::{EthercatError, EthercatResult},
     };
 use tokio::sync::{Mutex, MutexGuard};
-use core::ops::Range;
 use std::sync::Arc;
 
 
@@ -198,10 +197,12 @@ impl<'a> Slave<'a> {
             self.init_sii().await?;
         }
         let mut sii = self.sii().await;
+        sii.acquire().await?;
         let write_offset = sii.read(eeprom::mailbox::standard::write::offset).await?;
-        let write_size = sii.read(eeprom::mailbox::standard::write::size).await?;
-        let read_offset = sii.read(eeprom::mailbox::standard::read::offset).await?;
-        let read_size = sii.read(eeprom::mailbox::standard::read::size).await?;
+        let write_size   = sii.read(eeprom::mailbox::standard::write::size).await?;
+        let read_offset  = sii.read(eeprom::mailbox::standard::read::offset).await?;
+        let read_size    = sii.read(eeprom::mailbox::standard::read::size).await?;
+        sii.release().await?;
         drop(sii);
 
         // setup the mailbox
@@ -211,14 +212,6 @@ impl<'a> Slave<'a> {
             (registers::sync_manager::interface.mailbox_write(), write_offset .. write_offset + write_size),
             (registers::sync_manager::interface.mailbox_read(), read_offset .. read_offset + read_size),
             ).await?;
-        // switch SII owner to PDI, so mailbox can init
-        self.master.write(self.address, registers::sii::access, {
-            let mut config = registers::SiiAccess::default();
-            config.set_owner(registers::SiiOwner::Pdi);
-            config
-            }).await.one()?;
-
-//         self.master.write(self.address, Field::simple(registers::sii::access.byte), registers::SiiOwner::Pdi).await.one()?;
 
         self.coe = None;
         self.mailbox = Some(Arc::new(Mutex::new(mailbox)));
