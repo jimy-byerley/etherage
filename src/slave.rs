@@ -174,11 +174,13 @@ impl<'a> Slave<'a> {
         self.address = new;
         Ok(())
     }
+    /// reset fixed address, the slave instance is consumed because the original topological address may have changed since
     pub async fn reset_address(self) -> EthercatResult {
         self.master.write(self.address, registers::address::fixed, 0).await.one()?;
         Ok(())
     }
 
+    /// initialize the SII which grants access to the EEPROM
     pub async fn init_sii(&mut self) -> EthercatResult<(), SiiError> {
         let sii = Sii::new(self.master.clone(), self.address).await?;
         self.sii = Some(Mutex::new(sii));

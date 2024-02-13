@@ -1050,7 +1050,7 @@ impl SyncManager {
 #[bitsize(64)]
 #[derive(TryFromBits, DebugBits, Copy, Clone, Default)]
 pub struct SyncManagerChannel {
-    /// start address in octets in the pShysical memory of the consistent DL-user memory area.
+    /// start address in octets in the physical memory of the consistent DL-user memory area.
     /// multiple sync manager channels with overlapping memory ranges are not supported.
     pub address: u16,
     /// size in octets of the consistent DL -user memory area.
