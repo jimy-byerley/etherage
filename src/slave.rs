@@ -12,6 +12,7 @@ use crate::{
     };
 use tokio::sync::{Mutex, MutexGuard};
 use std::sync::Arc;
+use core::time::Duration;
 
 
 
@@ -190,6 +191,7 @@ impl<'a> Slave<'a> {
     /// initialize the slave's mailbox (if supported by the slave)
     pub async fn init_mailbox(&mut self) -> EthercatResult<(), SiiError> {
         assert_eq!(self.state, Init);
+
         let address = match self.address {
             SlaveAddress::Fixed(i) => i,
             _ => panic!("mailbox is unsafe without fixed addresses"),
@@ -227,6 +229,33 @@ impl<'a> Slave<'a> {
         }
         let mailbox = self.mailbox.clone().unwrap();
         self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
+        Ok(())
+    }
+
+    /**
+        enable DC-sync
+
+        ## Note:
+
+            at the moment, only sync0 is supported. sync1 is not, SM-sync is not
+    */
+    pub async fn init_sync(&mut self, period: Duration, activation: Duration) -> EthercatResult {
+        assert_eq!(self.state, PreOperational);
+        let period = u32::try_from(period.as_nanos()).expect("synchronization period must be below 4seconds");
+        let activation = u32::try_from(activation.as_nanos()).expect("activation delay must be below 4seconds");
+
+        self.master.write(self.address, registers::isochronous::sync::enable, Default::default()).await.one()?;
+        self.master.write(self.address, Field::<u8>::simple(0x980), 0).await.one()?;
+        let start = self.master.read(self.address, registers::dc::system_time).await.one()? as u32;
+        let start = ((start + activation) / period) * period + period;
+        self.master.write(self.address, registers::isochronous::sync::start_time, start).await.one()?;
+        self.master.write(self.address, registers::isochronous::sync::sync0_cycle_time, period).await.one()?;
+        self.master.write(self.address, registers::isochronous::sync::enable, {
+			let mut enables = registers::IsochronousEnables::default();
+			enables.set_operation(true);
+			enables.set_sync0(true);
+			enables
+			}).await.one()?;
         Ok(())
     }
 

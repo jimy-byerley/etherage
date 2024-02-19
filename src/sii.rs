@@ -3,7 +3,7 @@
 
     The EEPROM can also store configurations variables for the specific slaves purpose (like control loop coefficients, safety settings, etc) but these values are vendor-specific and often now meant for user inspection through the SII. They are still accessible using the tools provided here, but not structure is provided to interpret them.
 
-    ETG.1000.4.6.6.4
+    ETG.1000.4.6.6.4, ETG.2010
 
     This module features [Sii] and [SiiCursor] in order to read/write and parse the eeprom data
 

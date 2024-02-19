@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             sdo::SyncChannel{ direction: SyncDirection::Write, index: 0x1c12, capacity: 10 },
             // the memory buffer used for sync channels depend on slaves firmware
             0x1800 .. 0x1c00,
-//             0x1000 .. 0x1400,
+//           0x1000 .. 0x1400,
             );
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, fixed: false, capacity: 10});
                 let control = pdo.push(Sdo::<u16>::complete(0x6040));
@@ -32,12 +32,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             sdo::SyncChannel{ direction: SyncDirection::Read, index: 0x1c13, capacity: 10 },
             // the memory buffer used for sync channels depend on slaves firmware
             0x1c00 .. 0x2000,
-//             0x1400 .. 0x1800,
+//           0x1400 .. 0x1800,
             );
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1a00, fixed: false, capacity: 10});
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
-                let position = pdo.push(Sdo::<i32>::complete(0x6064));;
+                let position = pdo.push(Sdo::<i32>::complete(0x6064));
     drop(slave);
     println!("done {:#?}", config);
 

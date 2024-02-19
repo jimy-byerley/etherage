@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     slave.set_address(1).await?;
     slave.init_coe().await?;
     slave.switch(CommunicationState::PreOperational).await?;
-    
+
     group.configure(&slave).await?;
     
     slave.switch(CommunicationState::SafeOperational).await?;
