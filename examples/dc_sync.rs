@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		let SlaveAddress::Fixed(i) = slave.address()
 			else { panic!("slave has no fixed address") };
 		let mut slave = mapping.slave(i);
-		offsets.push(slave.register(sdo::SyncDirection::Read, registers::dc::system_time));
+		offsets.push(slave.register(registers::SyncDirection::Read, registers::dc::system_time));
         let mut channel = slave.channel(sdo::sync_manager.logical_write(), 0x1800 .. 0x1c00);
             channel.push(sdo::Pdo::new(0x1600, false));
 		let mut channel = slave.channel(sdo::sync_manager.logical_read(), 0x1c00 .. 0x2000);

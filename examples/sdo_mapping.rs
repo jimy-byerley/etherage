@@ -2,9 +2,9 @@ use std::error::Error;
 use etherage::{
     EthernetSocket, RawMaster,
     Slave, SlaveAddress, CommunicationState,
-    sdo::{self, Sdo, SyncDirection},
+    sdo::{self, Sdo},
     mapping::{self, Mapping},
-    registers,
+    registers::{self, SyncDirection},
     };
 
 use etherage::Field;

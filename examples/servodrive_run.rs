@@ -5,9 +5,9 @@ use etherage::{
     EthernetSocket, Master,
     Slave, SlaveAddress, CommunicationState,
     data::Field,
-    sdo::{self, SyncDirection, OperationMode},
+    sdo::{self, OperationMode},
     mapping::{self, Mapping, Group},
-    registers,
+    registers::{self, SyncDirection},
     };
 
 #[tokio::main]
@@ -19,18 +19,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
         let _statuscom = slave.register(SyncDirection::Read, registers::al::status);
-        let mut channel = slave.channel(
-            sdo::sync_manager.logical_write(),
-            0x1800 .. 0x1c00,
-            );
+        let mut channel = slave.channel(sdo::sync_manager.logical_write(), 0x1800 .. 0x1c00);
             let mut pdo              = channel.push(sdo::Pdo::with_capacity(0x1600, false, 10));
                 let controlword      = pdo.push(sdo::cia402::controlword);
                 let target_mode      = pdo.push(sdo::cia402::target::mode);
                 let target_position  = pdo.push(sdo::cia402::target::position);
-        let mut channel = slave.channel(
-            sdo::sync_manager.logical_read(),
-            0x1c00 .. 0x2000,
-            );
+        let mut channel = slave.channel(sdo::sync_manager.logical_read(), 0x1c00 .. 0x2000);
             let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1a00, false, 10));
                 let statusword       = pdo.push(sdo::cia402::statusword);
                 let error            = pdo.push(sdo::cia402::error);
@@ -86,7 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 // 			let increment = 3_000_000;
 // 			let course = 100_000_000;
-			let increment = 3_000;
+			let increment = 1_000;
 			let course = 100_000;
 
 
