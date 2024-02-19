@@ -643,10 +643,10 @@ impl fmt::Debug for PdoEntry {
 */
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SyncChannel {
-    /// index of the SDO that configures the SyncChannel
-    pub index: u16,
     /// whether this channel is to be read or written by the master, this might be set by the user if the slave supports it.
     pub direction: SyncDirection,
+    /// index of the SDO that configures the SyncChannel
+    pub index: u16,
     /// max number of PDO that can be assigned to the SyncChannel
     pub capacity: u8,
 }

@@ -76,7 +76,8 @@ use bilge::prelude::*;
 
 
 /// slave physical memory range used for sync channels mapping
-const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1000, end: 0x1300};
+// const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1800, end: 0x1f00};
+const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1000, end: 0x1f00};
 
 
 /// convenient object to manage slaves configurations and logical memory
@@ -498,8 +499,6 @@ impl<'a> Mapping<'a> {
         MappingSlave {
             config: slave.try_write().expect("slave already in mapping"),
             mapping: self,
-            buffer: SLAVE_PHYSICAL_MAPPABLE.start,
-            additional: 0,
         }
     }
     /// return the overall data size in this mapping (will increase if more data is pushed in)
@@ -513,26 +512,13 @@ impl<'a> Mapping<'a> {
 pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
     config: RwLockWriteGuard<'a, ConfigSlave>,
-    /// position in the physical memory mapping region
-    buffer: u16,
-    /// increment to add to `buffer` once the current mapped channel is done.
-    /// this is handling the memory that must be reserved after sync channels to allow the slave to perform buffer swapping
-    additional: u16,
 }
 impl<'a> MappingSlave<'a> {
     /// internal method to increment the logical and physical offsets with the given data length
     /// if the logical offset was changed since the last call to this slave's method (ie. the logical memory contiguity is broken), a new FMMU is automatically configured
-    fn insert(&mut self, direction: SyncDirection, length: usize, position: Option<u16>) -> usize {
-        let physical = SLAVE_PHYSICAL_MAPPABLE;
+    fn insert(&mut self, direction: SyncDirection, length: u16, position: u16) -> usize {
         let mut offset = self.mapping.offset.borrow_mut();
 
-        // pick a new position in the physical memory buffer, or pick the given position
-        let position = position.unwrap_or_else(|| {
-                let position = self.buffer;
-                self.buffer += length as u16;
-                assert!(self.buffer <= physical.end);
-                position
-            });
         // create a FMMU if not already existing or if inserted value breaks contiguity
         let change = if let Some(fmmu) = self.config.fmmu.last() {
                 fmmu.logical + u32::from(fmmu.length) != *offset
@@ -561,37 +547,26 @@ impl<'a> MappingSlave<'a> {
         default.extend(range.map(|_| 0));
         field.set(&mut default, value);
     }
-    /// increment the value offset with the reserved additional size
-    /// this is typically for counting the reserved size of channels triple buffers
-    fn finish(&mut self) {
-        self.buffer += self.additional;
-        // the physical memory buffer must be word-aligned (at least on some devices)
-        self.buffer += self.buffer % 2;
-        self.additional = 0;
-    }
     /// map a range of physical memory, and return its matching range in the logical memory
     pub fn range(&mut self, direction: SyncDirection, range: Range<u16>) -> Range<usize> {
-        self.finish();
-        let size = usize::from(range.end - range.start);
-        let start = self.insert(direction, size, Some(range.start));
-        Range {start, end: start+size}
+        let size = range.end - range.start;
+        let start = self.insert(direction, size, range.start);
+        Range {start, end: start+usize::from(size)}
     }
     /// map a field in the physical memory (a register), and return its matching field in the logical memory
     pub fn register<T: PduData>(&mut self, direction: SyncDirection, field: Field<T>) -> Field<T>  {
-        self.finish();
-        let o = self.insert(direction, field.len, Some(field.byte as u16));
+        let o = self.insert(direction, field.len as u16, field.byte as u16);
         Field::new(o, field.len)
     }
     /// map a sync manager channel
-    pub fn channel(&mut self, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
-        self.finish();
+    pub fn channel(&mut self, sdo: sdo::SyncChannel, buffer: Range<u16>) -> MappingChannel<'_> {
         if sdo.register() == registers::sync_manager::interface.mailbox_write()
         || sdo.register() == registers::sync_manager::interface.mailbox_read()
             {panic!("mapping on the mailbox channels (0x1c10, 0x1c11) is forbidden");}
         self.config.channels.insert(sdo.index, ConfigChannel {
             config: sdo,
             pdos: Vec::new(),
-            start: self.buffer,
+            start: buffer.start,
             });
         MappingChannel {
             // uncontroled references to self and to configuration
@@ -600,6 +575,9 @@ impl<'a> MappingSlave<'a> {
             slave: unsafe {&mut *(self as *mut _ as usize as *mut _)},
             direction: sdo.direction,
             capacity: sdo.capacity as usize,
+            position: buffer.start,
+            // the memory allocated must contain 3 buffers of the desired data (for buffer swaping on the slave)
+            max: (buffer.end - buffer.start) / 3 + buffer.start,
         }
 
         // TODO: make possible to push an alread existing channel as long as its content is the same
@@ -610,6 +588,8 @@ pub struct MappingChannel<'a> {
     entries: &'a mut Vec<u16>,
     direction: SyncDirection,
     capacity: usize,
+    position: u16,
+    max: u16,
 }
 impl<'a> MappingChannel<'a> {
     /// add a pdo to this channel, and return an object to map it
@@ -623,19 +603,19 @@ impl<'a> MappingChannel<'a> {
             });
 
         MappingPdo {
+            direction: self.direction,
+            capacity: pdo.capacity as usize,
             // uncontroled reference to self and to configuration
             // this is safe since the returned object holds a mutable reference to self any way
             entries: unsafe {&mut *(&mut self.slave.config.pdos.get_mut(&pdo.index).unwrap().sdos as *mut _)},
-            slave: self.slave,
-            direction: self.direction,
-            capacity: pdo.capacity as usize,
+            channel: self,
         }
 
         // TODO: make possible to push an alread existing PDO as long as its content is the same
     }
 }
 pub struct MappingPdo<'a> {
-    slave: &'a mut MappingSlave<'a>,
+    channel: &'a mut MappingChannel<'a>,
     entries: &'a mut Vec<Sdo>,
     direction: SyncDirection,
     capacity: usize,
@@ -643,14 +623,15 @@ pub struct MappingPdo<'a> {
 impl<'a> MappingPdo<'a> {
     /// add an sdo to this channel, and return its matching field in the logical memory
     pub fn push<T: PduData>(&mut self, sdo: Sdo<T>) -> Field<T> {
-        assert!(self.entries.len()+1 < self.capacity);
+        let len = ((sdo.field.len + 7) / 8) as u16;
+
+        assert!(self.entries.len()+1 < self.capacity, "sync channel cannot have more entries");
+        assert!(self.channel.position + len < self.channel.max, "sync channel buffer is too small");
 
         self.entries.push(sdo.clone().downcast());
-        let len = (sdo.field.len + 7) / 8;
-        // the sync channel must allocate 3 times the channel size to allow the slave to perform buffer swapping (the sync channel 3-buffer mode, which is mendatory for realtime operations)
-        // so the first thier is reserved using `slave.insert`, and the 2 last using `slave.additional`
-        self.slave.additional += 2*len as u16;
-        Field::new(self.slave.insert(self.direction, len, None), len)
+        let offset = Field::new(self.channel.slave.insert(self.direction, len, self.channel.position), usize::from(len));
+        self.channel.position += len;
+        offset
     }
     /**
         same as [Self::push] but also set an initial value for this SDO in the group buffer.
@@ -658,7 +639,7 @@ impl<'a> MappingPdo<'a> {
     */
     pub fn set<T: PduData>(&mut self, sdo: Sdo<T>, initial: T) -> Field<T> {
         let offset = self.push(sdo);
-        self.slave.default(offset, initial);
+        self.channel.slave.default(offset, initial);
         offset
     }
 }
