@@ -2,7 +2,7 @@ use std::error::Error;
 use core::time::Duration;
 use futures_concurrency::future::Join;
 use etherage::{
-    EthernetSocket, RawMaster,
+    EthernetSocket, Master,
     Slave, SlaveAddress, CommunicationState,
     data::Field,
     sdo::{self, SyncDirection, OperationMode},
@@ -12,38 +12,38 @@ use etherage::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let master = RawMaster::new(EthernetSocket::new("eno1")?);
+    let master = Master::new(EthernetSocket::new("eno1")?);
     
     println!("create mapping");
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
         let _statuscom = slave.register(SyncDirection::Read, registers::al::status);
-        let mut channel = slave.channel(sdo::sync_manager.logical_write());
+        let mut channel = slave.channel(
+            sdo::sync_manager.logical_write(),
+            0x1800 .. 0x1c00,
+            );
             let mut pdo              = channel.push(sdo::Pdo::with_capacity(0x1600, false, 10));
                 let controlword      = pdo.push(sdo::cia402::controlword);
                 let target_mode      = pdo.push(sdo::cia402::target::mode);
                 let target_position  = pdo.push(sdo::cia402::target::position);
-                let _target_velocity = pdo.push(sdo::cia402::target::velocity);
-                let _target_torque = pdo.push(sdo::cia402::target::torque);
-        let mut channel = slave.channel(sdo::sync_manager.logical_read());
+        let mut channel = slave.channel(
+            sdo::sync_manager.logical_read(),
+            0x1c00 .. 0x2000,
+            );
             let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1a00, false, 10));
                 let statusword       = pdo.push(sdo::cia402::statusword);
                 let error            = pdo.push(sdo::cia402::error);
-                let _current_mode  = pdo.push(sdo::cia402::current::mode);
                 let current_position = pdo.push(sdo::cia402::current::position);
-                let _current_velocity = pdo.push(sdo::cia402::current::velocity);
-                let _current_torque  = pdo.push(sdo::cia402::current::torque);
     drop(slave);
     println!("done {:#?}", config);
     
-    let allocator = mapping::Allocator::new();
-    let group = allocator.group(&master, &mapping);
+    let group = master.group(&mapping);
     
     println!("group {:#?}", group);
     println!("fields {:#?}", (statusword, controlword));
 
-    let mut slave = Slave::raw(master.clone(), SlaveAddress::AutoIncremented(0));
+    let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0)).await?;
     slave.switch(CommunicationState::Init).await?;
     slave.set_address(1).await?;
     slave.init_coe().await?;
@@ -84,8 +84,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("switch on");
             switch_on(statusword, controlword, error, &group, &cycle).await;
 
-			let velocity = 3_000_000;
-			let increment = 100_000_000;
+// 			let increment = 3_000_000;
+// 			let course = 100_000_000;
+			let increment = 3_000;
+			let course = 100_000;
+
 
 			println!("move forward");
 			loop {
@@ -93,8 +96,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let mut group = group.data().await;
 
                 let position = group.get(current_position);
-                if position >= initial + increment {break}
-                group.set(target_position, position + velocity);
+                if position >= initial + course {break}
+                group.set(target_position, position + increment);
                 println!("    {}", position);
             }
 
@@ -105,7 +108,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 let position = group.get(current_position);
                 if position <= initial {break}
-                group.set(target_position, position - velocity);
+                group.set(target_position, position - increment);
                 println!("    {}", position);
             }
 
