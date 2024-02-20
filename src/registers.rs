@@ -87,9 +87,10 @@ pub const watchdog_counter: Field<WatchdogCounter> = Field::simple(0x0442);
 pub mod sync_manager {
     use super::*;
 
-    /// ETG.1000.6 table 45
+    /// ETG.1000.4 table 45
     pub const watchdog: Field<u16> = Field::simple(0x0420);
-    /// ETG.1000.6 table 46
+    /// ETG.1000.4 table 46
+    /// true when the watchdog has not expired
     pub const watchdog_status: Field<bool> = Field::simple(0x0440);
 	pub const interface: SyncManager = SyncManager {address: 0x0800, num: 16};
 }
