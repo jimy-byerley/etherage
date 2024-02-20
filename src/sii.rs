@@ -344,6 +344,7 @@ impl<'a> SiiCursor<'a> {
     /// byte position in the EEPROM
     pub fn position(&self) -> u16
         {self.position}
+    /// number of bytes remaining before region end
     pub fn remain(&self) -> u16
         {self.end.max(self.position) - self.position}
 
@@ -355,6 +356,7 @@ impl<'a> SiiCursor<'a> {
             end: self.end,
             }
     }
+    /// create a new instance of cursor at the same location but ending after size, moving the the current cursor after size. it is only meant to ease preactice of isolating parsing a section from a parent section
     pub fn sub(&mut self, size: u16) -> SiiCursor<'_> {
         let position = self.position;
         self.position += size;
