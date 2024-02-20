@@ -25,11 +25,11 @@
     sii.acquire().await?;
     let mut categories = sii.categories();
     let general = loop {
-        let category = categories.unpack::<CategoryHeader>().await?;
+        let category = categories.unpack::<Category>().await?;
         // we got our desired category, do something with it
         if category.ty() == CategoryType::General {
             // we can then read the category (or at least its header) as a register
-            break Ok(categories.unpack::<CategoryGeneral>().await?)
+            break Ok(categories.unpack::<General>().await?)
         }
         // end of eeprom reached
         else if category.ty() == CategoryType::End {
@@ -269,12 +269,9 @@ impl Sii {
         Ok(())
     }
     
-    /// cursor pointing at the start of categories. See [CategoryHeader]
+    /// cursor pointing at the start of categories. See [Category]
     pub fn categories(&mut self) -> SiiCursor<'_> {
-        SiiCursor {
-            sii: self,
-            position: eeprom::categories,
-            }
+        SiiCursor::new(self, eeprom::categories)
     }
 
     /**
@@ -285,7 +282,7 @@ impl Sii {
     pub async fn strings(&mut self) -> EthercatResult<Vec<String>, SiiError> {
         let mut categories = self.categories();
         loop {
-            let category = categories.unpack::<CategoryHeader>().await?;
+            let category = categories.unpack::<Category>().await?;
             if category.ty() == CategoryType::Strings {
                 let num = categories.unpack::<u8>().await?;
                 let mut strings = Vec::with_capacity(num as _);
@@ -313,12 +310,12 @@ impl Sii {
     }
 
     /// readthe general informations category of the EEPROM and return its content
-    pub async fn generals(&mut self) -> EthercatResult<CategoryGeneral, SiiError> {
+    pub async fn generals(&mut self) -> EthercatResult<General, SiiError> {
         let mut categories = self.categories();
         loop {
-            let category = categories.unpack::<CategoryHeader>().await?;
+            let category = categories.unpack::<Category>().await?;
             if category.ty() == CategoryType::General {
-                return categories.unpack::<CategoryGeneral>().await
+                return categories.unpack::<General>().await
             }
             else if category.ty() == CategoryType::End {
                 return Err(EthercatError::Master("no general category in EEPROM"))
@@ -338,20 +335,33 @@ impl Sii {
 pub struct SiiCursor<'a> {
     sii: &'a mut Sii,
     position: u16,
+    end: u16,
 }
 impl<'a> SiiCursor<'a> {
     /// initialize at the given byte position in the EEPROM
-    pub fn new(sii: &'a mut Sii, position: u16) -> Self 
-        {Self {sii, position}}
+    pub fn new(sii: &'a mut Sii, position: u16) -> Self
+        {Self {sii, position, end: u16::MAX}}
     /// byte position in the EEPROM
     pub fn position(&self) -> u16
         {self.position}
+    pub fn remain(&self) -> u16
+        {self.end - self.position}
 
     /// create a new instance of cursor at the same location, it is only meant to ease practice of parsing multiple time the same region
     pub fn shadow(&mut self) -> SiiCursor<'_> {
         SiiCursor {
             sii: self.sii,
             position: self.position,
+            end: self.end,
+            }
+    }
+    pub fn sub(&mut self, size: u16) -> SiiCursor<'_> {
+        let position = self.position;
+        self.position += size;
+        SiiCursor {
+            sii: self.sii,
+            position,
+            end: self.position,
             }
     }
     /// advance byte position of the given increment
@@ -409,13 +419,13 @@ impl From<EthercatError<()>> for EthercatError<SiiError> {
 */
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-pub struct CategoryHeader {
+pub struct Category {
     /// category type as defined in ETG.1000.6 Table 19
     pub ty: CategoryType,
     /// size in word of the category
     pub size: u16,
 }
-data::bilge_pdudata!(CategoryHeader, u32);
+data::bilge_pdudata!(Category, u32);
 
 /**
     type of category in the SII
@@ -434,8 +444,12 @@ pub enum CategoryType {
     General = 30,
     /// FMMUs to be used structure of this category data see ETG.1000.6 Table 23
     Fmmu = 40,
+    /// second FMMU category added by ETG.2010 table 1
+    FmmuExtension = 42,
     /// Sync Manager Configuration structure of this category data see ETG.1000.6 Table 24
     SyncManager = 41,
+    /// second sync manager category added by ETG.2010 table 1
+    SyncUnit = 43,
     /// TxPDO description structure of this category data see ETG.1000.6 Table 25
     PdoWrite = 50,
     /// RxPDO description structure of this category data see ETG.1000.6 Table 25
@@ -451,7 +465,7 @@ pub enum CategoryType {
 /// ETG.1000.6 table 21
 #[repr(packed)]
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub struct CategoryGeneral {
+pub struct General {
     /// Group Information (Vendor specific) - Index to STRINGS
     pub group: u8,
     /// Image Name (Vendor specific) - Index to STRINGS
@@ -479,7 +493,7 @@ pub struct CategoryGeneral {
     /// Element defines the ESC memory address where the Identification ID is saved if Identification Method = IdentPhyM
     pub identification_address: u16,
 }
-data::packed_pdudata!(CategoryGeneral);
+data::packed_pdudata!(General);
 
 /// supported CoE features
 #[bitsize(8)]
@@ -538,7 +552,7 @@ pub enum PhysicalPort {
     FastHotconnect = 0x4,
 }
 
-/// ETG.1000.6 table 23
+/// ETG.1000.6 table 23, ETG.2010 tablee 9
 #[bitsize(8)]
 #[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum FmmuUsage {
@@ -548,11 +562,44 @@ pub enum FmmuUsage {
     Inputs = 2,
     SyncManagerStatus = 3,
 }
+data::bilge_pdudata!(FmmuUsage, u8);
+
+/// ETG.2010 table 10
+#[bitsize(24)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct FmmuExtension {
+    /**
+        As SM.OpOnly obsolete
+
+        Esi:DeviceType:Fmmu:OpOnly
+    */
+    pub op_only: bool,
+    /**
+        Mandatory if more than one FMMU for the same direction is used to map data to non-consecutive memory areas
+
+        Assigns this FMMU to a SyncManager
+
+        Esi: DeviceType:Fmmu:Sm
+    */
+    pub sm_defined: bool,
+    /// Esi: DeviceType:Fmmu:Su
+    pub su_defined: bool,
+    reserved: u5,
+    /**
+        Assigns this FMMU to a SyncManager
+
+        Esi: DeviceType:Fmmu:Sm
+    */
+    pub sm: u8,
+    /// Esi: DeviceType:Fmmu:Su
+    pub su: u8,
+}
+data::bilge_pdudata!(FmmuExtension, u24);
 
 /// ETG.1000.6 table 24
 #[bitsize(64)]
 #[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
-pub struct CategorySyncManager {
+pub struct SyncManager {
     /// Origin of Data (see Physical Start Address of SyncM)
     pub address: u16,
     pub length: u16,
@@ -563,8 +610,9 @@ pub struct CategorySyncManager {
     pub enable: SyncManagerEnable,
     pub usage: SyncManagerUsage,
 }
-data::bilge_pdudata!(CategorySyncManager, u64);
+data::bilge_pdudata!(SyncManager, u64);
 
+/// ETG.1000.6 table 24
 #[bitsize(8)]
 #[derive(FromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
 pub struct SyncManagerEnable {
@@ -578,6 +626,7 @@ pub struct SyncManagerEnable {
     _reserved: u4,
 }
 
+/// ETG.1000.6 table 24
 #[bitsize(8)]
 #[derive(TryFromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum SyncManagerUsage {
@@ -588,6 +637,32 @@ pub enum SyncManagerUsage {
     ProcessIn = 0x4,
 }
 
+#[repr(packed)]
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DistributedClock {
+    pub period: u32,
+    pub shift0: u32,
+    pub shift1: u32,
+    pub sync1_period_factor: i16,
+    pub assign_activate: u16,
+    pub sync0_period_factor: i16,
+    pub name: u8,
+    pub description: u8,
+    pub _reserved0: [u8;4],
+}
+data::packed_pdudata!(DistributedClock);
+
+#[bitsize(8)]
+#[derive(TryFromBits, DebugBits, Copy, Clone, Eq, PartialEq)]
+pub struct SyncUnit {
+    pub separate_su: bool,
+    pub separate_frame: bool,
+    pub depend_on_input_state: bool,
+    pub frame_repeat_support: bool,
+    reserved: u4,
+}
+data::bilge_pdudata!(SyncUnit, u8);
+
 /**
     header for category describing a reading or writing PDO
 
@@ -595,19 +670,19 @@ pub enum SyncManagerUsage {
 */
 #[repr(packed)]
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct CategoryPdo {
+pub struct Pdo {
     /// index of SDO configuring the PDO
-    index: u16,
+    pub index: u16,
     /// number of entries in the PDO
-    entries: u8,
+    pub entries: u8,
     /// reference to DC-sync
-    synchronization: u8,
+    pub synchronization: u8,
     /// name of the PDO object (reference to category strings)
-    name: u8,
+    pub name: u8,
     /// for future use
-    flags: u16,
+    pub flags: u16,
 }
-data::packed_pdudata!(CategoryPdo);
+data::packed_pdudata!(Pdo);
 
 /**
     structure describing an entry in a PDO
@@ -616,18 +691,18 @@ data::packed_pdudata!(CategoryPdo);
 */
 #[repr(packed)]
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct CategoryPdoentry {
+pub struct PdoEntry {
     /// index of the SDO
-    index: u16,
+    pub index: u16,
     /// index of field in the SDO (or 0 if complete SDO)
-    sub: u8,
+    pub sub: u8,
     /// name of this SDO
-    name: u8,
+    pub name: u8,
     /// data type of the entry
-    dtype: u8,
+    pub dtype: u8,
     /// data length of the entry
-    bitlen: u8,
+    pub bitlen: u8,
     /// for future use
-    flags: u16,
+    pub flags: u16,
 }
-data::packed_pdudata!(CategoryPdoentry);
+data::packed_pdudata!(PdoEntry);

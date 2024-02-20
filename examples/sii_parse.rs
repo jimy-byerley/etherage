@@ -2,7 +2,7 @@ use std::error::Error;
 use etherage::{
     EthernetSocket, RawMaster,
     SlaveAddress, Slave, CommunicationState,
-    sii::*,
+    sii::{self, Sii, CategoryType, WORD},
     };
 
 #[tokio::main]
@@ -18,17 +18,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut categories = sii.categories();
     loop {
-        let category = categories.unpack::<CategoryHeader>().await?;
-        let mut sub = categories.shadow();
+        let category = categories.unpack::<sii::Category>().await?;
+        let mut sub = categories.sub(WORD*category.size());
         match category.ty() {
-            CategoryType::General => println!("{:#?}", sub.unpack::<CategoryGeneral>().await?),
-            CategoryType::SyncManager => println!("{:#?}", sub.unpack::<CategorySyncManager>().await?),
-            CategoryType::PdoWrite => println!("{:#?}", sub.unpack::<CategoryPdo>().await?),
-            CategoryType::PdoRead => println!("{:#?}", sub.unpack::<CategoryPdo>().await?),
+            CategoryType::General => println!("{:#?}", sub.unpack::<sii::General>().await?),
+            CategoryType::SyncManager => while sub.remain() > 0 {
+                println!("{:#?}", sub.unpack::<sii::SyncManager>().await?);
+            },
+            CategoryType::SyncUnit => while sub.remain() > 0 {
+                println!("{:#?}", sub.unpack::<sii::SyncUnit>().await?);
+            },
+            CategoryType::PdoWrite => while sub.remain() > 0 {
+                let pdo = sub.unpack::<sii::Pdo>().await?;
+                println!("{:#?}", pdo);
+                for i in 0 .. pdo.entries {
+                    let entry = sub.unpack::<sii::PdoEntry>().await?;
+                    println!("    {}: {:?}", i, entry);
+                }
+            },
+            CategoryType::PdoRead => while sub.remain() > 0 {
+                let pdo = sub.unpack::<sii::Pdo>().await?;
+                println!("{:#?}", pdo);
+                for i in 0 .. pdo.entries {
+                    let entry = sub.unpack::<sii::PdoEntry>().await?;
+                    println!("    {}: {:?}", i, entry);
+                }
+            },
+            CategoryType::Fmmu => while sub.remain() > 0 {
+                println!("Fmmu {:#?}", sub.unpack::<sii::FmmuUsage>().await?);
+            },
+            CategoryType::FmmuExtension => while sub.remain() > 0 {
+                println!("{:#?}", sub.unpack::<sii::FmmuExtension>().await?);
+            },
             CategoryType::End => break,
             _ => println!("{:?}", category.ty()),
         }
-        categories.advance(WORD*category.size());
     }
 
     Ok(())
