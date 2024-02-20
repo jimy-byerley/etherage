@@ -9,8 +9,8 @@
 
     The EEPROM has 2 regions of data:
 
-    - EEPROM registers: fixed addresses, described in [eeprom] and accessed by [Sii]
-    - EEPROM categories: contiguous data blocks, described by the `Category*` structs here and accessed by [SiiCursor]
+    - EEPROM registers: fixed addresses, described in [eeprom] and accessed by [`Sii`]
+    - EEPROM categories: contiguous data blocks, described by [`Category`] and accessed by [`SiiCursor`]
 
     Here is how to use registers:
     ```ignore
@@ -416,6 +416,9 @@ impl From<EthercatError<()>> for EthercatError<SiiError> {
     header for a SII category
     
     ETG.1000.6 table 17
+
+    A Category is an any-length data section starting by this struct as header.
+    The category can be squeezed to read the next one by using its [size](Self::size), its content is idnetified by its [type](Self::ty)
 */
 #[bitsize(32)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
@@ -436,28 +439,69 @@ data::bilge_pdudata!(Category, u32);
 #[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum CategoryType {
     Nop = 0,
-    /// String repository for other Categories structure of this category data see ETG.1000.6 Table 20
+    /**
+        String repository for other Categories structure of this category data
+        see ETG.1000.6 Table 20
+
+        **section content:**
+
+            [num of strings: u8] ([byte length][bytes]) ([byte length][bytes]) ...
+    */
     Strings = 10,
     /// Data Types for future use
     DataTypes = 20,
-    /// General information structure of this category data see ETG.1000.6 Table 21
+    /**
+        General information structure of this category data. see ETG.1000.6 Table 21
+
+        **section content:**  [`General`]
+    */
     General = 30,
-    /// FMMUs to be used structure of this category data see ETG.1000.6 Table 23
+    /**
+        FMMUs to be used structure of this category data. see ETG.1000.6 Table 23
+
+        **section content:**  [`[FmmuUsage; _]`](FmmuUsage)
+    */
     Fmmu = 40,
-    /// second FMMU category added by ETG.2010 table 1
+    /**
+        second FMMU category added by ETG.2010 table 1
+
+        **section content:**  [`[FmmuExtension; _]`](FmmuExtension)
+    */
     FmmuExtension = 42,
-    /// Sync Manager Configuration structure of this category data see ETG.1000.6 Table 24
+    /**
+        Sync Manager Configuration structure of this category data. see ETG.1000.6 Table 24
+
+        **section content:**  [`[SyncManager; _]`](SyncManager)
+    */
     SyncManager = 41,
-    /// second sync manager category added by ETG.2010 table 1
+    /**
+        second sync manager category added by ETG.2010 table 1
+
+        **section content:**  [`[SyncUnit; _]`](SyncUnit)
+    */
     SyncUnit = 43,
-    /// TxPDO description structure of this category data see ETG.1000.6 Table 25
+    /**
+        TxPDO description structure of this category data. see ETG.1000.6 Table 25
+
+        **section content:**  [`[[Pdo][entries]; _]`](Pdo)
+    */
     PdoWrite = 50,
-    /// RxPDO description structure of this category data see ETG.1000.6 Table 25
+    /**
+        RxPDO description structure of this category data. see ETG.1000.6 Table 25
+
+        **section content:**  [`[[Pdo][entries]; _]`](Pdo)
+    */
     PdoRead = 51,
-    /// Distributed Clock for future use
+    /**
+        Distributed Clock for future use
+
+        **section content:**  [`DistributedClock`]
+    */
     Dc = 60,
+
     #[fallback]
     Unsupported = 0x0800,
+
     /// mark the end of SII categories
     End = 0xffff,
 }
@@ -667,6 +711,8 @@ data::bilge_pdudata!(SyncUnit, u8);
     header for category describing a reading or writing PDO
 
     ETG.1000.6 table 25
+
+    following data is [`[PdoEntry; _]`](PdoEntry)
 */
 #[repr(packed)]
 #[derive(Debug, Clone, Eq, PartialEq)]
