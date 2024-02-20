@@ -345,7 +345,7 @@ impl<'a> SiiCursor<'a> {
     pub fn position(&self) -> u16
         {self.position}
     pub fn remain(&self) -> u16
-        {self.end - self.position}
+        {self.end.max(self.position) - self.position}
 
     /// create a new instance of cursor at the same location, it is only meant to ease practice of parsing multiple time the same region
     pub fn shadow(&mut self) -> SiiCursor<'_> {

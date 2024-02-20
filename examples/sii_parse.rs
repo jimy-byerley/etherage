@@ -19,9 +19,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut categories = sii.categories();
     loop {
         let category = categories.unpack::<sii::Category>().await?;
+        if category.ty() == CategoryType::End
+            {break}
         let mut sub = categories.sub(WORD*category.size());
         match category.ty() {
             CategoryType::General => println!("{:#?}", sub.unpack::<sii::General>().await?),
+            CategoryType::Dc => println!("{:#?}", sub.unpack::<sii::DistributedClock>().await?),
             CategoryType::SyncManager => while sub.remain() > 0 {
                 println!("{:#?}", sub.unpack::<sii::SyncManager>().await?);
             },
@@ -30,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             },
             CategoryType::PdoWrite => while sub.remain() > 0 {
                 let pdo = sub.unpack::<sii::Pdo>().await?;
-                println!("{:#?}", pdo);
+                println!("write {:#?}", pdo);
                 for i in 0 .. pdo.entries {
                     let entry = sub.unpack::<sii::PdoEntry>().await?;
                     println!("    {}: {:?}", i, entry);
@@ -38,7 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             },
             CategoryType::PdoRead => while sub.remain() > 0 {
                 let pdo = sub.unpack::<sii::Pdo>().await?;
-                println!("{:#?}", pdo);
+                println!("read {:#?}", pdo);
                 for i in 0 .. pdo.entries {
                     let entry = sub.unpack::<sii::PdoEntry>().await?;
                     println!("    {}: {:?}", i, entry);
@@ -50,7 +53,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             CategoryType::FmmuExtension => while sub.remain() > 0 {
                 println!("{:#?}", sub.unpack::<sii::FmmuExtension>().await?);
             },
-            CategoryType::End => break,
             _ => println!("{:?}", category.ty()),
         }
     }
