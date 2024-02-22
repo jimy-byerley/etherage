@@ -75,11 +75,6 @@ use std::{
 use bilge::prelude::*;
 
 
-/// slave physical memory range used for sync channels mapping
-// const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1800, end: 0x1f00};
-const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1000, end: 0x1f00};
-
-
 /// convenient object to manage slaves configurations and logical memory
 pub struct Allocator {
     internal: Mutex<AllocatorInternal>,
@@ -259,9 +254,6 @@ impl<'a> Group<'a> {
 
         assert_eq!(slave.expected(), CommunicationState::PreOperational, "slave must be in preop state to configure a mapping");
 
-        // range of physical memory to be mapped
-        let physical = SLAVE_PHYSICAL_MAPPABLE;
-
         let mut coe = slave.coe().await;
         let priority = u2::new(1);
 
@@ -330,7 +322,6 @@ impl<'a> Group<'a> {
         // the read direction also prevent the memory content to be written before being read by a LRW command, so it is filtering memory accesses
         // no bit alignment is supported now, so bit offsets are 0 at start and 7 at end
         for (i, entry) in config.fmmu.iter().enumerate() {
-            assert!(entry.physical + entry.length < physical.end);
             master.fpwr(address, registers::fmmu.entry(i as u8), {
                 let mut config = registers::FmmuEntry::default();
                 config.set_logical_start_byte(entry.logical + (self.offset as u32));
@@ -547,6 +538,8 @@ impl<'a> MappingSlave<'a> {
         default.extend(range.map(|_| 0));
         field.set(&mut default, value);
     }
+
+
     /// map a range of physical memory, and return its matching range in the logical memory
     pub fn range(&mut self, direction: SyncDirection, range: Range<u16>) -> Range<usize> {
         let size = range.end - range.start;
