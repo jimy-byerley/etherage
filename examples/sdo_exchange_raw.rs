@@ -13,13 +13,17 @@ async fn main() -> std::io::Result<()> {
     let master = RawMaster::new(EthernetSocket::new("eno1")?);
 
     // set fixed addresses
-    master.apwr(0, registers::address::fixed, 1).await.one().unwrap();
-    master.apwr(1, registers::address::fixed, 2).await.one().unwrap();
-
     let slave = 1;
+    master.apwr(0, registers::address::fixed, slave).await.one().unwrap();
+
 
     // initialize mailbox
-    let mailbox = Arc::new(Mutex::new(Mailbox::new(master.clone(), 1, 0x1000 .. 0x1103, 0x1104 .. 0x1200).await.unwrap()));
+    let mailbox = Arc::new(Mutex::new(Mailbox::new(
+            master.clone(),
+            slave,
+            (registers::sync_manager::interface.mailbox_write(), 0x1000 .. 0x1103),
+            (registers::sync_manager::interface.mailbox_read(), 0x1104 .. 0x1200),
+            ).await.unwrap()));
     let mut can = Can::new(mailbox);
 
     master.fpwr(slave, registers::sii::access, {

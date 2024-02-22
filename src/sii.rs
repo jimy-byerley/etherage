@@ -447,7 +447,9 @@ pub enum CategoryType {
 
         **section content:**
 
+        ```ignore
             [num of strings: u8] ([byte length][bytes]) ([byte length][bytes]) ...
+        ```
     */
     Strings = 10,
     /// Data Types for future use

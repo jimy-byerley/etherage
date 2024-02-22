@@ -237,7 +237,7 @@ impl<'a> Slave<'a> {
 
         ## Note:
 
-            at the moment, only sync0 is supported. sync1 is not, SM-sync is not
+        at the moment, only sync0 is supported. sync1 is not, SM-sync is not
     */
     pub async fn init_sync(&mut self, period: Duration, activation: Duration) -> EthercatResult {
         assert_eq!(self.state, PreOperational);
