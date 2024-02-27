@@ -112,6 +112,8 @@ impl AsRawFd for EthernetSocket {
     }
 }
 
+use tokio::io::Ready;
+
 impl EthercatSocket for EthernetSocket {
     fn poll_receive(&self, cx: &mut Context<'_>, data: &mut [u8]) -> Poll<Result<usize>> {
         if let Poll::Ready(guard) = self.asyncfd.poll_read_ready(cx) {
@@ -125,14 +127,13 @@ impl EthercatSocket for EthernetSocket {
                     packed.len(),
                 )
             };
-//             if len < 0
-//                 {return Poll::Ready(Err(io::Error::last_os_error()))}
-//             if len == 0
+            if len > 0
+                {guard.retain_ready()}
+            else
+                {guard.clear_ready_matching(Ready::READABLE)}
             if len <= 0
                 {return Poll::Pending}
-            
-            guard.clear_ready();
-                
+
             let frame = EthernetFrame::unpack(&packed[.. (len as usize)]);
             if frame.header != self.header
                 {return Poll::Pending}
@@ -145,8 +146,7 @@ impl EthercatSocket for EthernetSocket {
     }
     fn poll_send(&self, cx: &mut Context<'_>, data: &[u8]) -> Poll<Result<()>> {
         if let Poll::Ready(guard) = self.asyncfd.poll_write_ready(cx) {
-            guard?.clear_ready();
-            
+            let mut guard = guard?;
             // the maximum ethernet frame used in ethercat is reasonably small so we can allocate the maximum on the stack
             let mut packed = [0u8; MAX_ETHERNET_FRAME];
             let packet = EthernetFrame {header: self.header.clone(), data};
@@ -160,6 +160,10 @@ impl EthercatSocket for EthernetSocket {
                     data.len(),
                 )
             };
+            if len > 0
+                {guard.retain_ready()}
+            else
+                {guard.clear_ready_matching(Ready::WRITABLE)}
             if len < 0 
                 {Poll::Ready(Err(Error::last_os_error()))}
             else 
