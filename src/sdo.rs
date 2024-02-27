@@ -643,10 +643,10 @@ impl fmt::Debug for PdoEntry {
 */
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SyncChannel {
-    /// index of the SDO that configures the SyncChannel
-    pub index: u16,
     /// whether this channel is to be read or written by the master, this might be set by the user if the slave supports it.
     pub direction: SyncDirection,
+    /// index of the SDO that configures the SyncChannel
+    pub index: u16,
     /// max number of PDO that can be assigned to the SyncChannel
     pub capacity: u8,
 }
@@ -1361,17 +1361,37 @@ pub enum OperationMode {
     /// actuator power disabled
     #[default]
     Off = 0,
-    /// PP
+    /**
+        PP
+
+        In this mode the master sends parameters for a trapezoid velocity profile, the servodrive will run it in position control mode. The command can be sent once and aborted or awaited for using the [ControlWord] or [StatusWord]
+    */
     ProfilePosition = 1,
     /// VL
     Velocity = 2,
-    /// PV
+    /**
+        PV
+
+        In this mode the master sends parameters for a trapezoid velocity profile, the servodrive will run it in velocity control mode. The command can be sent once and aborted or awaited for using the [ControlWord] or [StatusWord]
+    */
     ProfileVelocity = 3,
-    /// TQ
+    /**
+        TQ
+
+        In this mode the master sends parameters for a trapezoid evolution of torque. The command can be sent once and aborted or awaited for using the [ControlWord] or [StatusWord]
+    */
     TorqueProfile = 4,
-    /// HM
+    /**
+        HM
+
+        In this mode the servodrives automatically search for homing position using its torque or eventual limits sensors. The command can be sent once and aborted or awaited for using the [ControlWord] or [StatusWord]
+    */
     Homing = 6,
-    /// IP
+    /**
+        IP
+
+        Roughly identical to [Self::SynchronousPosition]
+    */
     InterpolatedPosition = 7,
 
     /**

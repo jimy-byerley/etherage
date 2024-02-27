@@ -9,15 +9,22 @@ use core::{
     trait for data types than can be packed/unpacked to/from a PDU
 */
 pub trait PduData: Sized {
+    /// identifier for this data type (according to ESI file)
     const ID: TypeId;
+    /// byte array for serializing this data
     type Packed: Storage;
 
+    /// serialize to a byte slice (the slice might be bigger than actually needed)
     fn pack(&self, dst: &mut [u8]) -> PackingResult<()>;
+    /// deserialize from a byte slice (the slice might be bigger than actually needed)
     fn unpack(src: &[u8]) -> PackingResult<Self>;
 
+    /// convenient getter for [Self::Packed::LEN]
     fn packed_size() -> usize  {Self::Packed::LEN}
+    /// convenient getter for [Self::Packed::LEN] * 8
     fn packed_bitsize() -> usize {Self::Packed::LEN*8}
     
+    /// like [Self::pack] but to a byte array instead of a slice
     fn packed(&self) -> PackingResult<Self::Packed> {
         let mut buffer = Self::Packed::uninit();
         self.pack(buffer.as_mut())?;

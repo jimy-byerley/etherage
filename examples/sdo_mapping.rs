@@ -2,10 +2,12 @@ use std::error::Error;
 use etherage::{
     EthernetSocket, RawMaster,
     Slave, SlaveAddress, CommunicationState,
-    sdo::{self, Sdo, SyncDirection},
+    sdo::{self, Sdo},
     mapping::{self, Mapping},
-    registers,
+    registers::{self, SyncDirection},
     };
+
+use etherage::Field;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -15,16 +17,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
-        let restatus = slave.register(SyncDirection::Read, registers::al::status);
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c12, direction: SyncDirection::Write, capacity: 10 });
-            let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1600, false, 10));
+        let alstatus = slave.register(SyncDirection::Read, registers::al::status);
+        let mut channel = slave.channel(
+            sdo::SyncChannel{ direction: SyncDirection::Write, index: 0x1c12, capacity: 10 },
+            // the memory buffer used for sync channels depend on slaves firmware
+            0x1800 .. 0x1c00,
+//           0x1000 .. 0x1400,
+            );
+            let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, fixed: false, capacity: 10});
                 let control = pdo.push(Sdo::<u16>::complete(0x6040));
-        let mut channel = slave.channel(sdo::SyncChannel{ index: 0x1c13, direction: SyncDirection::Read, capacity: 10 });
-            let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1a00, false, 10));
+                let _mode = pdo.push(Sdo::<u8>::complete(0x6060));
+                let _position = pdo.push(Sdo::<i32>::complete(0x607a));
+        let mut channel = slave.channel(
+            sdo::SyncChannel{ direction: SyncDirection::Read, index: 0x1c13, capacity: 10 },
+            // the memory buffer used for sync channels depend on slaves firmware
+            0x1c00 .. 0x2000,
+//           0x1400 .. 0x1800,
+            );
+            let mut pdo = channel.push(sdo::Pdo{ index: 0x1a00, fixed: false, capacity: 10});
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
                 let error = pdo.push(Sdo::<u16>::complete(0x603f));
                 let position = pdo.push(Sdo::<i32>::complete(0x6064));
-                let torque = pdo.push(Sdo::<i16>::complete(0x6077));
     drop(slave);
     println!("done {:#?}", config);
 
@@ -37,21 +50,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut slave = Slave::raw(master.clone(), SlaveAddress::AutoIncremented(0));
     slave.switch(CommunicationState::Init).await?;
     slave.set_address(1).await?;
+
     slave.init_coe().await?;
+
     slave.switch(CommunicationState::PreOperational).await?;
     group.configure(&slave).await?;
+
     slave.switch(CommunicationState::SafeOperational).await?;
     slave.switch(CommunicationState::Operational).await?;
     
     for _ in 0 .. 20 {
         let mut group = group.data().await;
         group.exchange().await;
-        println!("received {:?}  {}  {}  {}  {}",
-            group.get(restatus),
+        println!("received {}  {}  {}",
+            group.get(alstatus).state(),
             group.get(status),
-            group.get(error),
             group.get(position),
-            group.get(torque),
             );
     }
 

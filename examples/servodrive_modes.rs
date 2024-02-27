@@ -1,6 +1,6 @@
 use std::error::Error;
 use core::time::Duration;
-use futures_concurrency::future::Join;
+use futures_concurrency::future::Race;
 use etherage::{
     EthernetSocket, Master,
     Slave, SlaveAddress, CommunicationState,
@@ -14,7 +14,6 @@ use etherage::{
 async fn main() -> Result<(), Box<dyn Error>> {
     let master = Master::new(EthernetSocket::new("eno1")?);
     
-    println!("create mapping");
     let config = mapping::Config::default();
     let mapping = Mapping::new(&config);
     let mut slave = mapping.slave(1);
@@ -24,18 +23,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let controlword      = pdo.push(sdo::cia402::controlword);
                 let target_mode      = pdo.push(sdo::cia402::target::mode);
                 let target_position  = pdo.push(sdo::cia402::target::position);
+                let target_velocity  = pdo.push(sdo::cia402::target::velocity);
+                let target_torque    = pdo.push(sdo::cia402::target::torque);
         let mut channel = slave.channel(sdo::sync_manager.logical_read(), 0x1c00 .. 0x2000);
             let mut pdo = channel.push(sdo::Pdo::with_capacity(0x1a00, false, 10));
                 let statusword       = pdo.push(sdo::cia402::statusword);
                 let error            = pdo.push(sdo::cia402::error);
                 let current_position = pdo.push(sdo::cia402::current::position);
     drop(slave);
-    println!("done {:#?}", config);
-    
     let group = master.group(&mapping);
-    
-    println!("group {:#?}", group);
-    println!("fields {:#?}", (statusword, controlword));
 
     let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0)).await?;
     slave.switch(CommunicationState::Init).await?;
@@ -72,9 +68,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 initial
             };
 
-            use bilge::prelude::u2;
-            println!("power: {:?}", slave.coe().await.sdo_read(&sdo::error, u2::new(0)).await);
-
             println!("switch on");
             switch_on(statusword, controlword, error, &group, &cycle).await;
 
@@ -87,6 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 
 			println!("move forward");
+            group.data().await.set(target_mode, OperationMode::SynchronousPosition);
 			loop {
                 cycle.notified().await;
                 let mut group = group.data().await;
@@ -94,10 +88,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let position = group.get(current_position);
                 if position >= initial + course {break}
                 group.set(target_position, position + increment);
-                println!("    {}", position);
+                print!("    {}\r", position);
+            }
+            {
+                let data = group.data().await;
+                println!("{}  {:x}", data.get(statusword), data.get(error));
+            }
+
+            println!("mode velocity");
+            {
+                let mut data = group.data().await;
+                data.set(target_mode, OperationMode::SynchronousVelocity);
+                data.set(target_velocity, 0);
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            {
+                let data = group.data().await;
+                println!("{}  {:x}", data.get(statusword), data.get(error));
+            }
+
+            println!("mode force");
+            {
+                let mut data = group.data().await;
+                data.set(target_mode, OperationMode::SynchronousTorque);
+                data.set(target_torque, 0);
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            {
+                let data = group.data().await;
+                println!("{}  {:x}", data.get(statusword), data.get(error));
             }
 
 			println!("move backward");
+            group.data().await.set(target_mode, OperationMode::SynchronousPosition);
             loop {
                 cycle.notified().await;
                 let mut group = group.data().await;
@@ -105,12 +128,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let position = group.get(current_position);
                 if position <= initial {break}
                 group.set(target_position, position - increment);
-                println!("    {}", position);
+                print!("    {}\r", position);
+            }
+            {
+                let data = group.data().await;
+                println!("{}  {:x}", data.get(statusword), data.get(error));
             }
 
             println!("done");
         },
-    ).join().await;
+    ).race().await;
 
     Ok(())
 }

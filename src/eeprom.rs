@@ -3,7 +3,7 @@
 
     registers are defined as [Field]s in the EEPROM, which content can be accessed using the instance of [Sii][crate::sii::Sii] (Slave Information Interface) proper to each slave.
 
-    ETG.1000.6 5.4
+    ETG.1000.6 5.4, ETG.2010
 */
 
 use crate::data::{self, PduData, Field};
