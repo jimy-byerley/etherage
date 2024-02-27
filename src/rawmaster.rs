@@ -11,6 +11,8 @@ use std::{
 use core::{
     ops::DerefMut,
     time::Duration,
+    sync::atomic::AtomicBool,
+    sync::atomic::Ordering::*,
     };
 use tokio::{
     task::JoinHandle,
@@ -29,6 +31,7 @@ use crate::{
     registers::ExternalEvent,
     };
 
+use std::time::SystemTime;
 
 /// maximum frame size, currently limited to the ethernet frame size
 // size tolerated by its header (content size coded with 11 bits)
@@ -98,11 +101,13 @@ struct PduState {
     receive: [Option<PduStorage>; 2*MAX_ETHERCAT_PDU],
     /// list of free reception storages
     free: heapless::Vec<usize, {2*MAX_ETHERCAT_PDU}>,
+
+    buffered: Instant,
 }
 /// struct for internal use in RawMaster
 struct PduStorage {
     data: &'static mut [u8],
-    ready: bool,
+    ready: AtomicBool,
     answers: u16,
     sent: Instant,
 }
@@ -123,6 +128,8 @@ impl RawMaster {
                 send: [0; MAX_ETHERCAT_FRAME],
                 receive: [0; 2*MAX_ETHERCAT_PDU].map(|_| None),
                 free: (0 .. 2*MAX_ETHERCAT_PDU).collect(),
+
+                buffered: Instant::now(),
                 }),
             task: Mutex::new(None),
         });
@@ -284,8 +291,12 @@ impl RawMaster {
                 )),
             SlaveAddress::Logical => memory,
         };
+        println!("0-starting {} {}",
+                SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                0);
         
         let (token, ready, _finisher);
+        let mut notification;
         loop {
             // buffering the pdu sending
             
@@ -324,7 +335,7 @@ impl RawMaster {
                                 data.as_mut_ptr(),
                                 data.len(),
                                 )},
-                        ready: false,
+                        ready: AtomicBool::new(false),
                         answers: 0,
                         sent: Instant::now(),
                         });
@@ -361,13 +372,25 @@ impl RawMaster {
                     state.last_start = state.last_end;
                     state.last_end = state.last_start + advance;
                     state.ready = flush;
+
+                    state.buffered = Instant::now();
+                    println!("1-bufferized {} {}",
+                            SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                            token);
                 
                     // memory safety: this item in the array cannot be moved since self is borrowed, and will only be removed later by the current function
                     // we will access it potentially concurrently, but since we only want to detect a change in the value, that's fine
-                    ready = unsafe {&*(&state.receive[token].as_ref().unwrap().ready as *const bool)};
+                    ready = unsafe {&*(&state.receive[token].as_ref().unwrap().ready as *const AtomicBool)};
                     // clean up the receive table at function end, or in case the async runtime cancels this task
                     _finisher = Finisher::new(|| {
                         let mut state = self.pdu_state.lock().unwrap();
+
+                        println!("6-pdu {} {}",
+                            SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                            state.receive[token].as_ref().unwrap().sent.elapsed().as_nanos());
+                        println!("7-token {} {}",
+                            SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                            token);
                         // free the token
                         state.receive[token] = None;
                         state.free.push(token).unwrap();
@@ -375,18 +398,17 @@ impl RawMaster {
                         // BUG: freeing the token on future cancelation does not cancel the packet reception, so the received packet may interfere with any next PDU using this token
                     });
                     
+                    notification = self.received.notified();
+                    self.sendable.notify_one();
                     break
                 }
             }.await;
         }
-                    
-        let mut notification = self.received.notified();
-        self.sendable.notify_one();
 
         // waiting for the answer
         loop {
             notification.await;
-            if *ready {break}
+            if ready.load(Relaxed) {break}
             notification = self.received.notified();
         }
         
@@ -431,7 +453,8 @@ impl RawMaster {
                 let footer = frame.unpack::<PduFooter>()
                     .map_err(|_|  EthercatError::Protocol("unable to unpack PDU footer"))?;
                 storage.answers = footer.working_count();
-                storage.ready = true;
+                storage.ready.store(true, Relaxed);
+                println!("5-unpack {} {}", SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(), storage.sent.elapsed().as_nanos());
             }
             if ! header.next() {break}
             if frame.remain().len() == 0 
@@ -450,9 +473,9 @@ impl RawMaster {
     async fn task_receive(&self) -> EthercatResult {
         let mut receive = [0; MAX_ETHERCAT_FRAME];
         loop {
-            let size = poll_fn(|cx| 
-                self.socket.poll_receive(cx, &mut receive)
-                ).await?;
+            let start = Instant::now();
+            let size = poll_fn(|cx|  self.socket.poll_receive(cx, &mut receive) ).await?;
+            println!("4-receive {} {}", SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(), start.elapsed().as_nanos());
             let mut frame = Cursor::new(&receive[.. size]);
             
             let header = frame.unpack::<EthercatHeader>()?;
@@ -482,6 +505,11 @@ impl RawMaster {
             // wait indefinitely if no data to send
             let ready = loop {
                 self.sendable.notified().await;
+
+//                 let delay = &mut *delay;
+//                 delay.reset(Instant::now() + Duration::from_micros(50));
+//                 delay.await.unwrap();
+
                 let state = self.pdu_state.lock().unwrap();
                 if state.last_end != 0  {break state.ready}
             };
@@ -489,7 +517,7 @@ impl RawMaster {
             let send = {
                 let mut state = if ready {
                     self.pdu_state.lock().unwrap()
-                } 
+                }
                 else {
                     delay.reset(Instant::now() + self.pdu_merge_time);
                     // wait for more data until a timeout once data is present
@@ -498,9 +526,7 @@ impl RawMaster {
                         async {
                             delay.await.unwrap();
                             // TODO: handle the possible ioerror in the delay
-                            let mut state = self.pdu_state.lock().unwrap();
-                            state.ready = true;
-                            state
+                            self.pdu_state.lock().unwrap()
                         },
                         // wait for more data in the batch
                         async { loop {
@@ -510,12 +536,23 @@ impl RawMaster {
                         }},
                     ).race().await
                 };
+                state.ready = true;
+//                             let mut state = self.pdu_state.lock().unwrap();
+//                             state.ready = true;
                 
                 // check header
                 EthercatHeader::new(
                     u11::new((state.last_end - EthercatHeader::packed_size()) as u16),
                     EthercatType::PDU,
                     ).pack(&mut state.send).unwrap();
+
+                println!("2-beforesend {} {}", SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                                        state.buffered.elapsed().as_nanos());
+//                 println!("beforesend {} {}", SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                                         state.receive.iter()
+//                                             .filter_map(|e| e.as_ref())
+//                                             .map(|storage|  storage.sent.elapsed().as_nanos())
+//                                             .max().unwrap_or(0));
 
                 unsafe {std::slice::from_raw_parts_mut(
                                 state.send.as_mut_ptr(), 
@@ -524,14 +561,19 @@ impl RawMaster {
             };
             
             // send
-            // we are blocking the async machine until the send ends
-            // we assume it is not a long operation to copy those data into the system buffer
-            poll_fn(|cx|
-                self.socket.poll_send(cx, &send)
-                ).await?;
+            poll_fn(|cx| self.socket.poll_send(cx, &send) ).await?;
             {
 //                 println!("reset buffer");
                 let mut state = self.pdu_state.lock().unwrap();
+
+                println!("3-aftersend {} {}", SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                                    state.buffered.elapsed().as_nanos());
+//                 println!("aftersend {} {}", SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                                     state.receive.iter()
+//                                             .filter_map(|e| e.as_ref())
+//                                             .map(|storage|  storage.sent.elapsed().as_nanos())
+//                                             .max().unwrap_or(0));
+
                 // reset state
                 state.ready = false;
                 state.last_end = 0;
@@ -553,7 +595,7 @@ impl RawMaster {
                 if let Some(storage) = storage {
                     if date.duration_since(storage.sent) > timeout {
                         println!("token {} timeout", token);
-                        storage.ready = true;
+                        storage.ready.store(true, Relaxed);
                     }
                 }
             }
