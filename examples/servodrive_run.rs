@@ -78,10 +78,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("switch on");
             switch_on(statusword, controlword, error, &group, &cycle).await;
 
-            // coder with 2^18 pulses/rotation
+            // coder with 2^23 pulses/rotation
 // 			let increment = 3_000_000;
 // 			let course = 100_000_000;
-            // coder with less
+            // coder with 2^16 pulses/rotation
 			let increment = 1_000;
 			let course = 100_000;
 

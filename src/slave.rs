@@ -233,11 +233,13 @@ impl<'a> Slave<'a> {
     }
 
     /**
-        enable DC-sync
+        enable synchronization of slaves tasks to the master
+
+        Once enabled, the synchronous data exchanges done by the master must be in synchronization with the [DistributedClock](crate::clock::DistributedClock). And should send by anticipating the master-reference delay so that the data arrives on the reference slave when the clock value modulo is wrapping.
 
         ## Note:
 
-        at the moment, only sync0 is supported. sync1 is not, SM-sync is not
+        at the moment, only dc sync0 is supported. dc sync1 is not, SM-sync is not, SM-DC-sync is not
     */
     pub async fn init_sync(&mut self, period: Duration, activation: Duration) -> EthercatResult {
         assert_eq!(self.state, PreOperational);
