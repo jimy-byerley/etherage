@@ -153,11 +153,10 @@ impl Mailbox {
         let mut buffer = [0; MAILBOX_MAX_SIZE];
 
         // receive header and some more bytes for getting small messages in one shot
-        if self.master.pdu(
-                    PduCommand::FPRD, SlaveAddress::Fixed(self.slave),
+        if self.master.read_slice(SlaveAddress::Fixed(self.slave),
                     self.read.address.into(),
                     &mut buffer[.. MailboxHeader::packed_size() + small],
-                    false).await != 1
+                    ).await.answers != 1
             {return Ok(None)}
 
         // check header
@@ -183,11 +182,10 @@ impl Mailbox {
             async {
                 // receive the additional data
                 if header.length() as usize > small {
-                    if self.master.pdu(
-                                PduCommand::FPRD, SlaveAddress::Fixed(self.slave),
+                    if self.master.read_slice(SlaveAddress::Fixed(self.slave),
                                 self.read.address as u32 + frame.position() as u32,
                                 received,
-                                false).await != 1
+                                ).await.answers != 1
                         {return Ok(None)}
                 }
                 else {
@@ -248,17 +246,17 @@ impl Mailbox {
                 // write beginning of buffer and last byte for slave triggering
                 let last = Field::<u16>::simple(usize::from(self.write.address) + self.write.max-u16::packed_size());
                 let (writing, end) = (
-                    self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), sent, false),
+                    self.master.write_slice(SlaveAddress::Fixed(self.slave), self.write.address.into(), sent),
                     // the mailbox processing is done once the last mailbox byte is written, so write the last byte alone
                     self.master.fpwr(self.slave, last, 0),
                     ).join().await;
-                if end.answers == 1 && writing == 1
+                if end.answers == 1 && writing.answers == 1
                     {break}
             }
         }
         else {
             // write the full buffer
-            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut(), false).await != 1
+            while self.master.write_slice(SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut()).await.answers != 1
                 {}
         }
         Ok(())

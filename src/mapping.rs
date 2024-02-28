@@ -55,7 +55,7 @@
 */
 
 use crate::{
-    rawmaster::{RawMaster, PduCommand, SlaveAddress},
+    rawmaster::{RawMaster, Topic, PduCommand, SlaveAddress},
     data::{PduData, Field},
     sdo::{self, Sdo, SyncDirection},
     slave::{Slave, CommunicationState},
@@ -101,7 +101,7 @@ impl Allocator {
     }
     /// allocate the memory area and the slaves for the given mapping.
     /// returning a [Group] for using that memory and communicate with the slaves
-    pub fn group<'a>(&'a self, master: &'a RawMaster, mapping: &Mapping) -> Group<'a> {
+    pub async fn group<'a>(&'a self, master: &'a RawMaster, mapping: &Mapping<'_>) -> Group<'a> {
         // compute mapping size
         let size = mapping.offset.borrow().clone();
 
@@ -136,9 +136,16 @@ impl Allocator {
                     new
                 });
         }
+
         // create initial buffers
-        let mut buffer = mapping.default.borrow().clone();
-        buffer.extend((buffer.len() .. size as usize).map(|_| 0));
+        let mut modification = mapping.default.borrow().clone();
+        modification.extend((modification.len() .. size as usize).map(|_| 0));
+        let mut exchange = modification.clone();
+        let topic = master.topic(PduCommand::LRW, SlaveAddress::Logical, slot.position,
+                unsafe { std::slice::from_raw_parts_mut(
+                    exchange.as_mut_ptr(),
+                    exchange.len(),
+                    )}).await;
         // create group
         Group {
             allocator: self,
@@ -148,10 +155,10 @@ impl Allocator {
 
             config: slaves,
             data: tokio::sync::Mutex::new(GroupData {
-                master,
+                topic: Some(topic),
                 offset: slot.position,
-                read: buffer.clone(),
-                write: buffer,
+                modification,
+                exchange,
             }),
         }
     }
@@ -224,13 +231,13 @@ pub struct Group<'a> {
     data: tokio::sync::Mutex<GroupData<'a>>,
 }
 pub struct GroupData<'a> {
-    master: &'a RawMaster,
+    topic: Option<Topic<'a>>,
     /// byte offset of this data group in the logical memory
     offset: u32,
-    /// data duplex: data to read from slave
-    read: Vec<u8>,
-    /// data duplex: data to write to slave
-    write: Vec<u8>,
+    /// data modification buffer
+    modification: Vec<u8>,
+    /// exchange buffer
+    exchange: Vec<u8>,
 }
 impl<'a> Group<'a> {
     /// the configuration of slaves
@@ -349,38 +356,34 @@ impl<'a> Group<'a> {
     }
 }
 impl<'a> GroupData<'a> {
-    pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
-    
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
-        // TODO: add a fallback implementation in case the slave does not support *RW commands
-        self.master.pdu(PduCommand::LRW, SlaveAddress::Logical, self.offset, self.write.as_mut_slice(), false).await;
-        self.read.copy_from_slice(&self.write);
-        self.write.as_mut_slice()
+        self.topic.as_mut().unwrap().receive(Some(self.modification.as_mut_slice()));
+        self.topic.as_mut().unwrap().send(Some(self.modification.as_mut_slice())).await;
+        self.modification.as_mut_slice()
     }
     /// read data slice from segment
-    pub async fn read(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LRD, SlaveAddress::Logical, self.offset, self.read.as_mut_slice(), false).await;
-        self.read.as_mut_slice()
+    pub async fn read(&mut self) {
+        self.topic.as_mut().unwrap().receive(Some(self.modification.as_mut_slice()));
     }
     /// write data slice to segment
-    pub async fn write(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LWR, SlaveAddress::Logical, self.offset, self.write.as_mut_slice(), false).await;
-        self.write.as_mut_slice()
+    pub async fn write(&mut self) {
+        self.topic.as_mut().unwrap().send(Some(self.modification.as_mut_slice())).await;
     }
-    
-    pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.read.as_mut_slice()}
-    pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.write.as_mut_slice()}
+
+    pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.modification.as_mut_slice()}
+    pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.modification.as_mut_slice()}
     
     /// extract a mapped value from the buffer of last received data
     pub fn get<T: PduData>(&self, field: Field<T>) -> T
-        {field.get(&self.read)}
+        {field.get(&self.modification)}
     /// pack a mapped value to the buffer for next data write
     pub fn set<T: PduData>(&mut self, field: Field<T>, value: T)
-        {field.set(&mut self.write, value)}
+        {field.set(&mut self.modification, value)}
 }
 impl Drop for Group<'_> {
     fn drop(&mut self) {
+        self.data.try_lock().unwrap().topic.take();
         self.allocator.internal.lock().unwrap()
             .free.remove(&LogicalSlot {size: self.allocated, position: self.offset});
     }

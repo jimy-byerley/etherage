@@ -127,6 +127,7 @@ impl EthercatSocket for EthernetSocket {
                     packed.len(),
                 )
             };
+            // what if new data is received during this read ? will tokyo wake us despite we cleared the read flag ?
             if len > 0
                 {guard.retain_ready()}
             else

@@ -105,8 +105,8 @@ impl Master {
     }
 
     /// allocate a group in the logical memory
-    pub fn group(&'_ self, mapping: &Mapping) -> Group<'_> {
-        self.allocator.group(&self.raw, mapping)
+    pub async fn group<'a>(&'a self, mapping: &Mapping<'_>) -> Group<'a> {
+        self.allocator.group(&self.raw, mapping).await
     }
 
     /**

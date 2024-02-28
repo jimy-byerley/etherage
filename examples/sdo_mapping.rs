@@ -21,8 +21,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut channel = slave.channel(
             sdo::SyncChannel{ direction: SyncDirection::Write, index: 0x1c12, capacity: 10 },
             // the memory buffer used for sync channels depend on slaves firmware
-            0x1800 .. 0x1c00,
-//           0x1000 .. 0x1400,
+//             0x1800 .. 0x1c00,
+          0x1000 .. 0x1400,
             );
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1600, fixed: false, capacity: 10});
                 let control = pdo.push(Sdo::<u16>::complete(0x6040));
@@ -31,8 +31,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut channel = slave.channel(
             sdo::SyncChannel{ direction: SyncDirection::Read, index: 0x1c13, capacity: 10 },
             // the memory buffer used for sync channels depend on slaves firmware
-            0x1c00 .. 0x2000,
-//           0x1400 .. 0x1800,
+//             0x1c00 .. 0x2000,
+          0x1400 .. 0x1800,
             );
             let mut pdo = channel.push(sdo::Pdo{ index: 0x1a00, fixed: false, capacity: 10});
                 let status = pdo.push(Sdo::<u16>::complete(0x6041));
@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("done {:#?}", config);
 
     let allocator = mapping::Allocator::new();
-    let group = allocator.group(&master, &mapping);
+    let group = allocator.group(&master, &mapping).await;
 
     println!("group {:#?}", group);
     println!("fields  {:#?}", (control, status, error, position));
@@ -60,6 +60,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     slave.switch(CommunicationState::Operational).await?;
     
     for _ in 0 .. 20 {
+        tokio_timerfd::sleep(std::time::Duration::from_millis(2)).await.unwrap();
         let mut group = group.data().await;
         group.exchange().await;
         println!("received {}  {}  {}",

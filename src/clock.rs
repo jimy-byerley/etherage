@@ -418,13 +418,18 @@ impl DistributedClock {
 		};
 		let mut buffer = (0u64).packed().unwrap();
 		let sent = self.reduced();
-		let received = self.master.pdu(
-			command, 
-			referent, 
-			registers::dc::system_time.byte as u32, 
-			&mut buffer, 
-			true,
-			).await; 
+		let received = {
+			let mut command = self.master.topic(
+				command,
+				referent,
+				registers::dc::system_time.byte as u32,
+				&mut buffer,
+				).await;
+			command.send(None).await;
+			self.master.flush();
+			command.wait().await;
+			command.receive(None).answers
+			};
 		// update master offset to update system time on master
 		if received != 0 {
 			let div = 512;
