@@ -358,8 +358,8 @@ impl<'a> Group<'a> {
 impl<'a> GroupData<'a> {
     /// read and write relevant data from master to segment
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
-        self.topic.as_mut().unwrap().receive(Some(self.modification.as_mut_slice()));
         self.topic.as_mut().unwrap().send(Some(self.modification.as_mut_slice())).await;
+        self.topic.as_mut().unwrap().receive(Some(self.modification.as_mut_slice()));
         self.modification.as_mut_slice()
     }
     /// read data slice from segment

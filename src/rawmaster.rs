@@ -323,9 +323,9 @@ impl RawMaster {
                 let footer = frame.unpack::<PduFooter>()
                     .map_err(|_|  EthercatError::Protocol("unable to unpack PDU footer"))?;
                 storage.ready.store(footer.working_count().saturating_add(1), Relaxed);
-                println!("6-unpack {} {}",
-                    SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                    storage.sent.elapsed().as_nanos());
+//                 println!("6-unpack {} {}",
+//                     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                     storage.sent.elapsed().as_nanos());
             }
             if ! header.next() {break}
             if frame.remain().len() == 0 
@@ -346,9 +346,9 @@ impl RawMaster {
         loop {
             let start = Instant::now();
             let size = poll_fn(|cx|  self.socket.poll_receive(cx, &mut receive) ).await?;
-            println!("5-receive {} {}",
-                SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                start.elapsed().as_nanos());
+//             println!("5-receive {} {}",
+//                 SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                 start.elapsed().as_nanos());
             let mut frame = Cursor::new(&receive[.. size]);
             
             let header = frame.unpack::<EthercatHeader>()?;
@@ -412,9 +412,9 @@ impl RawMaster {
                     EthercatType::PDU,
                     ).pack(&mut state.send).unwrap();
 
-                println!("3-beforesend {} {}",
-                        SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                        state.buffered.elapsed().as_nanos());
+//                 println!("3-beforesend {} {}",
+//                         SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                         state.buffered.elapsed().as_nanos());
 
                 unsafe {std::slice::from_raw_parts_mut(
                                 state.send.as_mut_ptr(), 
@@ -427,9 +427,9 @@ impl RawMaster {
             {
                 let mut state = self.state.lock().unwrap();
 
-                println!("4-aftersend {} {}",
-                        SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                        state.buffered.elapsed().as_nanos());
+//                 println!("4-aftersend {} {}",
+//                         SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                         state.buffered.elapsed().as_nanos());
 
                 // reset state
                 state.ready = false;
@@ -503,9 +503,9 @@ impl RawMaster {
                 )),
             SlaveAddress::Logical => memory,
         };
-        println!("0-starting {} {}",
-                SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                0);
+//         println!("0-starting {} {}",
+//                 SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                 0);
 
         let (token, ready);
         loop {
@@ -543,9 +543,9 @@ impl RawMaster {
                 }
             }.await;
         }
-        println!("1-tokenized {} {}",
-                SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                token);
+//         println!("1-tokenized {} {}",
+//                 SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                 token);
 
         Topic {
             master: self,
@@ -625,9 +625,9 @@ impl Topic<'_> {
                     state.receive[self.token].as_mut().unwrap().sent = Instant::now();
 
                     state.buffered = Instant::now();
-                    println!("2-bufferized {} {}",
-                            SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                            self.token);
+//                     println!("2-bufferized {} {}",
+//                             SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                             self.token);
 
                     self.master.sendable.notify_one();
                     break
@@ -661,17 +661,17 @@ impl Topic<'_> {
         else {
             self.ready.swap(0, Relaxed).saturating_sub(1)
         };
-        {
-            let state = self.master.state.lock().unwrap();
-            let storage = state.receive[self.token].as_ref().unwrap();
+//         {
+//             let state = self.master.state.lock().unwrap();
+//             let storage = state.receive[self.token].as_ref().unwrap();
 
-            println!("7-pdu {} {}",
-                SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                storage.sent.elapsed().as_nanos());
-        }
-        println!("8-token {} {}",
-            SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-            self.token);
+//             println!("7-pdu {} {}",
+//                 SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//                 storage.sent.elapsed().as_nanos());
+//         }
+//         println!("8-token {} {}",
+//             SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+//             self.token);
         PduAnswer {
             answers,
             data: [],
