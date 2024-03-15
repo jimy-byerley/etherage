@@ -21,7 +21,7 @@ ioprio ="^0.2.0"
 bilge = "^0.2"
 tokio-timerfd = "^0.2"
 futures = "^0.3"
-# magetex = { git = "https://github.com/Geehaich/useless_stuff_rust/tree/main/pseudo_mutex"}
+# magetex = { git = "https://github.com/Geehaich/useless_stuff_rust.git/pseudo_mutex"}
 magetex = { path = "../pseudo_mutex"}
 
 [target.'cfg(target_os = "linux")'.dependencies]

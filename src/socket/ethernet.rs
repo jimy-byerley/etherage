@@ -86,7 +86,7 @@ impl EthernetSocket {
                 &sockaddr as *const libc::sockaddr_ll as *const libc::sockaddr,
                 std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
             );
-            if res == -1 
+            if res == -1
                 {return Err(Error::last_os_error());}
         }
 
@@ -112,12 +112,14 @@ impl AsRawFd for EthernetSocket {
     }
 }
 
+use tokio::io::Ready;
+
 impl EthercatSocket for EthernetSocket {
     fn poll_receive(&self, cx: &mut Context<'_>, data: &mut [u8]) -> Poll<Result<usize>> {
         if let Poll::Ready(guard) = self.asyncfd.poll_read_ready(cx) {
             let mut guard = guard?;
             let mut packed = [0u8; MAX_ETHERNET_FRAME];
-            
+
             let len = unsafe {
                 libc::read(
                     self.as_raw_fd(),
@@ -125,34 +127,35 @@ impl EthercatSocket for EthernetSocket {
                     packed.len(),
                 )
             };
-//             if len < 0
-//                 {return Poll::Ready(Err(io::Error::last_os_error()))}
-//             if len == 0
+            if len > 0
+                {guard.retain_ready()}
+            else
+                {guard.clear_ready_matching(Ready::READABLE)}
             if len <= 0
                 {return Poll::Pending}
-            
-            guard.clear_ready();
-                
+
             let frame = EthernetFrame::unpack(&packed[.. (len as usize)]);
             if frame.header != self.header
                 {return Poll::Pending}
             data[.. frame.data.len()].copy_from_slice(frame.data);
-        
+
             // extract content
+            println!("rcv {}",std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_nanos());
             Poll::Ready(Ok(frame.data.len() as usize))
         }
         else {Poll::Pending}
     }
+
     fn poll_send(&self, cx: &mut Context<'_>, data: &[u8]) -> Poll<Result<()>> {
         if let Poll::Ready(guard) = self.asyncfd.poll_write_ready(cx) {
-            guard?.clear_ready();
-            
+            let mut guard = guard?;
+
             // the maximum ethernet frame used in ethercat is reasonably small so we can allocate the maximum on the stack
             let mut packed = [0u8; MAX_ETHERNET_FRAME];
             let packet = EthernetFrame {header: self.header.clone(), data};
             packet.pack(&mut packed);
             let data = &packed[.. packet.size()];
-            
+
             let len = unsafe {
                 libc::write(
                     self.as_raw_fd(),
@@ -160,15 +163,23 @@ impl EthercatSocket for EthernetSocket {
                     data.len(),
                 )
             };
-            if len < 0 
+            if len > 0 {
+                guard.retain_ready() }
+            else {
+                guard.clear_ready_matching(Ready::WRITABLE) }
+            if len < 0
                 {Poll::Ready(Err(Error::last_os_error()))}
-            else 
-                {Poll::Ready(Ok(()))}
+            else
+                {
+                    println!("snd {}",std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_nanos());
+                    Poll::Ready(Ok(()))
+                }
         }
         else {Poll::Pending}
     }
+
     fn max_frame(&self) -> usize  {
-        MAX_ETHERNET_FRAME 
+        MAX_ETHERNET_FRAME
         - <EthernetHeader as PackedStruct>::ByteArray::len()
     }
 }
@@ -192,7 +203,7 @@ fn ifreq_ioctl(
         #[allow(trivial_casts)]
         let res = libc::ioctl(fd, cmd, ifreq as *mut ifreq);
 
-        if res == -1 
+        if res == -1
             {return Err(io::Error::last_os_error());}
     }
 
@@ -242,7 +253,7 @@ impl<'a> EthernetFrame<'a> {
         // extract content
         let data = &src[<EthernetHeader as PackedStruct>::ByteArray::len() ..];
         let data = &data[.. data.len().min(data.len())];
-    
+
         Self {header, data}
     }
 }
@@ -256,7 +267,7 @@ struct EthernetHeader {
     /// source MAC address
     #[packed_field(bytes="2:7")]  src: [u8;6],
     // vlan is said to be optional and this is not present in most ethercat frames, so will not be used here
-    //#[packed_field(bytes="2:5")]  vlan: [u8;4],  
+    //#[packed_field(bytes="2:5")]  vlan: [u8;4],
     /// ethernet protocol
     #[packed_field(bytes="0:1")]  protocol: u16,
 }

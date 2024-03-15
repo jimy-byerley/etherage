@@ -238,7 +238,6 @@ struct GeneralFlags {
     ident_phym: bool,
     _reserved: u3,
 }
-
 #[bitsize(16)]
 struct PhysicialPorts {
     ports: [PhysicalPort; 4];

@@ -24,7 +24,7 @@
     - **DC-synchronous**
         slaves tasks are triggered by their clock synchronized with other slaves and the master. This mode is implemented in [SyncClock]
         according to ETG.1020, this mode is required only for the application that require high precision (<ms) in operation.
-        
+
         Multiple mode of DC synchronous for DC unit in slave are available. The default one used only the sync_0 impulse to trigger based time. (see [this](/etherage/schemes/synchronization-DC-submodes.svg) schematoic to get more information)
 
 
@@ -47,7 +47,7 @@ use crate::{
     registers::{self, AlState},
     sdo::{self, SyncMangerFull},
     rawmaster::{RawMaster, PduCommand, SlaveAddress},
-    error::{EthercatError, EthercatResult}, 
+    error::{EthercatError, EthercatResult},
     can::CanError,
     Slave, Sdo,
     };
@@ -195,11 +195,11 @@ impl SyncClock {
             .drain(..)
             .filter_map(|result| match result {
                 Ok((slave, info)) => {
-                    if slave == 0 
+                    if slave == 0
                         {Some(Err(EthercatError::Master("clock synchronization without fixed addresses is unsafe")))}
-                    else if info.dc_supported() 
+                    else if info.dc_supported()
                         {Some(Ok(slave))}
-                    else 
+                    else
                         {None}
                 },
                 Err(err) => Some(Err(err)),
@@ -323,12 +323,12 @@ impl SyncClock {
         println!("static drift");
         for _ in 0..self.drift_frm_count {
             self.master.pdu(
-                PduCommand::BWR, 
-                SlaveAddress::Broadcast, 
-                registers::dc::system_time.byte as u32, 
-                &mut self.global_time().packed().unwrap(), 
+                PduCommand::BWR,
+                SlaveAddress::Broadcast,
+                registers::dc::system_time.byte as u32,
+                &mut self.global_time().packed().unwrap(),
                 true,
-                ).await; 
+                ).await;
         }
 
         println!("initialized");
@@ -396,7 +396,7 @@ impl SyncClock {
                 writting.exact(self.slaves.len() as _)?;
                 let time_diff = time_diff.one()?;
                 self.store_updating(|| unsafe {
-                    (&mut *(&self.slaves[watched] as *const _ as *mut SlaveInfo)).clock.system_difference = time_diff;
+                   // (*(&mut self.slaves.get_mut(watched).unwrap() as *const _ as *mut SlaveInfo)).clock.system_difference = time_diff;
                 });
 
                 watched += 1;
@@ -407,7 +407,7 @@ impl SyncClock {
         }
         Ok(())
     }
-    
+
     /// resynchronize the master offset with the computer system time
     pub fn sync_system(&mut self) {
         self.start = Instant::now();
@@ -433,7 +433,7 @@ impl SyncClock {
 
     /// time offset between the master (the computer's system clock, aka local time) and the reference clock
     pub fn offset_master(&self) -> i128   {
-        self.offset 
+        self.offset
         + i128::try_from(
             self.epoch.duration_since(SystemTime::UNIX_EPOCH)
                         .unwrap().as_nanos()

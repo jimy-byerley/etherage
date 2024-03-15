@@ -25,19 +25,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 else {panic!("slave already has a fixed address")};
 
             let task = async {
-                println!("Init task {}", i+1);
+                //println!("Init task {}", i+1);
                 slave.switch(CommunicationState::Init).await?;
                 slave.set_address(i+1).await?;
-                println!("Init mailbox {}", i+1);
+                //println!("Init mailbox {}", i+1);
                 slave.init_mailbox().await?;
-                println!("Init coe {}", i+1);
+                //println!("Init coe {}", i+1);
                 slave.init_coe().await;
-                println!("Switch to PreOP {}", i+1);
+                //println!("Switch to PreOP {}", i+1);
                 slave.switch(CommunicationState::PreOperational).await?;
-                println!("Lock coe {}", i+1);
+                //println!("Lock coe {}", i+1);
                 let mut can = slave.coe().await;
                 let priority = u2::new(0);
-                println!("Wait physical read {}", i+1);
+                //println!("Wait physical read {}", i+1);
                 let info = slave.physical_read(registers::dl::information).await?;
                 let mut name = [0; 50];
                 let mut hardware = [0; 50];

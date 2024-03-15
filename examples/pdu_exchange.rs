@@ -9,11 +9,8 @@ async fn main() -> EthercatResult<()> {
     let slave = 0;
 
     // test read/write
-    dbg!(1);
     let received = master.aprd(slave, reg).await.one().unwrap();
-    dbg!(2);
     master.apwr(slave, reg, received).await.one().unwrap();
-    dbg!(3);
 
     // test simultaneous read/write
     (

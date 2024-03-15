@@ -86,7 +86,6 @@ impl<'a> Slave<'a> {
     */
     pub async fn new(master: &'a Master, address: SlaveAddress) -> EthercatResult<Slave<'a>> {
         let fixed = SlaveAddress::Fixed(master.raw.read(address, registers::address::fixed).await.one()?);
-        dbg!(14);
         let mut book = master.slaves.lock().await;
 
         if book.contains(&address) || book.contains(&fixed) {
@@ -163,7 +162,6 @@ impl<'a> Slave<'a> {
         let new = SlaveAddress::Fixed(fixed);
         // report existing address if a safemaster is used
         if let Some(safe) = self.safemaster {
-            dbg!(15);
             let mut book = safe.slaves.lock().await;
             book.remove(&self.address);
             book.insert(new);

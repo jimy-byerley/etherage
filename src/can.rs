@@ -85,7 +85,6 @@ impl Can {
         frame.write(&[0; 4]).unwrap();
 
         // send and receive data
-        dbg!(1);
         let mut mailbox = self.mailbox.lock().await;
         mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
         let (header, frame) =
@@ -178,7 +177,6 @@ impl Can {
             frame.write(&[0; 4][data.len() ..]).unwrap();
 
             //Send data and receive acknowledge
-            dbg!(2);
             let mut mailbox = self.mailbox.lock().await;
             mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
             Self::receive_sdo_response(&mut mailbox, &mut buffer, SdoCommandResponse::Download,sdo).await?;
@@ -204,7 +202,6 @@ impl Can {
             frame.write(data.read(segment).unwrap()).unwrap();
 
             //Send data and receive acknowledge
-            dbg!(3);
             let mut mailbox = self.mailbox.lock().await;
             mailbox.write(MailboxType::Can, priority, frame.finish()).await?;
             Self::receive_sdo_response(&mut mailbox, &mut buffer, SdoCommandResponse::Download, sdo).await?;

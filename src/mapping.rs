@@ -597,7 +597,7 @@ impl<'a> MappingSlave<'a> {
         MappingChannel {
             // uncontroled references to self and to configuration
             // this is safe since the returned object holds a mutable reference to self any way
-            entries: unsafe {&mut *(entries as *const _ as *mut _)},
+            entries: unsafe {&mut *(&mut self.config.channels.get_mut(&sdo.index).unwrap().pdos as *mut _)},
             slave: unsafe {&mut *(self as *const _ as *mut _)},
             direction: sdo.direction,
             capacity: sdo.capacity as usize,
@@ -628,7 +628,7 @@ impl<'a> MappingChannel<'a> {
         MappingPdo {
             // uncontroled reference to self and to configuration
             // this is safe since the returned object holds a mutable reference to self any way
-            entries: unsafe {&mut *(entries as *const _ as *mut _)},
+            entries: unsafe {&mut *(&mut self.slave.config.pdos.get_mut(&pdo.index).unwrap().sdos as *mut _)},
             slave: self.slave,
             direction: self.direction,
             capacity: pdo.capacity as usize,
