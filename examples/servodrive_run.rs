@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     drop(slave);
     println!("done {:#?}", config);
     
-    let group = master.group(&mapping);
+    let group = master.group(&mapping).await;
     
     println!("group {:#?}", group);
     println!("fields {:#?}", (statusword, controlword));

@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let error            = pdo.push(sdo::cia402::error);
                 let current_position = pdo.push(sdo::cia402::current::position);
     drop(slave);
-    let group = master.group(&mapping);
+    let group = master.group(&mapping).await;
 
     let mut slave = Slave::new(&master, SlaveAddress::AutoIncremented(0)).await?;
     slave.switch(CommunicationState::Init).await?;

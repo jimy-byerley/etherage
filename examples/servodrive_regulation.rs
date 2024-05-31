@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let error            = pdo.push(sdo::cia402::error);
                 let current_position = pdo.push(sdo::cia402::current::position);
     drop(slave);
-    let group = master.group(&mapping);
+    let group = master.group(&mapping).await;
 
     let kpp = Sdo::<f32>::sub(0x2012, 1, 0);   // position propotional gain
     let kvp = Sdo::<f32>::sub(0x2012, 5, 0);   // velocity propotional gain

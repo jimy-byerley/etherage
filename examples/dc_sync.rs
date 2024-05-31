@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		let mut channel = slave.channel(sdo::sync_manager.logical_read(), 0x1c00 .. 0x2000);
             channel.push(sdo::Pdo::new(0x1600, false));
 	}
-	let group = master.group(&mapping);
+	let group = master.group(&mapping).await;
 
 	// apply mapping to slaves
 	let period = Duration::from_millis(2);
