@@ -356,22 +356,24 @@ impl<'a> Group<'a> {
     }
 }
 impl<'a> GroupData<'a> {
-    /// read and write relevant data from master to segment
+    /// send current content of the buffer to the segment and receive data from the segment if some was pending
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
         self.topic.as_mut().unwrap().send(Some(self.modification.as_mut_slice())).await;
         self.topic.as_mut().unwrap().receive(Some(self.modification.as_mut_slice()));
         self.modification.as_mut_slice()
     }
-    /// read data slice from segment
+    /// receive data from the segment if some was pending
     pub async fn read(&mut self) {
         self.topic.as_mut().unwrap().receive(Some(self.modification.as_mut_slice()));
     }
-    /// write data slice to segment
+    /// send data to the segment
     pub async fn write(&mut self) {
         self.topic.as_mut().unwrap().send(Some(self.modification.as_mut_slice())).await;
     }
 
+    // access to underlying buffer, same as [write_buffer]
     pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.modification.as_mut_slice()}
+    // access to underlying buffer, same as [read_buffer]
     pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.modification.as_mut_slice()}
     
     /// extract a mapped value from the buffer of last received data
@@ -506,7 +508,7 @@ pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
     config: RwLockWriteGuard<'a, ConfigSlave>,
 }
-impl<'a> MappingSlave<'a> {
+impl MappingSlave<'_> {
     /// internal method to increment the logical and physical offsets with the given data length
     /// if the logical offset was changed since the last call to this slave's method (ie. the logical memory contiguity is broken), a new FMMU is automatically configured
     fn insert(&mut self, direction: SyncDirection, length: u16, position: u16) -> usize {
@@ -586,9 +588,9 @@ pub struct MappingChannel<'a> {
     position: u16,
     max: u16,
 }
-impl<'a> MappingChannel<'a> {
+impl MappingChannel<'_> {
     /// add a pdo to this channel, and return an object to map it
-    pub fn push(&'a mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
+    pub fn push(&mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
         assert!(self.entries.len()+1 < self.capacity);
 
         self.entries.push(pdo.index);
@@ -603,7 +605,7 @@ impl<'a> MappingChannel<'a> {
             // uncontroled reference to self and to configuration
             // this is safe since the returned object holds a mutable reference to self any way
             entries: unsafe {&mut *(&mut self.slave.config.pdos.get_mut(&pdo.index).unwrap().sdos as *mut _)},
-            channel: self,
+            channel: unsafe {&mut *(self as *mut _ as usize as *mut _)},
         }
 
         // TODO: make possible to push an alread existing PDO as long as its content is the same

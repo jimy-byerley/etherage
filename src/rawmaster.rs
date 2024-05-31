@@ -288,6 +288,23 @@ impl RawMaster {
                         .receive(None)
     }
 
+    /**
+        reserve a token (a PDU index) for sending PDUs through the ethercat segment.
+        This is the low-level layer of all other PDU sending methods
+
+        ### Parameters
+
+        - `slave`: identifies what memory is accessed by this PDU (might even not be a slave memory, but a memory belonging to the whole segment)
+        - `memory`: address in the selected memory
+            + if slaves physical memory is accessed, it must be a 16bit address
+            + if segment logical memory is accessed, it must be a 32bit address
+        - `data`: buffer of data to send, and to write with the segment's answer, the answer will answer with the same data size as what was sent so the whole buffer will be sent and written back
+        - `flush`: all PDUs in the buffer will be sent together with this PDU immediately rather than withing for the buffering delay, this is helpful for time-bound applications
+    */
+    pub async fn topic<'a>(&'a self, command: PduCommand, slave: SlaveAddress, memory: u32, buffer: &'a mut [u8]) -> Topic<'a> {
+        Topic::new(self, command, slave, memory, buffer).await
+    }
+
     /** 
         trigger sending the buffered PDUs, they will be sent as soon as possible by the sending task instead of waiting for the frame to be full or for the timeout
         
@@ -470,23 +487,17 @@ impl RawMaster {
     pub fn stop(&self) {
         self.task.lock().unwrap().as_ref().map(|handle|  handle.abort());
     }
+}
 
-    /**
-        Send a PDU on the ethercat bus.
-        Returns the number of slaves who processed the command
-
-        - the PDU is buffered with more PDUs if possible
-
-        ### Parameters
-
-        - `slave`: identifies what memory is accessed by this PDU (might even not be a slave memory, but a memory belonging to the whole segment)
-        - `memory`: address in the selected memory
-            + if slaves physical memory is accessed, it must be a 16bit address
-            + if segment logical memory is accessed, it must be a 32bit address
-        - `data`: buffer of data to send, and to write with the segment's answer, the answer will answer with the same data size as what was sent so the whole buffer will be sent and written back
-        - `flush`: all PDUs in the buffer will be sent together with this PDU immediately rather than withing for the buffering delay, this is helpful for time-bound applications
-    */
-    pub async fn topic<'a>(&'a self, command: PduCommand, slave: SlaveAddress, memory: u32, buffer: &'a mut [u8]) -> Topic<'a> {
+pub struct Topic<'a> {
+    master: &'a RawMaster,
+    ready: &'a AtomicU16,
+    token: usize,
+    command: PduCommand,
+    target: u32,
+}
+impl<'a> Topic<'a> {
+    pub async fn new(master: &'a RawMaster, command: PduCommand, slave: SlaveAddress, memory: u32, buffer: &'a mut [u8]) -> Topic<'a> {
         // assemble the address block with slave and memory addresses
         let target = match slave {
             SlaveAddress::Broadcast => u32::from(MemoryAddress::new(
@@ -509,15 +520,11 @@ impl RawMaster {
 
         let (token, ready);
         loop {
-            // buffering the pdu sending
-
-            // this weird scope is here to prevent the rust thread checker to set this async future `!Send` just because there is remaining freed variables with `MutexGuard` type
-            // TODO: restore the previous code (more readable and flexible) once https://github.com/rust-lang/rust/issues/104883 is fixed
             {
-                let mut state = self.state.lock().unwrap();
+                let mut state = master.state.lock().unwrap();
                 if state.free.is_empty() {
                     // there is nothing to do except waiting
-                    self.received.notified()
+                    master.received.notified()
                 }
                 else {
                     // reserving a token number to ensure no other task will exchange a PDU with the same token and receive our data
@@ -548,30 +555,20 @@ impl RawMaster {
 //                 token);
 
         Topic {
-            master: self,
+            master,
             ready,
             token,
             command,
             target,
             }
     }
-}
-
-pub struct Topic<'a> {
-    master: &'a RawMaster,
-    ready: &'a AtomicU16,
-    token: usize,
-    command: PduCommand,
-    target: u32,
-}
-impl Topic<'_> {
     /// send the given data in a pdu
     pub async fn send(&mut self, data: Option<&[u8]>) -> &'_ Self {
         loop {
             // this weird scope is here to prevent the rust thread checker to set this async future `!Send` just because there is remaining freed variables with `MutexGuard` type
             {
                 let mut state = self.master.state.lock().unwrap();
-                // borrowing the data buffer: safety dude we are only using this field in this scope, the borrow checker should allow that
+                // borrowing the data buffer: safety dude, we are only using this field in this scope, the borrow checker should allow that
                 let data = data.unwrap_or(state.receive[self.token].as_ref().unwrap().data);
                 let data = unsafe {std::slice::from_raw_parts(
                         data.as_ptr(),

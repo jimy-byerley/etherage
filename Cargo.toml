@@ -25,7 +25,7 @@ futures = "^0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "^0.2.134"
-thread-priority = "0.13.1"
+thread-priority = "^1.1"
 
 [dev-dependencies]
 tokio = { features = ["macros", "time", "rt-multi-thread"] }

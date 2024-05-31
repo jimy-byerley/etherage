@@ -85,10 +85,18 @@ impl Master {
         This method is marked unsafe since letting the user write registers may break the protocol sequences performed by the protocol implementation. Accessing the low level is communication-unsafe.
     */
     pub unsafe fn get_raw(&self) -> &Arc<RawMaster> {&self.raw}
-//     /**
-// 		this method is safe since it consumes the communication-safe master implementation.
-//     */
-//     pub fn into_raw(self) -> Arc<RawMaster> {self.raw}
+    
+    /**
+		this method is safe since it consumes the communication-safe master implementation.
+    */
+    pub fn into_raw(self) -> Arc<RawMaster> {self.raw}
+    
+    /** 
+        trigger sending the buffered PDUs, they will be sent as soon as possible by the sending task instead of waiting for the frame to be full or for the timeout
+        
+        Note: this method is helpful to manage the stream and make space in the buffer before sending PDUs, but does not help to make sure a PDU is sent deterministic time. To trigger the sending of a PDU, use argument `flush` of [Self::pdu]
+    */
+    pub fn flush(&self) {self.raw.flush()}
 
     /**
         discover all available slaves present in the ethercat segment, in topological order
