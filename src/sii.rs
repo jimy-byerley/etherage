@@ -151,8 +151,8 @@ impl Sii {
     /// read a slice of the slave's EEPROM memory
     pub async fn read_slice<'b>(&mut self, address: u16, value: &'b mut [u8]) -> EthercatResult<&'b [u8], SiiError> {
         // some slaves use 2 byte addresses but declare they are using 1 only, so disable this check for now
-//         if address & !self.mask != 0
-//             {return Err(EthercatError::Master("wrong EEPROM address: address range is 1 byte only"))}
+        if address & !self.mask != 0
+            {return Err(EthercatError::Master("wrong EEPROM address: address range is 1 byte only"))}
 
         let mut start = (address % WORD) as usize;
         let mut cursor = Cursor::new(value.as_mut());

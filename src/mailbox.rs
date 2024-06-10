@@ -3,7 +3,7 @@
 use crate::{
     error::{EthercatError, EthercatResult},
     data::{self, PduData, Cursor, Field},
-    rawmaster::{RawMaster, PduCommand, SlaveAddress},
+    rawmaster::{RawMaster, SlaveAddress},
     registers,
     };
 use core::ops::Range;

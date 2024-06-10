@@ -11,7 +11,7 @@ use std::{
 use core::{
     ops::DerefMut,
     time::Duration,
-    sync::atomic::{AtomicBool, AtomicU16},
+    sync::atomic::AtomicU16,
     sync::atomic::Ordering::*,
     };
 use tokio::{
@@ -31,7 +31,6 @@ use crate::{
     registers::ExternalEvent,
     };
 
-use std::time::SystemTime;
 
 /// maximum frame size, currently limited to the ethernet frame size
 // size tolerated by its header (content size coded with 11 bits)
@@ -111,9 +110,11 @@ struct MasterState {
 }
 /// struct for internal use in RawMaster
 struct PduState {
+    // allocated buffer for reception
     data: &'static mut [u8],
+    // frame working count + 1, staying zero until a frame is received or timeout
     ready: AtomicU16,
-    answers: u16,
+    // sending instant, allowing to count a timeout
     sent: Instant,
 }
 impl RawMaster {
@@ -340,9 +341,6 @@ impl RawMaster {
                 let footer = frame.unpack::<PduFooter>()
                     .map_err(|_|  EthercatError::Protocol("unable to unpack PDU footer"))?;
                 storage.ready.store(footer.working_count().saturating_add(1), Relaxed);
-//                 println!("6-unpack {} {}",
-//                     SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-//                     storage.sent.elapsed().as_nanos());
             }
             if ! header.next() {break}
             if frame.remain().len() == 0 
@@ -361,11 +359,7 @@ impl RawMaster {
     async fn task_receive(&self) -> EthercatResult {
         let mut receive = [0; MAX_ETHERCAT_FRAME];
         loop {
-            let start = Instant::now();
             let size = poll_fn(|cx|  self.socket.poll_receive(cx, &mut receive) ).await?;
-//             println!("5-receive {} {}",
-//                 SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-//                 start.elapsed().as_nanos());
             let mut frame = Cursor::new(&receive[.. size]);
             
             let header = frame.unpack::<EthercatHeader>()?;
@@ -429,10 +423,6 @@ impl RawMaster {
                     EthercatType::PDU,
                     ).pack(&mut state.send).unwrap();
 
-//                 println!("3-beforesend {} {}",
-//                         SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-//                         state.buffered.elapsed().as_nanos());
-
                 unsafe {std::slice::from_raw_parts_mut(
                                 state.send.as_mut_ptr(), 
                                 state.last_end,
@@ -443,10 +433,6 @@ impl RawMaster {
             poll_fn(|cx| self.socket.poll_send(cx, &send) ).await?;
             {
                 let mut state = self.state.lock().unwrap();
-
-//                 println!("4-aftersend {} {}",
-//                         SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-//                         state.buffered.elapsed().as_nanos());
 
                 // reset state
                 state.ready = false;
@@ -514,9 +500,6 @@ impl<'a> Topic<'a> {
                 )),
             SlaveAddress::Logical => memory,
         };
-//         println!("0-starting {} {}",
-//                 SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-//                 0);
 
         let (token, ready);
         loop {
@@ -539,7 +522,6 @@ impl<'a> Topic<'a> {
                                 buffer.len(),
                                 )},
                         ready: AtomicU16::new(0),
-                        answers: 0,
                         });
 
                     // memory safety: this item in the array cannot be moved since self is borrowed, and will only be removed later by the current function
@@ -550,9 +532,6 @@ impl<'a> Topic<'a> {
                 }
             }.await;
         }
-//         println!("1-tokenized {} {}",
-//                 SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-//                 token);
 
         Topic {
             master,

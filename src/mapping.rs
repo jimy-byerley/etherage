@@ -156,7 +156,6 @@ impl Allocator {
             config: slaves,
             data: tokio::sync::Mutex::new(GroupData {
                 topic: Some(topic),
-                offset: slot.position,
                 modification,
                 exchange,
             }),
@@ -232,11 +231,10 @@ pub struct Group<'a> {
 }
 pub struct GroupData<'a> {
     topic: Option<Topic<'a>>,
-    /// byte offset of this data group in the logical memory
-    offset: u32,
     /// data modification buffer
     modification: Vec<u8>,
     /// exchange buffer
+    #[allow(unused)] // this field is used through pointers
     exchange: Vec<u8>,
 }
 impl<'a> Group<'a> {
