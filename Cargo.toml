@@ -28,5 +28,5 @@ libc = "^0.2.134"
 thread-priority = "^1.1"
 
 [dev-dependencies]
-tokio = { features = ["macros", "time", "rt-multi-thread"] }
+tokio = { version = "^1.36", features = ["macros", "time", "rt-multi-thread"] }
 env_logger = "^0.10.0"
