@@ -138,9 +138,10 @@ impl Allocator {
         }
 
         // create initial buffers
-        let mut modification = mapping.default.borrow().clone();
-        modification.extend((modification.len() .. size as usize).map(|_| 0));
-        let mut exchange = modification.clone();
+        let mut exchange = mapping.default.borrow().clone();
+        exchange.extend((exchange.len() .. size as usize).map(|_| 0));
+        let mut read = exchange.clone();
+        let mut write = exchange.clone();
         let topic = master.topic(PduCommand::LRW, SlaveAddress::Logical, slot.position,
                 unsafe { std::slice::from_raw_parts_mut(
                     exchange.as_mut_ptr(),
@@ -156,8 +157,9 @@ impl Allocator {
             config: slaves,
             data: tokio::sync::Mutex::new(GroupData {
                 topic: Some(topic),
-                modification,
                 exchange,
+                read,
+                write,
             }),
         }
     }
@@ -232,7 +234,8 @@ pub struct Group<'a> {
 pub struct GroupData<'a> {
     topic: Option<Topic<'a>>,
     /// data modification buffer
-    modification: Vec<u8>,
+    read: Vec<u8>,
+    write: Vec<u8>,
     /// exchange buffer
     #[allow(unused)] // this field is used through pointers
     exchange: Vec<u8>,
@@ -356,30 +359,30 @@ impl<'a> Group<'a> {
 impl<'a> GroupData<'a> {
     /// send current content of the buffer to the segment and receive data from the segment if some was pending
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
-        self.topic.as_mut().unwrap().send(Some(self.modification.as_mut_slice())).await;
-        self.topic.as_mut().unwrap().receive(Some(self.modification.as_mut_slice()));
-        self.modification.as_mut_slice()
+        self.topic.as_mut().unwrap().send(Some(self.write.as_mut_slice())).await;
+        self.topic.as_mut().unwrap().receive(Some(self.read.as_mut_slice()));
+        self.read.as_mut_slice()
     }
     /// receive data from the segment if some was pending
     pub async fn read(&mut self) {
-        self.topic.as_mut().unwrap().receive(Some(self.modification.as_mut_slice()));
+        self.topic.as_mut().unwrap().receive(Some(self.read.as_mut_slice()));
     }
     /// send data to the segment
     pub async fn write(&mut self) {
-        self.topic.as_mut().unwrap().send(Some(self.modification.as_mut_slice())).await;
+        self.topic.as_mut().unwrap().send(Some(self.write.as_mut_slice())).await;
     }
 
     // access to underlying buffer, same as [write_buffer]
-    pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.modification.as_mut_slice()}
+    pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.read.as_mut_slice()}
     // access to underlying buffer, same as [read_buffer]
-    pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.modification.as_mut_slice()}
+    pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.write.as_mut_slice()}
     
     /// extract a mapped value from the buffer of last received data
     pub fn get<T: PduData>(&self, field: Field<T>) -> T
-        {field.get(&self.modification)}
+        {field.get(&self.read)}
     /// pack a mapped value to the buffer for next data write
     pub fn set<T: PduData>(&mut self, field: Field<T>, value: T)
-        {field.set(&mut self.modification, value)}
+        {field.set(&mut self.write, value)}
 }
 impl Drop for Group<'_> {
     fn drop(&mut self) {
