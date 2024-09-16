@@ -3,25 +3,21 @@ use crate::{
     master::Master,
     rawmaster::{RawMaster, SlaveAddress},
     data::{PduData, Field},
+    sii::{Sii, SiiError},
     mailbox::Mailbox,
     can::Can,
     registers::{self, AlError},
+    eeprom,
     error::{EthercatError, EthercatResult},
     };
 use tokio::sync::{Mutex, MutexGuard};
-use core::ops::Range;
 use std::sync::Arc;
+use core::time::Duration;
 
 
 
 pub type CommunicationState = registers::AlState;
 use registers::AlState::*;
-
-
-/// slave physical memory range used for mailbox, to be written by the master
-const MAILBOX_BUFFER_WRITE: Range<u16> = Range {start: 0x1800, end: 0x1800+0x100};
-/// slave physical memory range used for mailbox, to be read by the master
-const MAILBOX_BUFFER_READ: Range<u16> = Range {start: 0x1c00, end: 0x1c00+0x100};
 
 
 
@@ -63,10 +59,9 @@ pub struct Slave<'a> {
     safemaster: Option<&'a Master>,
 
     // internal structures are inter-referencing, thus must be stored in Rc to ensure the references to it will not void because of deallocation or data move
-//     sii: Mutex<Sii>,
+    sii: Option<Mutex<Sii>>,
     mailbox: Option<Arc<Mutex<Mailbox>>>,
     coe: Option<Arc<Mutex<Can>>>,
-//     clock: Option<Dc>,
 }
 impl<'a> Slave<'a> {
     /**
@@ -80,6 +75,7 @@ impl<'a> Slave<'a> {
             address,
             state: Init,
 
+            sii: None,
             mailbox: None,
             coe: None,
         }
@@ -103,6 +99,7 @@ impl<'a> Slave<'a> {
                 address,
                 state: Init,
 
+                sii: None,
                 mailbox: None,
                 coe: None,
             })
@@ -178,31 +175,47 @@ impl<'a> Slave<'a> {
         self.address = new;
         Ok(())
     }
+    /// reset fixed address, the slave instance is consumed because the original topological address may have changed since
     pub async fn reset_address(self) -> EthercatResult {
         self.master.write(self.address, registers::address::fixed, 0).await.one()?;
         Ok(())
     }
 
+    /// initialize the SII which grants access to the EEPROM
+    pub async fn init_sii(&mut self) -> EthercatResult<(), SiiError> {
+        let sii = Sii::new(self.master.clone(), self.address).await?;
+        self.sii = Some(Mutex::new(sii));
+        Ok(())
+    }
+
     /// initialize the slave's mailbox (if supported by the slave)
-    pub async fn init_mailbox(&mut self) -> EthercatResult {
+    pub async fn init_mailbox(&mut self) -> EthercatResult<(), SiiError> {
         assert_eq!(self.state, Init);
+
         let address = match self.address {
             SlaveAddress::Fixed(i) => i,
             _ => panic!("mailbox is unsafe without fixed addresses"),
         };
+        // get recommended settings
+        if self.sii.is_none() {
+            self.init_sii().await?;
+        }
+        let mut sii = self.sii().await;
+        sii.acquire().await?;
+        let write_offset = sii.read(eeprom::mailbox::standard::write::offset).await?;
+        let write_size   = sii.read(eeprom::mailbox::standard::write::size).await?;
+        let read_offset  = sii.read(eeprom::mailbox::standard::read::offset).await?;
+        let read_size    = sii.read(eeprom::mailbox::standard::read::size).await?;
+        sii.release().await?;
+        drop(sii);
+
         // setup the mailbox
         let mailbox = Mailbox::new(
             self.master.clone(),
             address,
-            MAILBOX_BUFFER_WRITE,
-            MAILBOX_BUFFER_READ,
+            (registers::sync_manager::interface.mailbox_write(), write_offset .. write_offset + write_size),
+            (registers::sync_manager::interface.mailbox_read(), read_offset .. read_offset + read_size),
             ).await?;
-        // switch SII owner to PDI, so mailbox can init
-        self.master.write(self.address, registers::sii::access, {
-            let mut config = registers::SiiAccess::default();
-            config.set_owner(registers::SiiOwner::Pdi);
-            config
-            }).await.one()?;
 
         self.coe = None;
         self.mailbox = Some(Arc::new(Mutex::new(mailbox)));
@@ -210,10 +223,49 @@ impl<'a> Slave<'a> {
     }
 
     /// initialize CoE (Canopen over Ethercat) communication (if supported by the slave), this requires the mailbox to be initialized
-    pub async fn init_coe(&mut self) {
-        // override the mailbox reference lifetime, we will have to make sure we free any stored object using it before destroying the mailbox
-        let mailbox = self.mailbox.clone().expect("mailbox not initialized");
+    pub async fn init_coe(&mut self) -> EthercatResult<(), SiiError> {
+        if self.mailbox.is_none() {
+            self.init_mailbox().await?;
+        }
+        let mailbox = self.mailbox.clone().unwrap();
         self.coe = Some(Arc::new(Mutex::new(Can::new(mailbox))));
+        Ok(())
+    }
+
+    /**
+        enable synchronization of slaves tasks to the master
+
+        Once enabled, the synchronous data exchanges done by the master must be in synchronization with the [DistributedClock](crate::clock::DistributedClock). And should send by anticipating the master-reference delay so that the data arrives on the reference slave when the clock value modulo is wrapping.
+
+        ## Note:
+
+        at the moment, only dc sync0 is supported. dc sync1 is not, SM-sync is not, SM-DC-sync is not
+    */
+    pub async fn init_sync(&mut self, period: Duration, activation: Duration) -> EthercatResult {
+        assert_eq!(self.state, PreOperational);
+        let period = u32::try_from(period.as_nanos()).expect("synchronization period must be below 4seconds");
+        let activation = u32::try_from(activation.as_nanos()).expect("activation delay must be below 4seconds");
+
+        self.master.write(self.address, registers::isochronous::sync::enable, Default::default()).await.one()?;
+        self.master.write(self.address, Field::<u8>::simple(0x980), 0).await.one()?;
+        let start = self.master.read(self.address, registers::dc::system_time).await.one()? as u32;
+        let start = ((start + activation) / period) * period + period;
+        self.master.write(self.address, registers::isochronous::sync::start_time, start).await.one()?;
+        self.master.write(self.address, registers::isochronous::sync::sync0_cycle_time, period).await.one()?;
+        self.master.write(self.address, registers::isochronous::sync::enable, {
+			let mut enables = registers::IsochronousEnables::default();
+			enables.set_operation(true);
+			enables.set_sync0(true);
+			enables
+			}).await.one()?;
+        Ok(())
+    }
+
+    /// lock access to SII communication and return the instance of [Sii] controling it
+    pub async fn sii(&self) -> MutexGuard<'_, Sii> {
+        self.sii
+            .as_ref().expect("sii not initialized")
+            .lock().await
     }
 
     /// locks access to CoE communication and return the underlying instance of [Can] running CoE

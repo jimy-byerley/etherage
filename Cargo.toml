@@ -2,7 +2,7 @@
 name = "etherage"
 categories = ["science::robotics", "network-programming"]
 authors = ["Jimy Byerley <jimy.byerley@gmail.com>", "CendreQuasar540"]
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "readme.md"
@@ -14,9 +14,9 @@ resolver = "2"
 [dependencies]
 heapless = "^0.7.16"
 log = "^0.4.17"
-futures-concurrency = "^7.2.1"
+futures-concurrency = "^7.4"
 packed_struct = { version = "^0.10.0", default-features = false }
-tokio = { version = "^1.21.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "^1.36", features = ["sync", "rt"] }
 ioprio ="^0.2.0"
 bilge = "^0.2"
 
@@ -25,8 +25,8 @@ futures = "^0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "^0.2.134"
-thread-priority = "0.13.1"
+thread-priority = "^1.1"
 
 [dev-dependencies]
+tokio = { version = "^1.36", features = ["macros", "time", "rt-multi-thread"] }
 env_logger = "^0.10.0"
-ctrlc = "^3.2.3"

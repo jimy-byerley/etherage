@@ -49,10 +49,10 @@ This crate aims to bring yet an other implementation of an Ethercat master, The 
 - [x] master over different sockets
     + [x] raw ethernet
     + [x] UDP
-- [ ] minimalistic features
+- [x] minimalistic features
     - [x] PDU commands
     - [x] access to logical & physical memories
-    - [ ] slave information access
+    - [x] slave information access
 - [x] mailbox
     + generic messaging
     + [ ] forwarding
@@ -63,9 +63,9 @@ This crate aims to bring yet an other implementation of an Ethercat master, The 
         - [x] tools for mapping
     + [ ] EOE
     + [ ] FOE
-- [ ] distributed clock
-    + [ ] static drift
-    + [ ] dynamic drift
+- [x] distributed clock
+    + [x] static drift
+    + [x] dynamic drift
 - convenience
   - [x] logical memory & slave group management tools
   - [x] mapping tools
@@ -107,4 +107,10 @@ typical output with 8 Omron servodrives:
   slave 4: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
   slave 1: "R88D-1SN02H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.00" software "V1.02.00"
   slave 2: "R88D-1SN04H-ECT" - ecat type 17 rev 0 build 3 - hardware "V1.01" software "V1.04.00"
+```
+
+You can try to swipe a servodrive using
+```shell
+cargo build --example servodrive_run
+sudo taret/debug/examples/servodrive_run
 ```

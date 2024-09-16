@@ -55,7 +55,7 @@
 */
 
 use crate::{
-    rawmaster::{RawMaster, PduCommand, SlaveAddress},
+    rawmaster::{RawMaster, Topic, PduCommand, SlaveAddress},
     data::{PduData, Field},
     sdo::{self, Sdo, SyncDirection},
     slave::{Slave, CommunicationState},
@@ -73,10 +73,6 @@ use std::{
     sync::{Arc, Weak, Mutex, RwLock, RwLockWriteGuard},
     };
 use bilge::prelude::*;
-
-
-/// slave physical memory range used for sync channels mapping
-const SLAVE_PHYSICAL_MAPPABLE: Range<u16> = Range {start: 0x1000, end: 0x1300};
 
 
 /// convenient object to manage slaves configurations and logical memory
@@ -105,7 +101,7 @@ impl Allocator {
     }
     /// allocate the memory area and the slaves for the given mapping.
     /// returning a [Group] for using that memory and communicate with the slaves
-    pub fn group<'a>(&'a self, master: &'a RawMaster, mapping: &Mapping) -> Group<'a> {
+    pub async fn group<'a>(&'a self, master: &'a RawMaster, mapping: &Mapping<'_>) -> Group<'a> {
         // compute mapping size
         let size = mapping.offset.borrow().clone();
 
@@ -140,9 +136,17 @@ impl Allocator {
                     new
                 });
         }
+
         // create initial buffers
-        let mut buffer = mapping.default.borrow().clone();
-        buffer.extend((buffer.len() .. size as usize).map(|_| 0));
+        let mut exchange = mapping.default.borrow().clone();
+        exchange.extend((exchange.len() .. size as usize).map(|_| 0));
+        let read = exchange.clone();
+        let write = exchange.clone();
+        let topic = master.topic(PduCommand::LRW, SlaveAddress::Logical, slot.position,
+                unsafe { std::slice::from_raw_parts_mut(
+                    exchange.as_mut_ptr(),
+                    exchange.len(),
+                    )}).await;
         // create group
         Group {
             allocator: self,
@@ -152,10 +156,10 @@ impl Allocator {
 
             config: slaves,
             data: tokio::sync::Mutex::new(GroupData {
-                master,
-                offset: slot.position,
-                read: buffer.clone(),
-                write: buffer,
+                topic: Some(topic),
+                exchange,
+                read,
+                write,
             }),
         }
     }
@@ -228,13 +232,15 @@ pub struct Group<'a> {
     data: tokio::sync::Mutex<GroupData<'a>>,
 }
 pub struct GroupData<'a> {
-    master: &'a RawMaster,
-    /// byte offset of this data group in the logical memory
-    offset: u32,
-    /// data duplex: data to read from slave
+    topic: Option<Topic<'a>>,
+    /// data reading buffer, containing the received data read from the slaves and the commands sent in the same frame
     read: Vec<u8>,
-    /// data duplex: data to write to slave
+    /// date writing, containing the frame we will send to the slaves
+    /// it is different from the read buffer because we want to ensure one value written to the `GroupData` stay in the lastly written state for following frames and is not overriden by newly received data
     write: Vec<u8>,
+    /// exchange buffer
+    #[allow(unused)] // this field is used through pointers
+    exchange: Vec<u8>,
 }
 impl<'a> Group<'a> {
     /// the configuration of slaves
@@ -257,9 +263,6 @@ impl<'a> Group<'a> {
         let config = &self.config[&address];
 
         assert_eq!(slave.expected(), CommunicationState::PreOperational, "slave must be in preop state to configure a mapping");
-
-        // range of physical memory to be mapped
-        let physical = SLAVE_PHYSICAL_MAPPABLE;
 
         let mut coe = slave.coe().await;
         let priority = u2::new(1);
@@ -329,7 +332,6 @@ impl<'a> Group<'a> {
         // the read direction also prevent the memory content to be written before being read by a LRW command, so it is filtering memory accesses
         // no bit alignment is supported now, so bit offsets are 0 at start and 7 at end
         for (i, entry) in config.fmmu.iter().enumerate() {
-            assert!(entry.physical + entry.length < physical.end);
             master.fpwr(address, registers::fmmu.entry(i as u8), {
                 let mut config = registers::FmmuEntry::default();
                 config.set_logical_start_byte(entry.logical + (self.offset as u32));
@@ -357,28 +359,24 @@ impl<'a> Group<'a> {
     }
 }
 impl<'a> GroupData<'a> {
-    pub unsafe fn raw_master(&self) -> &'a RawMaster {self.master}
-    
-    /// read and write relevant data from master to segment
+    /// send current content of the buffer to the segment and receive data from the segment if some was pending
     pub async fn exchange(&mut self) -> &'_ mut [u8]  {
-        // TODO: add a fallback implementation in case the slave does not support *RW commands
-        // TODO: offset should be passed as 32 bit address, this requires a modification of RawMaster
-        self.master.pdu(PduCommand::LRW, SlaveAddress::Logical, self.offset, self.write.as_mut_slice(), false).await;
-        self.read.copy_from_slice(&self.write);
-        self.write.as_mut_slice()
-    }
-    /// read data slice from segment
-    pub async fn read(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LRD, SlaveAddress::Logical, self.offset, self.read.as_mut_slice(), false).await;
+        self.topic.as_mut().unwrap().send(Some(self.write.as_mut_slice())).await;
+        self.topic.as_mut().unwrap().receive(Some(self.read.as_mut_slice()));
         self.read.as_mut_slice()
     }
-    /// write data slice to segment
-    pub async fn write(&mut self) -> &'_ mut [u8]  {
-        self.master.pdu(PduCommand::LWR, SlaveAddress::Logical, self.offset, self.write.as_mut_slice(), false).await;
-        self.write.as_mut_slice()
+    /// receive data from the segment if some was pending
+    pub async fn read(&mut self) {
+        self.topic.as_mut().unwrap().receive(Some(self.read.as_mut_slice()));
     }
-    
+    /// send data to the segment
+    pub async fn write(&mut self) {
+        self.topic.as_mut().unwrap().send(Some(self.write.as_mut_slice())).await;
+    }
+
+    // access to underlying buffer, same as [write_buffer]
     pub fn read_buffer(&mut self) -> &'_ mut [u8] {self.read.as_mut_slice()}
+    // access to underlying buffer, same as [read_buffer]
     pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.write.as_mut_slice()}
     
     /// extract a mapped value from the buffer of last received data
@@ -390,6 +388,7 @@ impl<'a> GroupData<'a> {
 }
 impl Drop for Group<'_> {
     fn drop(&mut self) {
+        self.data.try_lock().unwrap().topic.take();
         self.allocator.internal.lock().unwrap()
             .free.remove(&LogicalSlot {size: self.allocated, position: self.offset});
     }
@@ -498,8 +497,6 @@ impl<'a> Mapping<'a> {
         MappingSlave {
             config: slave.try_write().expect("slave already in mapping"),
             mapping: self,
-            buffer: SLAVE_PHYSICAL_MAPPABLE.start,
-            additional: 0,
         }
     }
     /// return the overall data size in this mapping (will increase if more data is pushed in)
@@ -513,26 +510,13 @@ impl<'a> Mapping<'a> {
 pub struct MappingSlave<'a> {
     mapping: &'a Mapping<'a>,
     config: RwLockWriteGuard<'a, ConfigSlave>,
-    /// position in the physical memory mapping region
-    buffer: u16,
-    /// increment to add to `buffer` once the current mapped channel is done.
-    /// this is handling the memory that must be reserved after sync channels to allow the slave to perform buffer swapping
-    additional: u16,
 }
-impl<'a> MappingSlave<'a> {
+impl MappingSlave<'_> {
     /// internal method to increment the logical and physical offsets with the given data length
     /// if the logical offset was changed since the last call to this slave's method (ie. the logical memory contiguity is broken), a new FMMU is automatically configured
-    fn insert(&mut self, direction: SyncDirection, length: usize, position: Option<u16>) -> usize {
-        let physical = SLAVE_PHYSICAL_MAPPABLE;
+    fn insert(&mut self, direction: SyncDirection, length: u16, position: u16) -> usize {
         let mut offset = self.mapping.offset.borrow_mut();
 
-        // pick a new position in the physical memory buffer, or pick the given position
-        let position = position.unwrap_or_else(|| {
-                let position = self.buffer;
-                self.buffer += length as u16;
-                assert!(self.buffer <= physical.end);
-                position
-            });
         // create a FMMU if not already existing or if inserted value breaks contiguity
         let change = if let Some(fmmu) = self.config.fmmu.last() {
                 fmmu.logical + u32::from(fmmu.length) != *offset
@@ -561,37 +545,28 @@ impl<'a> MappingSlave<'a> {
         default.extend(range.map(|_| 0));
         field.set(&mut default, value);
     }
-    /// increment the value offset with the reserved additional size
-    /// this is typically for counting the reserved size of channels triple buffers
-    fn finish(&mut self) {
-        self.buffer += self.additional;
-        // the physical memory buffer must be word-aligned (at least on some devices)
-        self.buffer += self.buffer % 2;
-        self.additional = 0;
-    }
+
+
     /// map a range of physical memory, and return its matching range in the logical memory
     pub fn range(&mut self, direction: SyncDirection, range: Range<u16>) -> Range<usize> {
-        self.finish();
-        let size = usize::from(range.end - range.start);
-        let start = self.insert(direction, size, Some(range.start));
-        Range {start, end: start+size}
+        let size = range.end - range.start;
+        let start = self.insert(direction, size, range.start);
+        Range {start, end: start+usize::from(size)}
     }
     /// map a field in the physical memory (a register), and return its matching field in the logical memory
     pub fn register<T: PduData>(&mut self, direction: SyncDirection, field: Field<T>) -> Field<T>  {
-        self.finish();
-        let o = self.insert(direction, field.len, Some(field.byte as u16));
+        let o = self.insert(direction, field.len as u16, field.byte as u16);
         Field::new(o, field.len)
     }
     /// map a sync manager channel
-    pub fn channel(&mut self, sdo: sdo::SyncChannel) -> MappingChannel<'_> {
-        self.finish();
+    pub fn channel(&mut self, sdo: sdo::SyncChannel, buffer: Range<u16>) -> MappingChannel<'_> {
         if sdo.register() == registers::sync_manager::interface.mailbox_write()
         || sdo.register() == registers::sync_manager::interface.mailbox_read()
             {panic!("mapping on the mailbox channels (0x1c10, 0x1c11) is forbidden");}
         self.config.channels.insert(sdo.index, ConfigChannel {
             config: sdo,
             pdos: Vec::new(),
-            start: self.buffer,
+            start: buffer.start,
             });
         MappingChannel {
             // uncontroled references to self and to configuration
@@ -600,6 +575,9 @@ impl<'a> MappingSlave<'a> {
             slave: unsafe {&mut *(self as *mut _ as usize as *mut _)},
             direction: sdo.direction,
             capacity: sdo.capacity as usize,
+            position: buffer.start,
+            // the memory allocated must contain 3 buffers of the desired data (for buffer swaping on the slave)
+            max: (buffer.end - buffer.start) / 3 + buffer.start,
         }
 
         // TODO: make possible to push an alread existing channel as long as its content is the same
@@ -610,10 +588,12 @@ pub struct MappingChannel<'a> {
     entries: &'a mut Vec<u16>,
     direction: SyncDirection,
     capacity: usize,
+    position: u16,
+    max: u16,
 }
-impl<'a> MappingChannel<'a> {
+impl MappingChannel<'_> {
     /// add a pdo to this channel, and return an object to map it
-    pub fn push(&'a mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
+    pub fn push(&mut self, pdo: sdo::Pdo) -> MappingPdo<'_>  {
         assert!(self.entries.len()+1 < self.capacity);
 
         self.entries.push(pdo.index);
@@ -623,19 +603,19 @@ impl<'a> MappingChannel<'a> {
             });
 
         MappingPdo {
+            direction: self.direction,
+            capacity: pdo.capacity as usize,
             // uncontroled reference to self and to configuration
             // this is safe since the returned object holds a mutable reference to self any way
             entries: unsafe {&mut *(&mut self.slave.config.pdos.get_mut(&pdo.index).unwrap().sdos as *mut _)},
-            slave: self.slave,
-            direction: self.direction,
-            capacity: pdo.capacity as usize,
+            channel: unsafe {&mut *(self as *mut _ as usize as *mut _)},
         }
 
         // TODO: make possible to push an alread existing PDO as long as its content is the same
     }
 }
 pub struct MappingPdo<'a> {
-    slave: &'a mut MappingSlave<'a>,
+    channel: &'a mut MappingChannel<'a>,
     entries: &'a mut Vec<Sdo>,
     direction: SyncDirection,
     capacity: usize,
@@ -643,14 +623,15 @@ pub struct MappingPdo<'a> {
 impl<'a> MappingPdo<'a> {
     /// add an sdo to this channel, and return its matching field in the logical memory
     pub fn push<T: PduData>(&mut self, sdo: Sdo<T>) -> Field<T> {
-        assert!(self.entries.len()+1 < self.capacity);
+        let len = ((sdo.field.len + 7) / 8) as u16;
+
+        assert!(self.entries.len()+1 < self.capacity, "sync channel cannot have more entries");
+        assert!(self.channel.position + len < self.channel.max, "sync channel buffer is too small");
 
         self.entries.push(sdo.clone().downcast());
-        let len = (sdo.field.len + 7) / 8;
-        // the sync channel must allocate 3 times the channel size to allow the slave to perform buffer swapping (the sync channel 3-buffer mode, which is mendatory for realtime operations)
-        // so the first thier is reserved using `slave.insert`, and the 2 last using `slave.additional`
-        self.slave.additional += 2*len as u16;
-        Field::new(self.slave.insert(self.direction, len, None), len)
+        let offset = Field::new(self.channel.slave.insert(self.direction, len, self.channel.position), usize::from(len));
+        self.channel.position += len;
+        offset
     }
     /**
         same as [Self::push] but also set an initial value for this SDO in the group buffer.
@@ -658,7 +639,7 @@ impl<'a> MappingPdo<'a> {
     */
     pub fn set<T: PduData>(&mut self, sdo: Sdo<T>, initial: T) -> Field<T> {
         let offset = self.push(sdo);
-        self.slave.default(offset, initial);
+        self.channel.slave.default(offset, initial);
         offset
     }
 }

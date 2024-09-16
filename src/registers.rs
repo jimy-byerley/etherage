@@ -87,30 +87,34 @@ pub const watchdog_counter: Field<WatchdogCounter> = Field::simple(0x0442);
 pub mod sync_manager {
     use super::*;
 
-    /// ETG.1000.6 table 45
+    /// ETG.1000.4 table 45
     pub const watchdog: Field<u16> = Field::simple(0x0420);
-    /// ETG.1000.6 table 46
+    /// ETG.1000.4 table 46
+    /// true when the watchdog has not expired
     pub const watchdog_status: Field<bool> = Field::simple(0x0440);
 	pub const interface: SyncManager = SyncManager {address: 0x0800, num: 16};
 }
 
-pub const mailbox_buffers: [Field<[u8; 0x100]>; 3] = [
-	Field::simple(0x1000),
-	Field::simple(0x1100),
-	Field::simple(0x1200),
-];
-
-
 /// SII (Slave Information Interface) allows to retreive declarative informations about a slave (like a manifest) like product code, vendor, etc as well as slave boot-up configs
+/// ETG.1000.4.6.6.4
 pub mod sii {
     use super::*;
 
+    /// ETG.1000.4 table 48
 	pub const access: Field<SiiAccess> = Field::simple(0x0500);
+    /// ETG.1000.4 table 49
 	pub const control: Field<SiiControl> = Field::simple(0x0502);
 	/// register contains the address in the slave information interface which is accessed by the next read or write operation (by writing the slave info rmation interface control/status register).
+    /// ETG.1000.4 table 50
 	pub const address: Field<u16> = Field::simple(0x0504);
 	/// register contains the data (16 bit) to be written in the slave information interface with the next write operation or the read data (32 bit/64 bit) with the last read operation.
-	pub const data: Field<[u8;4]> = Field::simple(0x0508);
+    /// ETG.1000.4 table 51
+	pub const data: Field<[u8; 8]> = Field::simple(0x0508);
+	
+	/// agregates [const@control] and [const@address] for optimized bandwith
+	pub const control_address: Field<SiiControlAddress> = Field::simple(control.byte);
+	/// agregates [const@control] and [const@address] and [const@data] for optimized bandwith
+	pub const control_address_data: Field<SiiControlAddressData> = Field::simple(control.byte);
 }
 
 // TODO: MII (Media Independent Interface)
@@ -395,7 +399,7 @@ pub enum AlError {
     NoValidFirmware = 0x0014,
     ///  Invalid mailbox configuration for switching to [AlState::Init]
     InvalidMailboxConfigBoot = 0x0015,
-    ///  Invalid mailbox configuration for switching to [AlState::PreoOperational]
+    ///  Invalid mailbox configuration for switching to [AlState::PreOperational]
     InvalidMailboxConfigPreop = 0x0016,
     ///  Invalid sync manager configuration
     InvalidSyncConfig = 0x0017,
@@ -759,7 +763,7 @@ pub struct ExternalEvent {
 	reserved: u1,
 	/// dl status register was changed
 	pub dl: bool,
-	/// R3 or R4 was written, meaning an [ALStatus] change
+	/// R3 or R4 was written, meaning an [AlStatus] change
 	pub al: bool,
 	/// sync manager channel was accessed by slave
 	pub sync_manager_channel: [bool; 8],
@@ -841,11 +845,14 @@ pub struct SiiAccess {
 }
 data::bilge_pdudata!(SiiAccess, u16);
 
+/// the EEPROM can be accessed only through the SII, and this enum is used to share it between the master (through ethercat communication) and the slave itself
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone, Default)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SiiOwner {
+    /// the ethercat communication can controle the SII (and access the EEPROM)
     #[default]
 	EthercatDL = 0,
+	/// the slave can control the SII (and access the EEPROM)
 	Pdi = 1,
 }
 data::bilge_pdudata!(SiiOwner, u1);
@@ -856,34 +863,42 @@ data::bilge_pdudata!(SiiOwner, u1);
 	ETG.1000.4 table 49
 */
 #[bitsize(16)]
-#[derive(FromBits, DebugBits, Copy, Clone)]
+#[derive(FromBits, DebugBits, Copy, Clone, Default)]
 pub struct SiiControl {
-	/// true if SOO is writable
+	/// true if SII is writable
 	pub write_access: bool,
 	reserved: u4,
 	/**
 		- false: Normal operation (DL interfaces to SII)
 		- true: DL-user emulates SII
+		
+		cannot be set by the master
 	*/
 	pub eeprom_emulation: bool,
-	/// number of bytes per read transaction
+	/// number of bytes per read transaction, cannot be set by master
 	pub read_size: SiiTransaction,
-	/// unit of SII addresses
+	/// unit of SII addresses, cannot be set by master
 	pub address_unit: SiiUnit,
 
 	/**
 		read operation requested (parameter write) or read operation busy (parameter read)
 		To start a new read operation there must be a positive edge on this parameter
+		
+		This parameter will be written from the master to start the read operation of 32 bits/64 bits in the slave information interface. This parameter will be read from the master to check if the read operation is finished. 
 	*/
 	pub read_operation: bool,
 	/**
 		write operation requested (parameter write) or write operation busy (parameter read)
 		To start a new write operation there must be a positive edge on this parameter
+		
+		This parameter will be written from the master to start the write operation of 16 bits in the slave information interface. This parameter will be read from the master to check if the write operation is finished. There is no consistence gu arantee for write operation. A break down during write can produce inconsistent values and should be avoided. 
 	*/
 	pub write_operation: bool,
 	/**
 		reload operation requested (parameter write) or reload operation busy (parameter read)
 		To start a new reload operation there must be a positive edge on this parameter
+		
+		This parameter will be written from the master to start the reload operation of the first 128 bits in the slave information interface. This parameter will be read from the master to check if the reload operation is finished
 	*/
 	pub reload_operation: bool,
 
@@ -891,7 +906,11 @@ pub struct SiiControl {
 	pub checksum_error: bool,
 	/// error on reading Device Information
 	pub device_info_error: bool,
-	/// error on last command PDI Write only in SII emulation mode
+	/**
+        error on last SII request
+        
+        writable only in SII emulation mode
+    */
 	pub command_error: bool,
 	/// error on last write operation
 	pub write_error: bool,
@@ -902,21 +921,37 @@ pub struct SiiControl {
 data::bilge_pdudata!(SiiControl, u16);
 
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SiiTransaction {
+    #[default]
 	Bytes4 = 0,
 	Bytes8 = 1,
 }
 #[bitsize(1)]
-#[derive(FromBits, Debug, Copy, Clone)]
+#[derive(FromBits, Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum SiiUnit {
+    #[default]
 	Byte = 0,
 	Word = 1,
 }
 
+#[repr(packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct SiiControlAddress {
+    pub control: SiiControl,
+    pub address: u16,
+}
+data::packed_pdudata!(SiiControlAddress);
 
-
-
+#[repr(packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct SiiControlAddressData {
+    pub control: SiiControl,
+    pub address: u16,
+    pub reserved: u16,
+    pub data: [u8; 2],
+}
+data::packed_pdudata!(SiiControlAddressData);
 
 /// this is not a PduData but a struct transporting the address and number of FMMU registers
 /// ETG.1000.4 table 57
@@ -990,14 +1025,14 @@ impl SyncManager {
         assert!(index < self.num, "index out of range");
         Field::simple(usize::from(self.address + u16::from(index) * (core::mem::size_of::<SyncManagerChannel>() as u16) ))
     }
-    /// return the sync manager channel reserved for mailbox in
+    /// return the sync manager channel recommended for mailbox in
     pub fn mailbox_write(&self) -> Field<SyncManagerChannel>   {self.channel(0)}
-    /// return the sync manager channel reserved for mailbox out
+    /// return the sync manager channel recommended for mailbox out
     pub fn mailbox_read(&self) -> Field<SyncManagerChannel>   {self.channel(1)}
     
-    /// return the sync manager channel reserved for mapping to logical in
+    /// return the sync manager channel recommended for mapping to logical in
     pub fn logical_write(&self) -> Field<SyncManagerChannel>  {self.channel(2)}
-    /// return the sync manager channel reserved for mapping to logical out
+    /// return the sync manager channel recommended for mapping to logical out
     pub fn logical_read(&self) -> Field<SyncManagerChannel>  {self.channel(3)}
     
     // return one of the sync manager channels reserved for mapping

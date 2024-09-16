@@ -18,10 +18,10 @@
     - [x] master over different sockets
         + [x] raw ethernet
         + [x] UDP
-    - [ ] minimalistic features
+    - [x] minimalistic features
         - [x] PDU commands
         - [x] access to logical & physical memories
-        - [ ] slave information access
+        - [x] slave information access
     - [x] mailbox
         + generic messaging
         + [x] COE
@@ -56,9 +56,13 @@ pub mod registers;
 #[allow(non_upper_case_globals)]
 #[allow(unused)]
 pub mod sdo;
+#[allow(non_upper_case_globals)] 
+#[allow(unused)]
+pub mod eeprom;
 
 pub mod socket;
 pub mod rawmaster;
+pub mod sii;
 pub mod mailbox;
 pub mod can;
 pub mod master;

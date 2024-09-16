@@ -2,9 +2,9 @@
 
 use crate::{
     error::{EthercatError, EthercatResult},
-    rawmaster::{RawMaster, PduCommand, SlaveAddress},
+    data::{self, PduData, Cursor, Field},
+    rawmaster::{RawMaster, SlaveAddress},
     registers,
-    data::{self, PduData, Cursor},
     };
 use core::ops::Range;
 use std::sync::Arc;
@@ -28,13 +28,16 @@ const MAILBOX_MAX_SIZE: usize = 1024;
 pub struct Mailbox {
     master: Arc<RawMaster>,
     slave: u16,
-    read: Direction,
-    write: Direction,
+    /// reading status
+    pub read: Direction,
+    /// writing status
+    pub write: Direction,
 }
-struct Direction {
+pub struct Direction {
     count: u8,
     address: u16,
     max: usize,
+    channel: Field<registers::SyncManagerChannel>,
 }
 
 impl Mailbox {
@@ -46,7 +49,23 @@ impl Mailbox {
         
         `slave` is the slave's fixed address, no implementation is made for mailbox with topological addresses
     */
-    pub async fn new(master: Arc<RawMaster>, slave: u16, write: Range<u16>, read: Range<u16>) -> EthercatResult<Mailbox> {
+    pub async fn new(master: Arc<RawMaster>, slave: u16,
+            write: (Field<registers::SyncManagerChannel>, Range<u16>),
+            read: (Field<registers::SyncManagerChannel>, Range<u16>),
+            )-> EthercatResult<Mailbox>
+    {
+        let read = Direction{
+                count: 0,
+                address: read.1.start,
+                max: usize::from(read.1.end - read.1.start),
+                channel: read.0,
+                };
+        let write = Direction{
+                count: 0,
+                address: write.1.start,
+                max: usize::from(write.1.end - write.1.start),
+                channel: write.0,
+                };
         // check that there is not previous error
         if master.fprd(slave, registers::al::response).await.one()?.error() {
             panic!("mailbox error before init: {:?}", master.fprd(slave, registers::al::error).await.one());
@@ -54,26 +73,26 @@ impl Mailbox {
 
         // configure sync manager
         let configured = (
-            master.fpwr(slave, registers::sync_manager::interface.mailbox_write(), {
+            master.fpwr(slave, write.channel, {
                 let mut config = registers::SyncManagerChannel::default();
-                config.set_address(write.start);
-                config.set_length(write.end - write.start);
+                config.set_address(write.address);
+                config.set_length(write.max as _);
                 config.set_mode(registers::SyncMode::Mailbox);
                 config.set_direction(registers::SyncDirection::Write);
                 config.set_dls_user_event(true);
-                config.set_ec_event(true);
+                config.set_ec_event(false);
                 config.set_enable(true);
                 config
             }),
 
-            master.fpwr(slave, registers::sync_manager::interface.mailbox_read(), {
+            master.fpwr(slave, read.channel, {
                 let mut config = registers::SyncManagerChannel::default();
-                config.set_address(read.start);
-                config.set_length(read.end - read.start);
+                config.set_address(read.address);
+                config.set_length(read.max as _);
                 config.set_mode(registers::SyncMode::Mailbox);
                 config.set_direction(registers::SyncDirection::Read);
                 config.set_dls_user_event(true);
-                config.set_ec_event(true);
+                config.set_ec_event(false);
                 config.set_enable(true);
                 config
             }),
@@ -81,39 +100,21 @@ impl Mailbox {
         if configured.0.one().is_err() || configured.1.one().is_err()
             {return Err(EthercatError::Master("failed to configure mailbox sync managers"))}
         
-        assert!(usize::from(read.end - read.start) < MAILBOX_MAX_SIZE);
-        assert!(usize::from(write.end - write.start) < MAILBOX_MAX_SIZE);
+        assert!(read.max <= MAILBOX_MAX_SIZE);
+        assert!(write.max <= MAILBOX_MAX_SIZE);
         
         Ok(Self {
             master,
             slave,
-            read: Direction{
-                count: 0,
-                address: read.start,
-                max: usize::from(read.end - read.start),
-                },
-            write: Direction{
-                count: 0,
-                address: write.start,
-                max: usize::from(write.end - write.start),
-                },
+            read,
+            write,
         })
     }
     pub async fn poll(&self) -> bool {todo!()}
     pub async fn available(&self) -> usize {todo!()}
 
-    /**
-        read the frame currently in the mailbox, wait for it if not already present
-
-        `data` is the buffer to fill with the mailbox, only the first bytes corresponding to the current buffer size on the slave will be read
-
-        return the slice of data received.
-
-        - 0 is lowest priority, 3 is highest
-    */
     pub async fn read<'a>(&mut self, ty: MailboxType, data: &'a mut [u8]) -> EthercatResult<&'a [u8], MailboxError> {
         let mailbox_control = registers::sync_manager::interface.mailbox_read();
-        let mut allocated = [0; MAILBOX_MAX_SIZE];
 
         self.read.count = (self.read.count % 7)+1;
 
@@ -126,15 +127,14 @@ impl Mailbox {
                     {break value}
             }
         };
-        // the destination data is expected to be big enough for the data, so we will read only this data size
-        let range = .. allocated.len()
-                        .min(data.len() + MailboxHeader::packed_size())
-                        .min(self.read.max);
-        let buffer = &mut allocated[range];
+
         // read the mailbox content
         loop {
-            if self.master.pdu(PduCommand::FPRD, SlaveAddress::Fixed(self.slave), self.read.address.into(), buffer, false).await == 1 
-                {break}
+            if let Some(mail) = self.read_attempt(ty, data).await? {
+                // we should be able to return mail directly, but the borrow checker is mixing up things with the loop lifetime
+                let len = mail.len();
+                break Ok(&data[.. len])
+            }
 
             // trigger repeat
             state.set_repeat(true);
@@ -146,8 +146,21 @@ impl Mailbox {
                 break
             }
         }
+    }
+
+    async fn read_attempt<'a>(&mut self, ty: MailboxType, data: &'a mut [u8]) -> EthercatResult<Option<&'a [u8]>, MailboxError> {
+        let small = 26; // this is the amount of byte we will transmit anyway because of ethercat frame padding
+        let mut buffer = [0; MAILBOX_MAX_SIZE];
+
+        // receive header and some more bytes for getting small messages in one shot
+        if self.master.read_slice(SlaveAddress::Fixed(self.slave),
+                    self.read.address.into(),
+                    &mut buffer[.. MailboxHeader::packed_size() + small],
+                    ).await.answers != 1
+            {return Ok(None)}
+
+        // check header
         let mut frame = Cursor::new(buffer.as_mut());
-        let mut received = Cursor::new(data);
         let header = frame.unpack::<MailboxHeader>()
                         .map_err(|_| EthercatError::Protocol("unable to unpack mailbox header"))?;
         if header.ty() == MailboxType::Exception {
@@ -157,21 +170,46 @@ impl Mailbox {
         }
         if header.ty() != ty
             {return Err(EthercatError::Protocol("received unexpected mailbox frame type"))}
-        if u8::from(header.count()) != self.read.count 
-            {return Err(EthercatError::Protocol("received mailbox frame has wrong counter"))}
-        received.write(
-            frame.read(header.length() as usize)
-                .map_err(|_| EthercatError::Protocol("inconsistent mailbox size"))?
-            ).map_err(|_| EthercatError::Master("read buffer is too small for mailbox data"))?;
-        
-        Ok(received.finish())
+        // disabled for synapticon servodrives who seems to not care about the initialization value of this counter
+//         if u8::from(header.count()) != self.read.count
+//             {return Err(EthercatError::Protocol("received mailbox frame has wrong counter"))}
+        let mailsize = header.length() as usize;
+        if data.len() < mailsize
+            {return Err(EthercatError::Master("read buffer is too small for the mailbox data"))}
+        let received = &mut data[.. mailsize];
+
+        (
+            async {
+                // receive the additional data
+                if header.length() as usize > small {
+                    if self.master.read_slice(SlaveAddress::Fixed(self.slave),
+                                self.read.address as u32 + frame.position() as u32,
+                                received,
+                                ).await.answers != 1
+                        {return Ok(None)}
+                }
+                else {
+                    received.copy_from_slice(frame.read(mailsize).unwrap());
+                }
+                Ok(Some(&*received))
+            },
+            async {
+                // read last byte to acknowledge the reading
+                if mailsize < self.read.max {
+                    let last = Field::<u16>::simple(usize::from(self.read.address) + self.read.max - u16::packed_size());
+                    self.master.fprd(self.slave, last).await;
+                }
+            },
+        ).join().await.0
     }
+
     /**
         write the given frame in the mailbox, wait for it first if already busy
 
         - 0 is lowest priority, 3 is highest
     */
     pub async fn write(&mut self, ty: MailboxType, priority: u2, data: &[u8]) -> EthercatResult<(), MailboxError> {
+        let small = 32;
         let mailbox_control = registers::sync_manager::interface.mailbox_write();
         let mut allocated = [0; MAILBOX_MAX_SIZE];
         let buffer = &mut allocated[.. self.write.max];
@@ -186,6 +224,7 @@ impl Mailbox {
                 priority,
                 ty,
                 u3::new(self.write.count),
+//                 u3::new(0),
             )).unwrap();
         frame.write(data)
             .map_err(|_|  EthercatError::Master("data too big for mailbox buffer"))?;
@@ -199,26 +238,27 @@ impl Mailbox {
             }
         }
         // write data
-        // TODO: retry this solution with writing the last word instead of the last byte
-        // we are forced to write the whole buffer (even if much bigger than data) because the slave will notice the data sent only if writing the complete buffer
+//         // TODO: retry this solution with writing the last word instead of the last byte
+//         // we are forced to write the whole buffer (even if much bigger than data) because the slave will notice the data sent only if writing the complete buffer
         // and writing the last byte instead does not work trick it.
-//         if mailbox_size - data.len() > 32 {
-//             loop {
-//                 // write beginning of buffer and last byte for slave triggering
-//                 let (writing, end) = futures::join!(
-//                     self.master.pdu(PduCommand::FPWR, self.slave, self.write.address, sent),
-//                     // the mailbox processing is done once the last mailbox byte is written, so write the last byte alone
-//                     self.master.fpwr(self.slave, Field::<u8>::simple(usize::from(self.write.end)-1), 0),
-//                     );
-//                 if end.answers == 1 && writing == 1
-//                     {break}
-//             }
-//         }
-//         else {
+        if self.write.max - data.len() > small {
+            loop {
+                // write beginning of buffer and last byte for slave triggering
+                let last = Field::<u16>::simple(usize::from(self.write.address) + self.write.max-u16::packed_size());
+                let (writing, end) = (
+                    self.master.write_slice(SlaveAddress::Fixed(self.slave), self.write.address.into(), sent),
+                    // the mailbox processing is done once the last mailbox byte is written, so write the last byte alone
+                    self.master.fpwr(self.slave, last, 0),
+                    ).join().await;
+                if end.answers == 1 && writing.answers == 1
+                    {break}
+            }
+        }
+        else {
             // write the full buffer
-            while self.master.pdu(PduCommand::FPWR, SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut(), false).await != 1
+            while self.master.write_slice(SlaveAddress::Fixed(self.slave), self.write.address.into(), buffer.as_mut()).await.answers != 1
                 {}
-//         }
+        }
         Ok(())
     }
 }
@@ -226,7 +266,7 @@ impl Mailbox {
 /// ETG 1000.4 table 29
 #[bitsize(48)]
 #[derive(TryFromBits, DebugBits, Copy, Clone)]
-struct MailboxHeader {
+pub (crate) struct MailboxHeader {
     /// length of the mailbox service data following this header
     length: u16,
     /**
@@ -257,6 +297,7 @@ pub enum MailboxType {
     Servo = 0x5,
     Specific = 0xf,
 }
+data::bilge_pdudata!(MailboxType, u4);
 
 /// ETG 1000.4 table 30
 #[bitsize(32)]

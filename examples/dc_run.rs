@@ -14,7 +14,7 @@ use etherage::{
     };
 use ioprio::*;
 use futures::stream::StreamExt;
-use futures_concurrency::future::{Join, Race};
+use futures_concurrency::future::Join;
 
 
 #[tokio::main]
@@ -48,8 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 else { panic!("slave already has a fixed address") };
 			slave.expect(etherage::CommunicationState::Init);
             slave.set_address(i+1).await.unwrap();
-            slave.init_mailbox().await.unwrap();
-            slave.init_coe().await;
+            slave.init_coe().await.unwrap();
             
             slave
         });
@@ -68,10 +67,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 			else { panic!("slave has no fixed address") };
 		let mut slave = mapping.slave(i);
 		offsets.push(slave.register(sdo::SyncDirection::Read, registers::dc::system_time));
-		slave.channel(sdo::sync_manager.logical_read());
-		slave.channel(sdo::sync_manager.logical_write());
+        let mut channel = slave.channel(sdo::sync_manager.logical_write(), 0x1800 .. 0x1c00);
+            channel.push(sdo::Pdo::new(0x1600, false));
+		let mut channel = slave.channel(sdo::sync_manager.logical_read(), 0x1c00 .. 0x2000);
+            channel.push(sdo::Pdo::new(0x1600, false));
 	}
-	let group = master.group(&mapping);
+	let group = master.group(&mapping).await;
 	
     master.switch(CommunicationState::PreOperational).await.unwrap();
 	for slave in &mut slaves {
@@ -101,7 +102,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		}
 		print!("\n");
 	}
-
-    Ok(())
 }
 

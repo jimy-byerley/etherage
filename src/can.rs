@@ -1,8 +1,7 @@
 //! implementation of CoE (Canopen Over Ethercat)
 
 use crate::{
-    mailbox::{Mailbox, MailboxType, MailboxError},
-    registers,
+    mailbox::{Mailbox, MailboxType, MailboxError, MailboxHeader},
     sdo::Sdo,
     data::{self, PduData, Storage, Cursor},
     error::{EthercatError, EthercatResult},
@@ -13,12 +12,13 @@ use std::sync::Arc;
 
 
 
-const MAILBOX_MAX_SIZE: usize = registers::mailbox_buffers[0].len;
+const MAILBOX_MAX_SIZE: usize = 1024;
 /// maximum byte size of sdo data that can be expedited
 const EXPEDITED_MAX_SIZE: usize = 4;
 /// maximum byte size of an sdo data that can be put in a sdo segment
 /// it is constrained by the mailbox buffer size on the slave
-const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
+const SDO_SEGMENT_MAX_SIZE: usize = MAILBOX_MAX_SIZE
+                                        - <MailboxHeader as PduData>::Packed::LEN
                                         - <CoeHeader as PduData>::Packed::LEN
                                         - <SdoSegmentHeader as PduData>::Packed::LEN;
 
@@ -44,6 +44,8 @@ const SDO_SEGMENT_MAX_SIZE: usize = registers::mailbox_buffers[0].len
     ![CoE mapping](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/coe-mapping.svg)
     
     This scheme comes in addition to the slave memory areas described in [crate::rawmaster::RawMaster], for slaves supporting CoE.
+
+    A `Can` instance is generally obtained from [Slave::coe](crate::Slave::coe)
 */
 pub struct Can {
     mailbox: Arc<Mutex<Mailbox>>,
