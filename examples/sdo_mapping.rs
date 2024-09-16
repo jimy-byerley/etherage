@@ -7,8 +7,6 @@ use etherage::{
     registers::{self, SyncDirection},
     };
 
-use etherage::Field;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let master = RawMaster::new(EthernetSocket::new("eno1")?);

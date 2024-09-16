@@ -140,8 +140,8 @@ impl Allocator {
         // create initial buffers
         let mut exchange = mapping.default.borrow().clone();
         exchange.extend((exchange.len() .. size as usize).map(|_| 0));
-        let mut read = exchange.clone();
-        let mut write = exchange.clone();
+        let read = exchange.clone();
+        let write = exchange.clone();
         let topic = master.topic(PduCommand::LRW, SlaveAddress::Logical, slot.position,
                 unsafe { std::slice::from_raw_parts_mut(
                     exchange.as_mut_ptr(),
@@ -233,8 +233,10 @@ pub struct Group<'a> {
 }
 pub struct GroupData<'a> {
     topic: Option<Topic<'a>>,
-    /// data modification buffer
+    /// data reading buffer, containing the received data read from the slaves and the commands sent in the same frame
     read: Vec<u8>,
+    /// date writing, containing the frame we will send to the slaves
+    /// it is different from the read buffer because we want to ensure one value written to the `GroupData` stay in the lastly written state for following frames and is not overriden by newly received data
     write: Vec<u8>,
     /// exchange buffer
     #[allow(unused)] // this field is used through pointers
