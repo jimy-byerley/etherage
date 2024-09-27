@@ -234,6 +234,17 @@ array_pdudata!(i64);
 array_pdudata!(f32);
 array_pdudata!(f64);
 
+/**
+    Types whose instances can be read from and written to a PDU. 
+    
+    It differs from [PduData] which is able to be read to and written from PDU noly using their type static definitions
+*/
+pub trait PduField<T> {
+    /// extract the value pointed by the field in the given byte array
+    fn get(&self, data: &[u8]) -> T;
+    /// dump the given value to the place pointed by the field in the byte array
+    fn set(&self, data: &mut [u8], value: T);
+}
 
 /**
     locate some data in a datagram by its byte position and length, which must be extracted to type `T` to be processed in rust
@@ -262,14 +273,15 @@ impl<T: PduData> Field<T>
     pub const fn downcast(&self) -> Field<()> {
         Field {extracted: PhantomData, byte: self.byte, len: self.len}
     }
-
+}
+impl<T: PduData> PduField<T> for Field<T> {
     /// extract the value pointed by the field in the given byte array
-    pub fn get(&self, data: &[u8]) -> T       {
+    fn get(&self, data: &[u8]) -> T       {
         T::unpack(&data[self.byte..][..self.len])
             .expect("cannot unpack from data")
     }
     /// dump the given value to the place pointed by the field in the byte array
-    pub fn set(&self, data: &mut [u8], value: T)   {
+    fn set(&self, data: &mut [u8], value: T)   {
         value.pack(&mut data[self.byte..][..self.len])
             .expect("cannot pack data")
     }
@@ -310,10 +322,37 @@ impl<T: PduData> BitField<T> {
     pub const fn new(bit: usize, len: usize) -> Self {
         Self{extracted: PhantomData, bit, len}
     }
+}
+impl<T: PduData> PduField<T> for BitField<T> {
     /// extract the value pointed by the field in the given byte array
-    pub fn get(&self, _data: &[u8]) -> T       {todo!()}
+    fn get(&self, data: &[u8]) -> T {
+        let byte = self.bit / 8;
+        let bit = self.bit % 8;
+        // TODO: support bigger types
+        assert!(self.len < 128);
+        let mut buf = [0u8; 16];
+        // TODO: process word by word instead of bit by bit
+        for i in 0 .. self.len {
+            buf[i/8] |= data[byte+(bit+i)/8] >> i;
+        }
+        T::unpack(&buf)
+            .expect("cannot unpack from intermediate buffer")
+    }
     /// dump the given value to the place pointed by the field in the byte array
-    pub fn set(&self, _data: &mut [u8], _value: T)   {todo!()}
+    fn set(&self, data: &mut [u8], value: T)   {
+        let byte = self.bit / 8;
+        let bit = self.bit % 8;
+        // TODO: support bigger types
+        assert!(self.len < 128);
+        let mut buf = [0u8; 16];
+        value.pack(&mut buf)
+            .expect("cannot pack to intermediate buffer");
+        // TODO: process word by word instead of bit by bit
+        for i in 0 .. self.len {
+            data[byte+(bit+i)/8] &= !1 << i;
+            data[byte+(bit+i)/8] |= buf[i/8] << i;
+        }
+    }
 }
 impl<T: PduData> fmt::Debug for BitField<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

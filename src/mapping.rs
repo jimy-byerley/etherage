@@ -56,7 +56,7 @@
 
 use crate::{
     rawmaster::{RawMaster, Topic, PduCommand, SlaveAddress},
-    data::{PduData, Field},
+    data::{PduData, PduField, Field},
     sdo::{self, Sdo, SyncDirection},
     slave::{Slave, CommunicationState},
     can::CanError,
@@ -380,10 +380,10 @@ impl<'a> GroupData<'a> {
     pub fn write_buffer(&mut self) -> &'_ mut [u8] {self.write.as_mut_slice()}
     
     /// extract a mapped value from the buffer of last received data
-    pub fn get<T: PduData>(&self, field: Field<T>) -> T
+    pub fn get<T: PduData>(&self, field: impl PduField<T>) -> T
         {field.get(&self.read)}
     /// pack a mapped value to the buffer for next data write
-    pub fn set<T: PduData>(&mut self, field: Field<T>, value: T)
+    pub fn set<T: PduData>(&mut self, field: impl PduField<T>, value: T)
         {field.set(&mut self.write, value)}
 }
 impl Drop for Group<'_> {
