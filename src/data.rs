@@ -246,13 +246,16 @@ pub trait PduField<T> {
     fn set(&self, data: &mut [u8], value: T);
 }
 
+/// convenient alias, recommended to use everywhere it is obvious fields are [ByteField]
+pub type Field<T> = ByteField<T>;
+
 /**
     locate some data in a datagram by its byte position and length, which must be extracted to type `T` to be processed in rust
 
     It acts like a getter/setter of a value in a byte sequence. One can think of it as an offset to a data location because it does not actually point the data but only its offset in the byte sequence, it also contains its length to dynamically check memory bounds.
 */
 #[derive(Default, Eq, Hash)]
-pub struct Field<T: PduData> {
+pub struct ByteField<T: PduData> {
     /// this is only here to mark that T is actually used
     extracted: PhantomData<T>,
     /// start byte index of the object
@@ -260,7 +263,7 @@ pub struct Field<T: PduData> {
     /// byte length of the object
     pub len: usize,
 }
-impl<T: PduData> Field<T>
+impl<T: PduData> ByteField<T>
 {
     /// build a Field from its byte offset and byte length
     pub const fn new(byte: usize, len: usize) -> Self {
@@ -270,11 +273,11 @@ impl<T: PduData> Field<T>
     pub const fn simple(byte: usize) -> Self {
         Self{extracted: PhantomData, byte, len: T::Packed::LEN}
     }
-    pub const fn downcast(&self) -> Field<()> {
-        Field {extracted: PhantomData, byte: self.byte, len: self.len}
+    pub const fn downcast(&self) -> ByteField<()> {
+        ByteField {extracted: PhantomData, byte: self.byte, len: self.len}
     }
 }
-impl<T: PduData> PduField<T> for Field<T> {
+impl<T: PduData> PduField<T> for ByteField<T> {
     /// extract the value pointed by the field in the given byte array
     fn get(&self, data: &[u8]) -> T       {
         T::unpack(&data[self.byte..][..self.len])
@@ -286,17 +289,17 @@ impl<T: PduData> PduField<T> for Field<T> {
             .expect("cannot pack data")
     }
 }
-impl<T: PduData> fmt::Debug for Field<T> {
+impl<T: PduData> fmt::Debug for ByteField<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Field<{}>{{0x{:x}, {}}}", core::any::type_name::<T>(), self.byte, self.len)
     }
 }
-// [Clone] and [Copy] must be implemented manually to allow copying a field pointing to a type which does not implement this operation
-impl<T: PduData> Clone for Field<T> {
+// [Clone], [Copy] and [PartialEq] must be implemented manually to allow copying a field pointing to a type which does not implement this operation
+impl<T: PduData> Clone for ByteField<T> {
     fn clone(&self) -> Self   {Self::new(self.byte, self.len)}
 }
-impl<T: PduData> Copy for Field<T> {}
-impl<T: PduData> PartialEq for Field<T> {
+impl<T: PduData> Copy for ByteField<T> {}
+impl<T: PduData> PartialEq for ByteField<T> {
     fn eq(&self, other: &Self) -> bool {
         self.byte == other.byte && self.len == other.len
     }
@@ -308,7 +311,7 @@ impl<T: PduData> PartialEq for Field<T> {
 
     It acts like a getter/setter of a value in a byte sequence. One can think of it as an offset to a data location because it does not actually point the data but only its offset in the byte sequence, it also contains its length to dynamically check memory bounds.
 */
-#[derive(Default, Eq, PartialEq, Hash)]
+#[derive(Default, Eq, Hash)]
 pub struct BitField<T: PduData> {
     /// this is only here to mark that T is actually used
     extracted: PhantomData<T>,
@@ -322,26 +325,29 @@ impl<T: PduData> BitField<T> {
     pub const fn new(bit: usize, len: usize) -> Self {
         Self{extracted: PhantomData, bit, len}
     }
+    pub const fn downcast(&self) -> BitField<()> {
+        BitField {extracted: PhantomData, bit: self.bit, len: self.len}
+    }
 }
 impl<T: PduData> PduField<T> for BitField<T> {
     /// extract the value pointed by the field in the given byte array
     fn get(&self, data: &[u8]) -> T {
-        let byte = self.bit / 8;
-        let bit = self.bit % 8;
         // TODO: support bigger types
         assert!(self.len < 128);
         let mut buf = [0u8; 16];
         // TODO: process word by word instead of bit by bit
         for i in 0 .. self.len {
-            buf[i/8] |= data[byte+(bit+i)/8] >> i;
+            let bufbyte = i/8;
+            let bufbit = i%8;
+            let databyte = (self.bit + i)/8;
+            let databit = (self.bit + i)%8;
+            buf[bufbyte] |= ((data[databyte] >> databit) & 1) << bufbit;
         }
         T::unpack(&buf)
             .expect("cannot unpack from intermediate buffer")
     }
     /// dump the given value to the place pointed by the field in the byte array
     fn set(&self, data: &mut [u8], value: T)   {
-        let byte = self.bit / 8;
-        let bit = self.bit % 8;
         // TODO: support bigger types
         assert!(self.len < 128);
         let mut buf = [0u8; 16];
@@ -349,8 +355,12 @@ impl<T: PduData> PduField<T> for BitField<T> {
             .expect("cannot pack to intermediate buffer");
         // TODO: process word by word instead of bit by bit
         for i in 0 .. self.len {
-            data[byte+(bit+i)/8] &= !1 << i;
-            data[byte+(bit+i)/8] |= buf[i/8] << i;
+            let bufbyte = i/8;
+            let bufbit = i%8;
+            let databyte = (self.bit + i)/8;
+            let databit = (self.bit + i)%8;
+            data[databyte] &= !(1 << databit);
+            data[databyte] |= ((buf[bufbyte] >> bufbit) & 1) << databit;
         }
     }
 }
@@ -359,11 +369,16 @@ impl<T: PduData> fmt::Debug for BitField<T> {
         write!(f, "BitField<{}>{{{}, {}}}", core::any::type_name::<T>(), self.bit, self.len)
     }
 }
-// [Clone] and [Copy] must be implemented manually to allow copying a field pointing to a type which does not implement this operation
+// [Clone], [Copy] and [PartialEq] must be implemented manually to allow copying a field pointing to a type which does not implement this operation
 impl<T: PduData> Clone for BitField<T> {
     fn clone(&self) -> Self   {Self::new(self.bit, self.len)}
 }
 impl<T: PduData> Copy for BitField<T> {}
+impl<T: PduData> PartialEq for BitField<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bit == other.bit && self.len == other.len
+    }
+}
 
 
 
