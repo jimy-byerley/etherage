@@ -64,8 +64,10 @@ const MAX_ETHERCAT_PDU: usize = MAX_ETHERCAT_FRAME / MIN_PDU;
         this memory doesn't physically exist anywhere, but can be read/write using `L*`  commands with each slave contributing to the record according to the configuration set before.
 
         The logical memory is organized by the mapping set in the FMMU (Fieldbust Memory Management Unit). [crate::mapping] helps on this task.
+        
+    The protocol also defines multiple types of addressing, which are represented by [SlaveAddress]s
 
-    See variants of [PduCommand] and [Self::pdu] for more details.
+    See variants of [PduCommand] and [Self::topic] for more details.
 
     The following scheme shows an overview of the features and memory areas of every ethercat slave. Memory copy operations are represented as plain arrows regardless of the real sequence of commands needed to perform the operation. *RT* flag marks what can be acheived in realtime, and what can not.
 
@@ -790,7 +792,23 @@ struct PduFooter {
 }
 data::bilge_pdudata!(PduFooter, u16);
 
-/// the possible PDU commands
+/**
+    the possible PDU commands
+    
+    They decline from the combinations of the 
+    - memory operation type
+    - memory address type
+    
+    The combinations are the following:
+    
+    |     |                     | B*   | FP*    | AP*    | L*   |
+    |-----|---------------------|-----|-------|-------|-----|    
+    |     |                     | Broadcast   | Fixed address slave's Physical memory    | Auto Incremented (topological) slave address Physical memory    | Logical memory   |
+    | *RD  | read                | BRD | FPRD  | APRD  | LRD |
+    | *WR  | write               | BWR | FPWR  | APWR  | LWR |
+    | *RW  | read and write      | BRW | FPRW  | APRW  | LRW |
+    | *RMW | read multiple write | /   | FPRMW | APRMW | /   |
+*/
 #[bitsize(8)]
 #[derive(FromBits, Debug, Copy, Clone, Default)]
 pub enum PduCommand {

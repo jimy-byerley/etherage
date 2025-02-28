@@ -7,6 +7,12 @@
     - [Mapping] to create a mapping configuration of contiguous logical memory for multiple slaves, and compute each inserted value's offsets
     - [Group] to use exchange such contiguous logical memory with an ethercat segment
 
+    ## Principle
+
+    The following scheme shows an example mapping of [SDOs](sdo) and [registers]. On the right side shows the range of PDOs and channels that can be mapped each slave, however the vendor-specific constraints makes them much smaller in practice.
+
+    ![mapping details](/etherage/schemes/mapping-details.svg)
+
     ## Example
 
     ```ignore
@@ -30,12 +36,6 @@
     group.exchange().await;
     group.get(position);
     ```
-
-    ## Principle
-
-    The following scheme shows an example mapping of [SDOs](sdo) and [registers]. On the right side shows the range of PDOs and channels that can be mapped each slave, however the vendor-specific constraints makes them much smaller in practice.
-
-    ![mapping details](/etherage/schemes/mapping-details.svg)
 
     ## Limitations
 
@@ -217,6 +217,26 @@ impl fmt::Debug for Allocator {
     Allows to use a contiguous slice of logical memory, with appropriate duplex buffering for read/write operations.
 
     This can typically be though to as a group of slaves, except this only manage logical memory data without any assumption on its content. It is hence unable to perform any multi-slave exception management.
+    
+    ## communication cycle
+    
+    The typical use is a cyclic exchange between the master and some slaves.
+    There is two mainstream way to implement such cyclic exchange:
+    
+    - The naive way where the loop on the master sends the logical memory request, waits for an answer then refresh its command
+    - The duplex way where the loop on the master does exactly the same but the logical memory request has been sent the cycle before. This method allows a much bigger time to refresh the command on the master and more tolerance to any jitter, for the same exchange period.
+    
+    It is generally better to use the duplex method.
+    
+    ![naive](/etherage/schemes/cycle-exchange-noduplex.svg) ![duplex](/etherage/schemes/cycle-exchange-duplex.svg)
+    
+    In the above chronogram, the data transfers time includes propagation of the request in the segment and the bufferizing on the master ethernet stack
+    
+    ## communication delay
+    
+    The most common use of ethercat realtime data transfers is realtime control. In such case you should take into account the natural delay introduced by the communication. As shown in the chronogram below, the **minimum delay** of a system control through ethercat is **3 periods**, and can be more depending on the slave's implementations.
+    
+    ![cycle delay](/etherage/schemes/cycle-delay.svg)
 */
 pub struct Group<'a> {
     allocator: &'a Allocator,
