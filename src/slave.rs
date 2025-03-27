@@ -30,6 +30,12 @@ use registers::AlState::*;
 
     At contrary to [RawMaster], this struct is protocol-safe, which mean the communication cannot break because methods as not been called in the right order or at the right moment. There is nothing the user can do that might accidentally break the communication.
     The communication might however fail for hardware reasons, and the communication-safe functions shall report such errors.
+    
+    ## Communication state
+    
+    A slave's current [CommunicationState] determines what this slave is capable of doing. Upgrading or downgrading the communication states is done though [Slave::switch].
+    
+    ![communication state](/etherage/schemes/communication-state.svg)
 
     ## Example
 
