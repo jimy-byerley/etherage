@@ -229,7 +229,7 @@ impl fmt::Debug for Allocator {
     
     It is generally better to use the duplex method.
     
-    ![naive](/etherage/schemes/cycle-exchange-noduplex.svg) ![duplex](/etherage/schemes/cycle-exchange-duplex.svg)
+    ![naive](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/cycle-exchange-noduplex.svg) ![duplex](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/cycle-exchange-duplex.svg)
     
     In the above chronogram, the data transfers time includes propagation of the request in the segment and the bufferizing on the master ethernet stack
     
@@ -237,7 +237,7 @@ impl fmt::Debug for Allocator {
     
     The most common use of ethercat realtime data transfers is realtime control. In such case you should take into account the natural delay introduced by the communication. As shown in the chronogram below, the **minimum delay** of a system control through ethercat is **3 periods**, and can be more depending on the slave's implementations.
     
-    ![cycle delay](/etherage/schemes/cycle-delay.svg)
+    ![cycle delay](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/cycle-delay.svg)
 */
 pub struct Group<'a> {
     allocator: &'a Allocator,

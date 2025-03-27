@@ -35,7 +35,7 @@ use registers::AlState::*;
     
     A slave's current [CommunicationState] determines what this slave is capable of doing. Upgrading or downgrading the communication states is done though [Slave::switch].
     
-    ![communication state](/etherage/schemes/communication-state.svg)
+    ![communication state](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/communication-state.svg)
 
     ## Example
 

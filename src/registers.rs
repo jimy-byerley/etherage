@@ -282,7 +282,7 @@ data::bilge_pdudata!(AlStatus, u8);
 
     Except [Self::Bootstrap], changing to any mode can be requested from any upper mode or from the preceding one.
     
-    ![communication state](/etherage/schemes/communication-state.svg)
+    ![communication state](https://raw.githubusercontent.com/jimy-byerley/etherage/master/schemes/communication-state.svg)
 
     ETG.1000.6 table 9
 */

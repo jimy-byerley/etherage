@@ -44,8 +44,8 @@
         + [x] async API and implementation to avoid threads context switches
 */
 
-#![doc(html_favicon_url = "/etherage/logo/etherage.svg")]
-#![doc(html_logo_url = "/etherage/logo/ethercotic.svg")]
+#![doc(html_favicon_url = "https://raw.githubusercontent.com/jimy-byerley/etherage/master/logo/etherage.svg")]
+#![doc(html_logo_url = "https://raw.githubusercontent.com/jimy-byerley/etherage/master/logo/ethercotic.svg")]
 
 pub mod data;
 pub mod error;
