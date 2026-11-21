@@ -164,8 +164,13 @@ impl Mailbox {
         let header = frame.unpack::<MailboxHeader>()
                         .map_err(|_| EthercatError::Protocol("unable to unpack mailbox header"))?;
         if header.ty() == MailboxType::Exception {
-            let error = frame.unpack::<MailboxErrorFrame>()
-                        .map_err(|_| EthercatError::Protocol("unable to unpack received mailbox error"))?;
+            let error = frame.unpack::<MailboxErrorFrame>();
+            // Release a short exception just like a short successful reply.
+            if MailboxHeader::packed_size() + small < self.read.max {
+                let last = Field::<u16>::simple(usize::from(self.read.address) + self.read.max - u16::packed_size());
+                self.master.fprd(self.slave, last).await;
+            }
+            let error = error.map_err(|_| EthercatError::Protocol("unable to unpack received mailbox error"))?;
             return Err(EthercatError::Slave(self.slave(), error.detail()))
         }
         if header.ty() != ty
