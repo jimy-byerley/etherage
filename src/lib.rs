@@ -64,6 +64,8 @@ pub mod socket;
 pub mod rawmaster;
 pub mod sii;
 pub mod mailbox;
+pub mod foe;
+pub mod voe;
 pub mod can;
 pub mod master;
 pub mod clock;

@@ -274,6 +274,13 @@ impl<'a> Slave<'a> {
             .lock().await
     }
 
+    /// locks access to mailbox communication for FoE and VoE services
+    pub async fn mailbox(&self) -> MutexGuard<'_, Mailbox> {
+        self.mailbox
+            .as_ref().expect("mailbox not initialized")
+            .lock().await
+    }
+
     /// locks access to CoE communication and return the underlying instance of [Can] running CoE
     pub async fn coe(&self) -> MutexGuard<'_, Can>    {
         self.coe
