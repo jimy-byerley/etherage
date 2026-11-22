@@ -164,8 +164,13 @@ impl Mailbox {
         let header = frame.unpack::<MailboxHeader>()
                         .map_err(|_| EthercatError::Protocol("unable to unpack mailbox header"))?;
         if header.ty() == MailboxType::Exception {
-            let error = frame.unpack::<MailboxErrorFrame>()
-                        .map_err(|_| EthercatError::Protocol("unable to unpack received mailbox error"))?;
+            let error = frame.unpack::<MailboxErrorFrame>();
+            // Release a short exception just like a short successful reply.
+            if MailboxHeader::packed_size() + small < self.read.max {
+                let last = Field::<u16>::simple(usize::from(self.read.address) + self.read.max - u16::packed_size());
+                self.master.fprd(self.slave, last).await;
+            }
+            let error = error.map_err(|_| EthercatError::Protocol("unable to unpack received mailbox error"))?;
             return Err(EthercatError::Slave(self.slave(), error.detail()))
         }
         if header.ty() != ty
@@ -260,6 +265,153 @@ impl Mailbox {
                 {}
         }
         Ok(())
+    }
+
+    /// Download a FoE file to a slave, using stop-and-wait packet acknowledgements.
+    pub async fn write_foe(
+        &mut self,
+        filename: &str,
+        password: u32,
+        data: &[u8],
+    ) -> EthercatResult<(), crate::foe::FoeError> {
+        if filename.as_bytes().contains(&0) {
+            return Err(EthercatError::Master("FoE filename contains NUL"));
+        }
+        let packet_capacity = self.write.max.checked_sub(12)
+            .ok_or(EthercatError::Master("FoE mailbox is too small"))?;
+        let mut frame = [0; MAILBOX_MAX_SIZE];
+        let request = crate::foe::Packet {
+            opcode: crate::foe::Opcode::Write,
+            value: password,
+            data: filename.as_bytes(),
+        };
+        let len = request.encode(&mut frame[..self.write.max])
+            .ok_or(EthercatError::Master("FoE filename does not fit mailbox"))?;
+        self.write(MailboxType::File, u2::new(0), &frame[..len])
+            .await.map_err(|error| error.map(crate::foe::FoeError::Mailbox))?;
+        let mut reply = [0; MAILBOX_MAX_SIZE];
+        let reply_len = self.read(MailboxType::File, &mut reply).await
+            .map_err(|error| error.map(crate::foe::FoeError::Mailbox))?.len();
+        let ack = crate::foe::Packet::decode(&reply[..reply_len])
+            .map_err(|_| EthercatError::Protocol("invalid FoE response"))?;
+        if ack.opcode == crate::foe::Opcode::Error {
+            return Err(EthercatError::Slave(self.slave(), crate::foe::FoeError::Remote(ack.value)));
+        }
+        if ack.opcode != crate::foe::Opcode::Ack || ack.value != 0 {
+            return Err(EthercatError::Protocol("expected FoE ACK 0"));
+        }
+
+        let mut offset = 0;
+        let mut packet_no = 1u32;
+        loop {
+            let end = (offset + packet_capacity).min(data.len());
+            let chunk = &data[offset..end];
+            let packet = crate::foe::Packet {
+                opcode: crate::foe::Opcode::Data,
+                value: packet_no,
+                data: chunk,
+            };
+            let len = packet.encode(&mut frame).ok_or(EthercatError::Master("FoE packet too large"))?;
+            self.write(MailboxType::File, u2::new(0), &frame[..len]).await
+                .map_err(|error| error.map(crate::foe::FoeError::Mailbox))?;
+            let reply_len = self.read(MailboxType::File, &mut reply).await
+                .map_err(|error| error.map(crate::foe::FoeError::Mailbox))?.len();
+            let ack = crate::foe::Packet::decode(&reply[..reply_len])
+                .map_err(|_| EthercatError::Protocol("invalid FoE response"))?;
+            if ack.opcode == crate::foe::Opcode::Error {
+                return Err(EthercatError::Slave(self.slave(), crate::foe::FoeError::Remote(ack.value)));
+            }
+            if ack.opcode != crate::foe::Opcode::Ack || ack.value != packet_no {
+                return Err(EthercatError::Protocol("unexpected FoE acknowledgement"));
+            }
+            offset = end;
+            if chunk.len() < packet_capacity {
+                return Ok(());
+            }
+            packet_no = packet_no.wrapping_add(1);
+        }
+    }
+
+    /// Upload a FoE file into caller-provided storage.
+    pub async fn read_foe_into(
+        &mut self,
+        filename: &str,
+        password: u32,
+        output: &mut [u8],
+    ) -> EthercatResult<usize, crate::foe::FoeError> {
+        if filename.as_bytes().contains(&0) {
+            return Err(EthercatError::Master("FoE filename contains NUL"));
+        }
+        let mut frame = [0; MAILBOX_MAX_SIZE];
+        let request = crate::foe::Packet {
+            opcode: crate::foe::Opcode::Read,
+            value: password,
+            data: filename.as_bytes(),
+        };
+        let len = request.encode(&mut frame[..self.write.max])
+            .ok_or(EthercatError::Master("FoE filename does not fit mailbox"))?;
+        self.write(MailboxType::File, u2::new(0), &frame[..len])
+            .await.map_err(|error| error.map(crate::foe::FoeError::Mailbox))?;
+
+        let packet_capacity = self.write.max.checked_sub(12)
+            .ok_or(EthercatError::Master("FoE mailbox is too small"))?;
+        let mut reply = [0; MAILBOX_MAX_SIZE];
+        let mut written = 0usize;
+        let mut expected = 1u32;
+        loop {
+            let reply_len = self.read(MailboxType::File, &mut reply).await
+                .map_err(|error| error.map(crate::foe::FoeError::Mailbox))?.len();
+            let packet = crate::foe::Packet::decode(&reply[..reply_len])
+                .map_err(|_| EthercatError::Protocol("invalid FoE response"))?;
+            if packet.opcode == crate::foe::Opcode::Error {
+                return Err(EthercatError::Slave(self.slave(), crate::foe::FoeError::Remote(packet.value)));
+            }
+            if packet.opcode != crate::foe::Opcode::Data || packet.value != expected {
+                return Err(EthercatError::Protocol("unexpected FoE data packet"));
+            }
+            let end = written.checked_add(packet.data.len())
+                .filter(|end| *end <= output.len())
+                .ok_or(EthercatError::Master("FoE file exceeds output buffer"))?;
+            output[written..end].copy_from_slice(packet.data);
+            written = end;
+
+            let ack = crate::foe::Packet {
+                opcode: crate::foe::Opcode::Ack,
+                value: expected,
+                data: &[],
+            };
+            let len = ack.encode(&mut frame).ok_or(EthercatError::Master("FoE ACK encode failed"))?;
+            self.write(MailboxType::File, u2::new(0), &frame[..len]).await
+                .map_err(|error| error.map(crate::foe::FoeError::Mailbox))?;
+            if packet.data.len() < packet_capacity {
+                return Ok(written);
+            }
+            expected = expected.wrapping_add(1);
+        }
+    }
+
+    /// Send opaque vendor data using the six-byte VoE header.
+    pub async fn write_voe(
+        &mut self,
+        vendor_id: u32,
+        vendor_type: u16,
+        payload: &[u8],
+    ) -> EthercatResult<(), MailboxError> {
+        let packet = crate::voe::Packet { vendor_id, vendor_type, payload };
+        let mut frame = [0; MAILBOX_MAX_SIZE];
+        let len = packet.encode(&mut frame[..self.write.max])
+            .ok_or(EthercatError::Master("VoE payload does not fit mailbox"))?;
+        self.write(MailboxType::Specific, u2::new(0), &frame[..len]).await
+    }
+
+    /// Receive a VoE payload into caller-provided storage and validate its header.
+    pub async fn read_voe_into<'a>(
+        &mut self,
+        output: &'a mut [u8],
+    ) -> EthercatResult<crate::voe::Packet<'a>, MailboxError> {
+        let frame = self.read(MailboxType::Specific, output).await?;
+        crate::voe::Packet::decode(frame)
+            .ok_or(EthercatError::Protocol("VoE frame is shorter than its header"))
     }
 }
 
